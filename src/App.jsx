@@ -1,69 +1,104 @@
-import { useState, useCallback } from 'react'
-import { applyNodeChanges, applyEdgeChanges, addEdge, MarkerType } from '@xyflow/react'
-import NetworkEditor from './components/NetworkEditor'
-import GlobalParams from './components/GlobalParams'
-import PropertiesPanel from './components/PropertiesPanel'
-import ResultsPanel from './components/ResultsPanel'
-import { calculateThermal } from './engine/thermalCalc'
-import { exportToExcel } from './export/excelExport'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import DrawingCanvas from './components/DrawingCanvas'
+import LeftPanel from './components/LeftPanel'
+import RightPanel from './components/RightPanel'
+import Toolbar from './components/Toolbar'
+import { DEFAULT_MATERIALS } from './data/materials'
+import { DEFAULT_INSULATIONS } from './data/insulations'
 import './App.css'
 
-const DEFAULT_PARAMS = { T_depart: 55, T_amb: 20, rho: 985, cp: 4186 }
+const DEFAULT_GLOBAL_PARAMS = {
+  T_depart: 55, rho: 985, cp: 4180,
+  T_amb_ss: 10, T_amb_other: 20, he: 10,
+}
 
-const DEFAULT_EDGE_DATA = {
-  name: '', length: '', diameter_int: '', diameter_ext: '',
-  lambda_tube: '', insulation_thickness: '', lambda_insul: '', flow_rate: '',
+// 5 niveaux SS-1…R+3, du bas vers le haut
+const DEFAULT_LEVELS = [
+  { id: 'ss1', name: 'SS-1' },
+  { id: 'rdc', name: 'RDC'  },
+  { id: 'r1',  name: 'R+1'  },
+  { id: 'r2',  name: 'R+2'  },
+  { id: 'r3',  name: 'R+3'  },
+]
+// 6 valeurs (n+1) : lineYs[0]=fond SS-1, lineYs[5]=Toiture
+const DEFAULT_LINE_YS = [950, 770, 590, 410, 230, 80]
+
+function initProject() {
+  return {
+    globalParams: DEFAULT_GLOBAL_PARAMS,
+    materials: DEFAULT_MATERIALS,
+    insulations: DEFAULT_INSULATIONS,
+    levels: DEFAULT_LEVELS,
+    lineYs: DEFAULT_LINE_YS,
+    segments: [],
+    points: [],
+  }
+}
+
+// ── Undo/redo store ────────────────────────────────────
+function useHistory(init) {
+  const histRef  = useRef([init])
+  const idxRef   = useRef(0)
+  const [, bump] = useState(0)
+
+  const project = histRef.current[idxRef.current]
+
+  const setProject = useCallback((updater) => {
+    const cur  = histRef.current[idxRef.current]
+    const next = typeof updater === 'function' ? updater(cur) : updater
+    const newHist = [...histRef.current.slice(0, idxRef.current + 1), next]
+    histRef.current = newHist.length > 60 ? newHist.slice(-60) : newHist
+    idxRef.current  = histRef.current.length - 1
+    bump(n => n + 1)
+  }, [])
+
+  const undo = useCallback(() => {
+    if (idxRef.current > 0) { idxRef.current--; bump(n => n + 1) }
+  }, [])
+  const redo = useCallback(() => {
+    if (idxRef.current < histRef.current.length - 1) { idxRef.current++; bump(n => n + 1) }
+  }, [])
+  const canUndo = idxRef.current > 0
+  const canRedo = idxRef.current < histRef.current.length - 1
+
+  return { project, setProject, undo, redo, canUndo, canRedo }
 }
 
 export default function App() {
-  const [nodes, setNodes] = useState([])
-  const [edges, setEdges] = useState([])
-  const [globalParams, setGlobalParams] = useState(DEFAULT_PARAMS)
-  const [selected, setSelected] = useState(null)
-  const [results, setResults] = useState(null)
+  const { project, setProject, undo, redo, canUndo, canRedo } = useHistory(initProject())
+  const [drawMode,    setDrawMode]    = useState('select')
+  const [pipeType,    setPipeType]    = useState('aller')
+  const [selectedIds, setSelectedIds] = useState([])
+  const [panelOpen,   setPanelOpen]   = useState(true)
 
-  const onNodesChange = useCallback(
-    changes => setNodes(nds => applyNodeChanges(changes, nds)), []
-  )
-  const onEdgesChange = useCallback(
-    changes => setEdges(eds => applyEdgeChanges(changes, eds)), []
-  )
-  const onConnect = useCallback(
-    conn => setEdges(eds => addEdge({
-      ...conn,
-      markerEnd: { type: MarkerType.ArrowClosed },
-      data: { ...DEFAULT_EDGE_DATA },
-    }, eds)),
-    []
-  )
+  // Generic updater for any project key
+  const update = useCallback((key, valOrFn) => {
+    setProject(p => ({ ...p, [key]: typeof valOrFn === 'function' ? valOrFn(p[key]) : valOrFn }))
+  }, [setProject])
 
+  // Update a single segment or point by id
   const updateElement = useCallback((id, type, newData) => {
-    if (type === 'node') {
-      setNodes(ns => ns.map(n => n.id === id ? { ...n, data: { ...n.data, ...newData } } : n))
+    if (type === 'segment') {
+      setProject(p => ({ ...p, segments: p.segments.map(s => s.id !== id ? s : { ...s, ...newData }) }))
     } else {
-      setEdges(es => es.map(e => e.id !== id ? e : { ...e, data: { ...e.data, ...newData } }))
-      setSelected(sel => sel && sel.element.id === id
-        ? { ...sel, element: { ...sel.element, data: { ...sel.element.data, ...newData } } }
-        : sel
-      )
+      setProject(p => ({ ...p, points: p.points.map(pt => pt.id !== id ? pt : { ...pt, ...newData }) }))
     }
-  }, [])
+  }, [setProject])
 
-  const handleCalculate = () => {
-    try {
-      setResults(calculateThermal(nodes, edges, globalParams))
-    } catch (e) {
-      alert('Erreur de calcul : ' + e.message)
+  // Ctrl+Z / Ctrl+Y
+  useEffect(() => {
+    const handler = e => {
+      const tag = e.target.tagName
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo() }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo() }
     }
-  }
-
-  const handleExport = () => {
-    if (!results) { alert("Lancez d'abord le calcul."); return }
-    exportToExcel(nodes, edges, globalParams, results)
-  }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [undo, redo])
 
   const handleSave = () => {
-    const blob = new Blob([JSON.stringify({ nodes, edges, globalParams }, null, 2)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' })
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: 'projet-ecs.json' })
     a.click()
   }
@@ -73,14 +108,8 @@ export default function App() {
     input.onchange = e => {
       const reader = new FileReader()
       reader.onload = ev => {
-        try {
-          const d = JSON.parse(ev.target.result)
-          setNodes(d.nodes || [])
-          setEdges(d.edges || [])
-          setGlobalParams(d.globalParams || DEFAULT_PARAMS)
-          setResults(null)
-          setSelected(null)
-        } catch { alert('Fichier invalide.') }
+        try { setProject(JSON.parse(ev.target.result)); setSelectedIds([]) }
+        catch { alert('Fichier invalide.') }
       }
       reader.readAsText(e.target.files[0])
     }
@@ -97,29 +126,61 @@ export default function App() {
         <div className="header-actions">
           <button onClick={handleSave} className="btn btn-secondary">💾 Sauvegarder</button>
           <button onClick={handleLoad} className="btn btn-secondary">📂 Charger</button>
-          <button onClick={handleCalculate} className="btn btn-primary">⚡ Calculer</button>
-          <button onClick={handleExport} className="btn btn-success" disabled={!results}>📊 Export Excel</button>
+          <button className="btn btn-primary" disabled>⚡ Calculer</button>
+          <button className="btn btn-success" disabled>📊 Export Excel</button>
         </div>
       </header>
+
+      <Toolbar
+        drawMode={drawMode} setDrawMode={setDrawMode}
+        pipeType={pipeType} setPipeType={setPipeType}
+        onUndo={undo} onRedo={redo} canUndo={canUndo} canRedo={canRedo}
+        panelOpen={panelOpen} onTogglePanel={() => setPanelOpen(o => !o)}
+      />
+
       <div className="app-body">
-        <aside className="sidebar-left">
-          <GlobalParams params={globalParams} onChange={setGlobalParams} />
+        <aside className={`sidebar-left ${panelOpen ? '' : 'sidebar-closed'}`}>
+          {panelOpen && (
+            <LeftPanel
+              globalParams={project.globalParams}
+              onGlobalParamsChange={v => update('globalParams', v)}
+              levels={project.levels}
+              lineYs={project.lineYs}
+              onLevelsChange={v => update('levels', v)}
+              onLineYsChange={v => update('lineYs', v)}
+              materials={project.materials}
+              onMaterialsChange={v => update('materials', typeof v === 'function' ? v(project.materials) : v)}
+              insulations={project.insulations}
+              onInsulationsChange={v => update('insulations', typeof v === 'function' ? v(project.insulations) : v)}
+            />
+          )}
         </aside>
+
         <main className="canvas-area">
-          <NetworkEditor
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onSelectElement={setSelected}
-            results={results}
-            setNodes={setNodes}
+          <DrawingCanvas
+            levels={project.levels}
+            lineYs={project.lineYs}
+            onLineYsChange={v => update('lineYs', typeof v === 'function' ? v(project.lineYs) : v)}
+            segments={project.segments}
+            onSegmentsChange={v => update('segments', typeof v === 'function' ? v(project.segments) : v)}
+            points={project.points}
+            onPointsChange={v => update('points', typeof v === 'function' ? v(project.points) : v)}
+            drawMode={drawMode}
+            pipeType={pipeType}
+            selectedIds={selectedIds}
+            onSelectIds={setSelectedIds}
           />
         </main>
+
         <aside className="sidebar-right">
-          <PropertiesPanel selected={selected} onUpdate={updateElement} />
-          {results && <ResultsPanel results={results} />}
+          <RightPanel
+            selectedIds={selectedIds}
+            segments={project.segments}
+            points={project.points}
+            onUpdate={updateElement}
+            materials={project.materials}
+            insulations={project.insulations}
+          />
         </aside>
       </div>
     </div>
