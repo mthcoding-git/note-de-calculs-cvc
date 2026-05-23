@@ -157,7 +157,6 @@ export default function App() {
       <Toolbar
         drawMode={drawMode} setDrawMode={setDrawMode}
         pipeType={pipeType} setPipeType={setPipeType}
-        onUndo={undo} onRedo={redo} canUndo={canUndo} canRedo={canRedo}
         panelOpen={panelOpen} onTogglePanel={() => setPanelOpen(o => !o)}
       />
 

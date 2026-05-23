@@ -83,6 +83,17 @@ function pruneOrphan(segs, pts) {
   return pts.filter(p => used.has(p.id))
 }
 
+// True if pt lies strictly between a and b on the segment axis
+function isOnSegmentEdge(pt, a, b) {
+  if (Math.abs(b.x - a.x) > Math.abs(b.y - a.y)) {
+    const lo = Math.min(a.x, b.x), hi = Math.max(a.x, b.x)
+    return pt.x > lo && pt.x < hi
+  } else {
+    const lo = Math.min(a.y, b.y), hi = Math.max(a.y, b.y)
+    return pt.y > lo && pt.y < hi
+  }
+}
+
 let _c = 0
 const uid = p => `${p}-${Date.now()}-${++_c}`
 
@@ -119,16 +130,17 @@ export default function DrawingCanvas({
   const splitSegment = useCallback((hitInfo, splitPos) => {
     const { seg, subIdx } = hitInfo
     const sp = { x: snap(splitPos.x), y: snap(splitPos.y) }
-    const newPt = { id: uid('P'), name: '', x: sp.x, y: sp.y }
+    const existing = points.find(p => dist(p, sp) < SNAP)
+    const junctionPt = existing ?? { id: uid('P'), name: '', x: sp.x, y: sp.y }
     const vs = seg.vertices
-    const seg1 = { ...seg, id: uid('T'), vertices: [...vs.slice(0, subIdx + 1), sp], endPointId: newPt.id }
-    const seg2 = { ...seg, id: uid('T'), vertices: [sp, ...vs.slice(subIdx + 1)], startPointId: newPt.id }
+    const seg1 = { ...seg, id: uid('T'), vertices: [...vs.slice(0, subIdx + 1), sp], endPointId: junctionPt.id }
+    const seg2 = { ...seg, id: uid('T'), vertices: [sp, ...vs.slice(subIdx + 1)], startPointId: junctionPt.id }
     onNetworkChange(
       s => s.filter(x => x.id !== seg.id).concat([seg1, seg2]),
-      p => [...p, newPt]
+      p => existing ? p : [...p, junctionPt]
     )
-    return newPt
-  }, [onNetworkChange])
+    return junctionPt
+  }, [onNetworkChange, points])
 
   // ── Commit in-progress drawing (Escape) ──────────────
   const commitDrawing = useCallback((d) => {
@@ -473,7 +485,7 @@ export default function DrawingCanvas({
       const np = { x: ptDragPos.x, y: ptDragPos.y }
 
       // Priority 1: overlapping another point → merge
-      const overlap = points.find(p => p.id !== ptId && dist(p, np) < SNAP)
+      const overlap = points.find(p => p.id !== ptId && dist(p, np) < PT_HIT)
       if (overlap) {
         const op = { x: overlap.x, y: overlap.y, id: overlap.id }
         onNetworkChange(
@@ -512,15 +524,43 @@ export default function DrawingCanvas({
             p => p.map(x => x.id === ptId ? { ...x, ...np } : x)
           )
         } else {
-          // Priority 3: plain move
-          onNetworkChange(
-            s => s.map(seg => {
-              if (seg.startPointId === ptId) { const v = [...seg.vertices]; v[0] = np; return { ...seg, vertices: v } }
-              if (seg.endPointId   === ptId) { const v = [...seg.vertices]; v[v.length - 1] = np; return { ...seg, vertices: v } }
-              return seg
-            }),
-            p => p.map(x => x.id === ptId ? { ...x, ...np } : x)
-          )
+          // Priority 2.5: free endpoint dragged inward along its own segment → split + keep endpoint
+          const ownSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
+          let didSplit = false
+          if (ownSegs.length === 1) {
+            const seg = ownSegs[0]
+            const vs  = seg.vertices
+            const isEnd = seg.endPointId === ptId
+            if (vs.length >= 2) {
+              const endV  = isEnd ? vs[vs.length - 1] : vs[0]
+              const anchV = isEnd ? vs[vs.length - 2] : vs[1]
+              if (isOnSegmentEdge(np, anchV, endV)) {
+                const P_new = { id: uid('P'), name: '', x: endV.x, y: endV.y }
+                const seg1  = isEnd
+                  ? { ...seg, id: uid('T'), vertices: [...vs.slice(0, -1), np], endPointId: ptId }
+                  : { ...seg, id: uid('T'), vertices: [np, ...vs.slice(1)],    startPointId: ptId }
+                const seg2  = isEnd
+                  ? { ...seg, id: uid('T'), vertices: [np, endV], startPointId: ptId, endPointId: P_new.id }
+                  : { ...seg, id: uid('T'), vertices: [endV, np], endPointId: ptId, startPointId: P_new.id }
+                onNetworkChange(
+                  s => s.filter(x => x.id !== seg.id).concat([seg1, seg2]),
+                  p => p.map(x => x.id === ptId ? { ...x, ...np } : x).concat([P_new])
+                )
+                didSplit = true
+              }
+            }
+          }
+          if (!didSplit) {
+            // Priority 3: plain move
+            onNetworkChange(
+              s => s.map(seg => {
+                if (seg.startPointId === ptId) { const v = [...seg.vertices]; v[0] = np; return { ...seg, vertices: v } }
+                if (seg.endPointId   === ptId) { const v = [...seg.vertices]; v[v.length - 1] = np; return { ...seg, vertices: v } }
+                return seg
+              }),
+              p => p.map(x => x.id === ptId ? { ...x, ...np } : x)
+            )
+          }
         }
       }
       setPtDragPos(null)
@@ -700,26 +740,25 @@ export default function DrawingCanvas({
           )
         })}
 
-        {/* Points */}
+        {/* Nœuds */}
         {renderPts.map(pt => {
           const sel     = selectedIds.includes(pt.id)
           const dragged = ptDragPos?.ptId === pt.id
           return (
             <g key={pt.id}
-              style={{ cursor: drawMode === 'delete' ? 'crosshair' : 'pointer' }}
+              style={{ cursor: 'pointer' }}
               onClick={ev => {
-                if (drawMode === 'delete') return
                 ev.stopPropagation()
                 onSelectIds(ids => ev.shiftKey
                   ? ids.includes(pt.id) ? ids.filter(i => i !== pt.id) : [...ids, pt.id]
                   : [pt.id])
               }}>
-              <circle cx={pt.x} cy={pt.y} r={PT_R + 6} fill="transparent" />
-              <circle cx={pt.x} cy={pt.y} r={PT_R}
+              <rect x={pt.x - PT_R - 6} y={pt.y - PT_R - 6} width={(PT_R + 6) * 2} height={(PT_R + 6) * 2} fill="transparent" />
+              <rect x={pt.x - PT_R} y={pt.y - PT_R} width={PT_R * 2} height={PT_R * 2}
                 fill={sel || dragged ? '#dbeafe' : '#fff'}
                 stroke={sel || dragged ? '#2563eb' : '#374151'} strokeWidth={1.5} />
               {pt.name && (
-                <text x={pt.x + PT_R + 3} y={pt.y + 3} fontSize={10} fill="#374151" fontWeight="600"
+                <text x={pt.x + PT_R + 3} y={pt.y + 4} fontSize={10} fill="#374151" fontWeight="600"
                   style={{ pointerEvents: 'none', userSelect: 'none' }}>{pt.name}</text>
               )}
             </g>
@@ -734,7 +773,7 @@ export default function DrawingCanvas({
               strokeDasharray={pipeType === 'retour' ? '10,6' : '5,3'}
               fill="none" opacity={0.6} style={{ pointerEvents: 'none' }} />
             {drawing.vertices.map((v, i) =>
-              <circle key={i} cx={v.x} cy={v.y} r={2.5}
+              <rect key={i} x={v.x - 2.5} y={v.y - 2.5} width={5} height={5}
                 fill={pipeType === 'retour' ? '#f97316' : '#dc2626'}
                 style={{ pointerEvents: 'none' }} />
             )}
@@ -759,12 +798,7 @@ export default function DrawingCanvas({
       )}
       {!drawing && drawMode === 'select' && (
         <text x={8} y={18} fontSize={10} fill="#cbd5e1">
-          Sélectionner · Glisser (point) : déplacer sur son axe · Ctrl+Drag : rect · Espace+Glisser : naviguer
-        </text>
-      )}
-      {drawMode === 'delete' && (
-        <text x={8} y={18} fontSize={10} fill="#dc262699">
-          Mode suppression — cliquer sur un élément pour le supprimer
+          Glisser nœud : déplacer · Shift+Clic : multi-sélection · Ctrl+Drag : rect · Suppr : effacer · Ctrl+Z/Y : annuler/rétablir
         </text>
       )}
     </svg>

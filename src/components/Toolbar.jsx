@@ -1,7 +1,6 @@
 export default function Toolbar({
   drawMode, setDrawMode,
   pipeType, setPipeType,
-  onUndo, onRedo, canUndo, canRedo,
   panelOpen, onTogglePanel,
 }) {
   return (
@@ -15,12 +14,6 @@ export default function Toolbar({
 
       <div className="toolbar-sep" />
 
-      {/* Undo / Redo */}
-      <button className="tb-btn" onClick={onUndo} disabled={!canUndo} title="Annuler (Ctrl+Z)">↩ Annuler</button>
-      <button className="tb-btn" onClick={onRedo} disabled={!canRedo} title="Rétablir (Ctrl+Y)">↪ Rétablir</button>
-
-      <div className="toolbar-sep" />
-
       {/* Draw modes */}
       <div className="toolbar-group">
         <button className={`tb-btn ${drawMode === 'select' ? 'active' : ''}`}
@@ -30,10 +23,6 @@ export default function Toolbar({
         <button className={`tb-btn ${drawMode === 'draw' ? 'active' : ''}`}
           onClick={() => setDrawMode('draw')} title="Dessiner">
           ✏ Dessiner
-        </button>
-        <button className={`tb-btn ${drawMode === 'delete' ? 'active-delete' : ''}`}
-          onClick={() => setDrawMode(m => m === 'delete' ? 'select' : 'delete')} title="Supprimer">
-          ✕ Supprimer
         </button>
       </div>
 
@@ -56,7 +45,7 @@ export default function Toolbar({
             <button
               className={`tb-btn pipe-btn ${pipeType === 'point' ? 'active' : ''}`}
               onClick={() => setPipeType('point')}>
-              <span className="pipe-prev-point" /> Point
+              <span className="pipe-prev-point" /> Nœud
             </button>
           </div>
         </>
@@ -66,10 +55,8 @@ export default function Toolbar({
         {drawMode === 'draw' && pipeType !== 'point'
           ? 'Clic : point · Double-clic : fin · Échap : valider · Ctrl+Z : annuler sommet · Espace+Glisser : naviguer'
           : drawMode === 'draw' && pipeType === 'point'
-          ? 'Clic : créer un point · Clic sur un trait : jonction'
-          : drawMode === 'delete'
-          ? 'Clic sur un élément : supprimer (Ctrl+Z pour annuler)'
-          : 'Drag : déplacer la vue · Ctrl+Drag : sélection · Shift+Clic : multi-sélection · Suppr : effacer · Molette : zoom'}
+          ? 'Clic : créer un nœud · Clic sur un trait : jonction'
+          : 'Drag nœud : déplacer · Suppr : effacer sélection · Ctrl+Z / Ctrl+Y : annuler/rétablir · Molette : zoom'}
       </span>
     </div>
   )
