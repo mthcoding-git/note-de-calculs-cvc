@@ -107,10 +107,9 @@ export default function DrawingCanvas({
   editLevelsEnabled, editColumnsEnabled,
   columns, columnXs, onColumnXsChange,
 }) {
-  const svgRef     = useRef(null)
-  const spaceRef   = useRef(false)
-  const panDownRef = useRef(null)
-  const ptDragRef  = useRef(null)  // {ptId, startX, startY, origX, origY, moved, constraint}
+  const svgRef    = useRef(null)
+  const spaceRef  = useRef(false)
+  const ptDragRef = useRef(null)  // {ptId, startX, startY, origX, origY, moved, constraint}
 
   const [tf,        setTf]        = useState({ x: 80, y: 40, k: 1 })
   const [panSt,     setPanSt]     = useState(null)
@@ -365,8 +364,8 @@ export default function DrawingCanvas({
     if (!svgRef.current) return
     const pos = toCanvas(e, svgRef.current, tf)
 
-    // Space+left or middle → pan (all modes)
-    if (e.button === 1 || (e.button === 0 && spaceRef.current)) {
+    // Ctrl+left, Space+left or middle → pan (all modes)
+    if (e.button === 1 || (e.button === 0 && (spaceRef.current || e.ctrlKey || e.metaKey))) {
       e.preventDefault()
       setPanSt({ ox: e.clientX - tf.x, oy: e.clientY - tf.y })
       return
@@ -453,14 +452,9 @@ export default function DrawingCanvas({
       return
     }
 
-    // Empty space
-    if (e.ctrlKey || e.metaKey) {
-      setRectSt(pos)
-      setSelRect({ x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y })
-    } else {
-      panDownRef.current = { screenX: e.clientX, screenY: e.clientY }
-      setPanSt({ ox: e.clientX - tf.x, oy: e.clientY - tf.y })
-    }
+    // Empty space → rectangle de sélection (glisser) ou désélection (clic)
+    setRectSt(pos)
+    setSelRect({ x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y })
   }, [tf, lineYs, drawMode, drawing, pipeType, nearPt, nearSeg,
       finalize, splitSegment, resolveSnap, deletePoint,
       segments, onNetworkChange, onSelectIds])
@@ -470,14 +464,6 @@ export default function DrawingCanvas({
     setPanSt(null)
     setDragLine(null)
     setDragCol(null)
-
-    // Click vs pan: deselect only on click
-    if (panDownRef.current) {
-      const dx = e.clientX - panDownRef.current.screenX
-      const dy = e.clientY - panDownRef.current.screenY
-      if (Math.sqrt(dx * dx + dy * dy) < 4 && !e.shiftKey) onSelectIds([])
-      panDownRef.current = null
-    }
 
     // Commit point drag
     if (ptDragRef.current && ptDragRef.current.moved && ptDragPos) {
@@ -567,12 +553,18 @@ export default function DrawingCanvas({
     }
     if (ptDragRef.current) ptDragRef.current = null
 
-    // Rect select
+    // Rect select (ou désélection si clic sans mouvement)
     if (rectSt && selRect) {
-      const ids = []
-      segments.forEach(s => { if (segInRect(s, selRect)) ids.push(s.id) })
-      points.forEach(p   => { if (ptInRect(p, selRect))  ids.push(p.id) })
-      onSelectIds(prev => e.shiftKey ? [...new Set([...prev, ...ids])] : ids)
+      const w = Math.abs(selRect.x2 - selRect.x1)
+      const h = Math.abs(selRect.y2 - selRect.y1)
+      if (w < 5 && h < 5) {
+        if (!e.shiftKey) onSelectIds([])
+      } else {
+        const ids = []
+        segments.forEach(s => { if (segInRect(s, selRect)) ids.push(s.id) })
+        points.forEach(p   => { if (ptInRect(p, selRect))  ids.push(p.id) })
+        onSelectIds(prev => e.shiftKey ? [...new Set([...prev, ...ids])] : ids)
+      }
       setRectSt(null); setSelRect(null)
     }
   }, [rectSt, selRect, segments, points, onSelectIds, ptDragPos, onNetworkChange])
@@ -798,7 +790,7 @@ export default function DrawingCanvas({
       )}
       {!drawing && drawMode === 'select' && (
         <text x={8} y={18} fontSize={10} fill="#cbd5e1">
-          Glisser nœud : déplacer · Shift+Clic : multi-sélection · Ctrl+Drag : rect · Suppr : effacer · Ctrl+Z/Y : annuler/rétablir
+          Ctrl+Glisser : déplacer la vue · Glisser sur vide : sélection rect · Shift+Clic : multi-sélection · Suppr : effacer · Ctrl+Z/Y : annuler/rétablir
         </text>
       )}
     </svg>

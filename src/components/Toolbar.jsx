@@ -53,10 +53,10 @@ export default function Toolbar({
 
       <span className="toolbar-hint">
         {drawMode === 'draw' && pipeType !== 'point'
-          ? 'Clic : point · Double-clic : fin · Échap : valider · Ctrl+Z : annuler sommet · Espace+Glisser : naviguer'
+          ? 'Clic : point · Double-clic : fin · Échap : valider · Ctrl+Z : annuler sommet · Ctrl+Glisser : naviguer'
           : drawMode === 'draw' && pipeType === 'point'
-          ? 'Clic : créer un nœud · Clic sur un trait : jonction'
-          : 'Drag nœud : déplacer · Suppr : effacer sélection · Ctrl+Z / Ctrl+Y : annuler/rétablir · Molette : zoom'}
+          ? 'Clic : créer un nœud · Clic sur un trait : jonction · Ctrl+Glisser : naviguer'
+          : 'Ctrl+Glisser : déplacer la vue · Glisser sur vide : sélection · Suppr : effacer · Ctrl+Z / Ctrl+Y : annuler/rétablir'}
       </span>
     </div>
   )
