@@ -604,7 +604,8 @@ export default function DrawingCanvas({
     : drawMode === 'draw' ? 'crosshair'
     : 'default'
 
-  const zones = levels.map((lvl, i) => ({ ...lvl, yBot: lineYs[i], yTop: lineYs[i + 1] }))
+  const zones     = levels.map((lvl, i) => ({ ...lvl, yBot: lineYs[i], yTop: lineYs[i + 1] }))
+  const contentW  = Math.max(3000, ((columnXs ?? []).at(-1) ?? 0) + 400)
 
   // Live drag overrides for rendering
   const renderPts = ptDragPos
@@ -637,7 +638,7 @@ export default function DrawingCanvas({
         {/* Zone backgrounds */}
         {zones.map((z, i) => (
           <g key={z.id}>
-            <rect x={0} y={z.yTop} width={3000} height={z.yBot - z.yTop}
+            <rect x={0} y={z.yTop} width={contentW} height={z.yBot - z.yTop}
               fill={i % 2 === 0 ? '#ffffff' : '#f8fafc'} />
             <text x={14} y={(z.yTop + z.yBot) / 2 + 5}
               fontSize={12} fill="#d1d8e0" fontWeight="700"
@@ -685,7 +686,7 @@ export default function DrawingCanvas({
           const isToiture = i === lineYs.length - 1
           return (
             <g key={`ln${i}`}>
-              <line x1={0} y1={y} x2={3000} y2={y}
+              <line x1={0} y1={y} x2={contentW} y2={y}
                 stroke={isToiture ? '#94a3b8' : '#cbd5e1'}
                 strokeWidth={isToiture ? 1.5 : 1}
                 strokeDasharray={isToiture ? '8,5' : 'none'} />
@@ -694,7 +695,7 @@ export default function DrawingCanvas({
                   style={{ userSelect: 'none', pointerEvents: 'none' }}>Toiture</text>
               )}
               {editLevelsEnabled && (
-                <rect x={0} y={y - 6} width={3000} height={12}
+                <rect x={0} y={y - 6} width={contentW} height={12}
                   fill="transparent" style={{ cursor: 'ns-resize' }}
                   onMouseDown={ev => { ev.stopPropagation(); setDragLine({ idx: i, screenY: ev.clientY, origY: y }) }} />
               )}
