@@ -80,7 +80,7 @@
 }
 .pipe-prev-point {
   display: inline-block; width: 7px; height: 7px;
-  background: #374151; border-radius: 50%;
+  background: #374151;
 }
 
 /* ── Body layout ──────────────────────────────────────── */

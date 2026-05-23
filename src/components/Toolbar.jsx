@@ -17,8 +17,8 @@ export default function Toolbar({
       {/* Draw modes */}
       <div className="toolbar-group">
         <button className={`tb-btn ${drawMode === 'select' ? 'active' : ''}`}
-          onClick={() => setDrawMode('select')} title="Sélection">
-          ↖ Sélection
+          onClick={() => setDrawMode('select')} title="Édition">
+          ↖ Édition
         </button>
         <button className={`tb-btn ${drawMode === 'draw' ? 'active' : ''}`}
           onClick={() => setDrawMode('draw')} title="Dessiner">
