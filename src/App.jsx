@@ -76,6 +76,15 @@ export default function App() {
     setProject(p => ({ ...p, [key]: typeof valOrFn === 'function' ? valOrFn(p[key]) : valOrFn }))
   }, [setProject])
 
+  // Combined atomic update (single undo entry)
+  const updateNetwork = useCallback((segsFnOrVal, ptsFnOrVal) => {
+    setProject(p => ({
+      ...p,
+      segments: typeof segsFnOrVal === 'function' ? segsFnOrVal(p.segments) : (segsFnOrVal ?? p.segments),
+      points:   typeof ptsFnOrVal  === 'function' ? ptsFnOrVal(p.points)   : (ptsFnOrVal  ?? p.points),
+    }))
+  }, [setProject])
+
   // Update a single segment or point by id
   const updateElement = useCallback((id, type, newData) => {
     if (type === 'segment') {
@@ -165,6 +174,7 @@ export default function App() {
             onSegmentsChange={v => update('segments', typeof v === 'function' ? v(project.segments) : v)}
             points={project.points}
             onPointsChange={v => update('points', typeof v === 'function' ? v(project.points) : v)}
+            onNetworkChange={updateNetwork}
             drawMode={drawMode}
             pipeType={pipeType}
             selectedIds={selectedIds}

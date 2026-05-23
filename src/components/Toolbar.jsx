@@ -31,6 +31,10 @@ export default function Toolbar({
           onClick={() => setDrawMode('draw')} title="Dessiner">
           ✏ Dessiner
         </button>
+        <button className={`tb-btn ${drawMode === 'delete' ? 'active-delete' : ''}`}
+          onClick={() => setDrawMode(m => m === 'delete' ? 'select' : 'delete')} title="Supprimer">
+          ✕ Supprimer
+        </button>
       </div>
 
       {/* Pipe type (only in draw mode) */}
@@ -49,13 +53,22 @@ export default function Toolbar({
               onClick={() => setPipeType('retour')}>
               <span className="pipe-prev-retour" /> Retour ECS
             </button>
+            <button
+              className={`tb-btn pipe-btn ${pipeType === 'point' ? 'active' : ''}`}
+              onClick={() => setPipeType('point')}>
+              <span className="pipe-prev-point" /> Point
+            </button>
           </div>
         </>
       )}
 
       <span className="toolbar-hint">
-        {drawMode === 'draw'
-          ? 'Clic : point · Double-clic : fin · Échap : annuler'
+        {drawMode === 'draw' && pipeType !== 'point'
+          ? 'Clic : point · Double-clic : fin · Échap : valider · Ctrl+Z : annuler sommet · Espace+Glisser : naviguer'
+          : drawMode === 'draw' && pipeType === 'point'
+          ? 'Clic : créer un point · Clic sur un trait : jonction'
+          : drawMode === 'delete'
+          ? 'Clic sur un élément : supprimer (Ctrl+Z pour annuler)'
           : 'Drag : déplacer la vue · Ctrl+Drag : sélection · Shift+Clic : multi-sélection · Suppr : effacer · Molette : zoom'}
       </span>
     </div>
