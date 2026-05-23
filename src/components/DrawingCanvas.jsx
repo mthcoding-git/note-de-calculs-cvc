@@ -93,6 +93,8 @@ export default function DrawingCanvas({
   onNetworkChange,
   drawMode, pipeType,
   selectedIds, onSelectIds,
+  editLevelsEnabled, editColumnsEnabled,
+  columns, columnXs, onColumnXsChange,
 }) {
   const svgRef     = useRef(null)
   const spaceRef   = useRef(false)
@@ -102,6 +104,7 @@ export default function DrawingCanvas({
   const [tf,        setTf]        = useState({ x: 80, y: 40, k: 1 })
   const [panSt,     setPanSt]     = useState(null)
   const [dragLine,  setDragLine]  = useState(null)
+  const [dragCol,   setDragCol]   = useState(null)   // {idx, screenX, origX}
   const [drawing,   setDrawing]   = useState(null)
   const [mouse,     setMouse]     = useState({ x: 0, y: 0 })
   const [rectSt,    setRectSt]    = useState(null)
@@ -318,6 +321,18 @@ export default function DrawingCanvas({
       })
       return
     }
+    if (dragCol !== null) {
+      const newX = dragCol.origX + (e.clientX - dragCol.screenX) / tf.k
+      onColumnXsChange(xs => {
+        const next = [...xs]
+        const MIN_GAP = 80
+        const maxX = dragCol.idx < xs.length - 1 ? xs[dragCol.idx + 1] - MIN_GAP : Infinity
+        const minX = dragCol.idx > 0             ? xs[dragCol.idx - 1] + MIN_GAP : -Infinity
+        next[dragCol.idx] = Math.max(minX, Math.min(maxX, newX))
+        return next
+      })
+      return
+    }
     if (ptDragRef.current) {
       const dx = e.clientX - ptDragRef.current.startX
       const dy = e.clientY - ptDragRef.current.startY
@@ -331,7 +346,7 @@ export default function DrawingCanvas({
       return
     }
     if (rectSt) setSelRect({ x1: rectSt.x, y1: rectSt.y, x2: pos.x, y2: pos.y })
-  }, [tf, panSt, dragLine, rectSt, onLineYsChange])
+  }, [tf, panSt, dragLine, dragCol, rectSt, onLineYsChange, onColumnXsChange])
 
   // ── mouse down ───────────────────────────────────────
   const onMouseDown = useCallback(e => {
@@ -345,14 +360,6 @@ export default function DrawingCanvas({
       return
     }
     if (e.button !== 0) return
-
-    // Level line drag
-    for (let i = 0; i < lineYs.length; i++) {
-      if (Math.abs(pos.y - lineYs[i]) < 8) {
-        setDragLine({ idx: i, screenY: e.clientY, origY: lineYs[i] })
-        return
-      }
-    }
 
     // ── Delete mode ──
     if (drawMode === 'delete') {
@@ -450,6 +457,7 @@ export default function DrawingCanvas({
   const onMouseUp = useCallback(e => {
     setPanSt(null)
     setDragLine(null)
+    setDragCol(null)
 
     // Click vs pan: deselect only on click
     if (panDownRef.current) {
@@ -555,7 +563,9 @@ export default function DrawingCanvas({
     ? [...drawing.vertices, previewTgt].map((v, i) => `${i ? 'L' : 'M'}${v.x},${v.y}`).join(' ')
     : null
 
-  const cursor = panSt ? 'grabbing'
+  const cursor = dragLine !== null ? 'ns-resize'
+    : dragCol !== null ? 'ew-resize'
+    : panSt ? 'grabbing'
     : ptDragRef.current?.moved ? 'move'
     : drawMode === 'delete' ? 'crosshair'
     : spaceRef.current ? 'grab'
@@ -605,6 +615,39 @@ export default function DrawingCanvas({
           </g>
         ))}
 
+        {/* Column lines */}
+        {(columns ?? []).map((col, i) => {
+          const x1 = (columnXs ?? [])[i], x2 = (columnXs ?? [])[i + 1]
+          if (x1 === undefined || x2 === undefined) return null
+          let yBot, yTop
+          if (col.levelIds === 'all') {
+            yBot = lineYs[0]; yTop = lineYs[lineYs.length - 1]
+          } else {
+            const idxs = (Array.isArray(col.levelIds) ? col.levelIds : [])
+              .map(id => levels.findIndex(l => l.id === id)).filter(x => x >= 0)
+            if (!idxs.length) return null
+            yBot = lineYs[Math.min(...idxs)]
+            yTop = lineYs[Math.max(...idxs) + 1]
+          }
+          return (
+            <g key={col.id} style={{ pointerEvents: 'none' }}>
+              <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
+              <line x1={x2} y1={yTop} x2={x2} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
+              <text x={(x1 + x2) / 2} y={yTop + 14} fontSize={10} fill="#b8c0cc" fontWeight="600"
+                textAnchor="middle" style={{ userSelect: 'none' }}>
+                {col.name}
+              </text>
+            </g>
+          )
+        })}
+        {editColumnsEnabled && (columnXs ?? []).map((x, i) => (
+          <rect key={`cdrag${i}`}
+            x={x - 5} y={lineYs[lineYs.length - 1]}
+            width={10} height={Math.max(0, lineYs[0] - lineYs[lineYs.length - 1])}
+            fill="transparent" style={{ cursor: 'ew-resize' }}
+            onMouseDown={ev => { ev.stopPropagation(); setDragCol({ idx: i, screenX: ev.clientX, origX: x }) }} />
+        ))}
+
         {/* Level lines */}
         {lineYs.map((y, i) => {
           const isToiture = i === lineYs.length - 1
@@ -618,12 +661,11 @@ export default function DrawingCanvas({
                 <text x={14} y={y - 5} fontSize={10} fill="#94a3b8" fontWeight="600"
                   style={{ userSelect: 'none', pointerEvents: 'none' }}>Toiture</text>
               )}
-              <rect x={0} y={y - 6} width={3000} height={12}
-                fill="transparent" style={{ cursor: 'ns-resize' }}
-                onMouseDown={ev => {
-                  ev.stopPropagation()
-                  setDragLine({ idx: i, screenY: ev.clientY, origY: y })
-                }} />
+              {editLevelsEnabled && (
+                <rect x={0} y={y - 6} width={3000} height={12}
+                  fill="transparent" style={{ cursor: 'ns-resize' }}
+                  onMouseDown={ev => { ev.stopPropagation(); setDragLine({ idx: i, screenY: ev.clientY, origY: y }) }} />
+              )}
             </g>
           )
         })}

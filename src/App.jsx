@@ -20,8 +20,18 @@ const DEFAULT_LEVELS = [
   { id: 'r2',  name: 'R+2'  },
   { id: 'r3',  name: 'R+3'  },
 ]
-// 6 valeurs (n+1) : lineYs[0]=fond SS-1, lineYs[5]=Toiture
-const DEFAULT_LINE_YS = [950, 770, 590, 410, 230, 80]
+// 6 valeurs (n+1) : lineYs[0]=fond SS-1, lineYs[5]=Toiture — espacement 210 px
+const DEFAULT_LINE_YS = [1110, 900, 690, 480, 270, 80]
+
+// 5 colonnes par défaut, 6 lignes verticales — espacement 450 px
+const DEFAULT_COLUMNS = [
+  { id: 'col1', name: 'Colonne 1', levelIds: 'all' },
+  { id: 'col2', name: 'Colonne 2', levelIds: 'all' },
+  { id: 'col3', name: 'Colonne 3', levelIds: 'all' },
+  { id: 'col4', name: 'Colonne 4', levelIds: 'all' },
+  { id: 'col5', name: 'Colonne 5', levelIds: 'all' },
+]
+const DEFAULT_COLUMN_XS = [200, 650, 1100, 1550, 2000, 2450]
 
 function initProject() {
   return {
@@ -30,6 +40,8 @@ function initProject() {
     insulations: DEFAULT_INSULATIONS,
     levels: DEFAULT_LEVELS,
     lineYs: DEFAULT_LINE_YS,
+    columns: DEFAULT_COLUMNS,
+    columnXs: DEFAULT_COLUMN_XS,
     segments: [],
     points: [],
   }
@@ -66,10 +78,12 @@ function useHistory(init) {
 
 export default function App() {
   const { project, setProject, undo, redo, canUndo, canRedo } = useHistory(initProject())
-  const [drawMode,    setDrawMode]    = useState('select')
-  const [pipeType,    setPipeType]    = useState('aller')
-  const [selectedIds, setSelectedIds] = useState([])
-  const [panelOpen,   setPanelOpen]   = useState(true)
+  const [drawMode,           setDrawMode]           = useState('select')
+  const [pipeType,           setPipeType]           = useState('aller')
+  const [selectedIds,        setSelectedIds]        = useState([])
+  const [panelOpen,          setPanelOpen]          = useState(true)
+  const [editLevelsEnabled,  setEditLevelsEnabled]  = useState(false)
+  const [editColumnsEnabled, setEditColumnsEnabled] = useState(false)
 
   // Generic updater for any project key
   const update = useCallback((key, valOrFn) => {
@@ -157,10 +171,18 @@ export default function App() {
               lineYs={project.lineYs}
               onLevelsChange={v => update('levels', v)}
               onLineYsChange={v => update('lineYs', v)}
+              editLevelsEnabled={editLevelsEnabled}
+              onEditLevelsChange={setEditLevelsEnabled}
               materials={project.materials}
               onMaterialsChange={v => update('materials', typeof v === 'function' ? v(project.materials) : v)}
               insulations={project.insulations}
               onInsulationsChange={v => update('insulations', typeof v === 'function' ? v(project.insulations) : v)}
+              columns={project.columns}
+              columnXs={project.columnXs}
+              onColumnsChange={v => update('columns', v)}
+              onColumnXsChange={v => update('columnXs', v)}
+              editColumnsEnabled={editColumnsEnabled}
+              onEditColumnsChange={setEditColumnsEnabled}
             />
           )}
         </aside>
@@ -179,6 +201,11 @@ export default function App() {
             pipeType={pipeType}
             selectedIds={selectedIds}
             onSelectIds={setSelectedIds}
+            editLevelsEnabled={editLevelsEnabled}
+            editColumnsEnabled={editColumnsEnabled}
+            columns={project.columns}
+            columnXs={project.columnXs}
+            onColumnXsChange={v => update('columnXs', v)}
           />
         </main>
 
