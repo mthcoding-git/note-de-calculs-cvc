@@ -31,7 +31,7 @@ function Field({ label, unit, children }) {
 function GlobalParamsSection({ params, onChange }) {
   const set = (k, v) => onChange({ ...params, [k]: v })
   return (
-    <Section title="Paramètres généraux">
+    <Section title="Paramètres généraux" defaultOpen={false}>
       <Field label="T° départ" unit="°C">
         <input type="number" value={params.T_depart} onChange={e => set('T_depart', e.target.value)} />
       </Field>
@@ -56,7 +56,8 @@ function GlobalParamsSection({ params, onChange }) {
 
 // ── Levels ─────────────────────────────────────────────
 function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLevelsEnabled, onEditLevelsChange }) {
-  const rename = (id, name) => onLevelsChange(levels.map(l => l.id === id ? { ...l, name } : l))
+  const rename        = (id, name) => onLevelsChange(levels.map(l => l.id === id ? { ...l, name } : l))
+  const toggleSousSol = (id)       => onLevelsChange(levels.map(l => l.id === id ? { ...l, isSousSol: !l.isSousSol } : l))
 
   const moveUp = (i) => {
     if (i >= levels.length - 1) return
@@ -72,7 +73,7 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLev
   }
 
   const addLevel = () => {
-    const newLvl = { id: uid(), name: `R+${levels.length - 1}` }
+    const newLvl = { id: uid(), name: `R+${levels.length - 1}`, isSousSol: false }
     const newYs  = [...lineYs]
     const topY   = newYs[newYs.length - 1]
     const prevY  = newYs[newYs.length - 2]
@@ -92,7 +93,7 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLev
   const displayOrder = [...levels].reverse()
 
   return (
-    <Section title="Niveaux">
+    <Section title="Niveaux" defaultOpen={false}>
       <div className="lp-field">
         <label className="lp-checkbox-label">
           <input type="checkbox" checked={editLevelsEnabled}
@@ -112,6 +113,11 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLev
           const origIdx = levels.indexOf(lvl)
           return (
             <div key={lvl.id} className="lp-level-row">
+              <button
+                className={`lp-icon-btn lp-ss-btn ${lvl.isSousSol ? 'lp-ss-active' : ''}`}
+                onClick={() => toggleSousSol(lvl.id)}
+                title={lvl.isSousSol ? 'Sous-sol (cliquer pour désactiver)' : 'Marquer comme sous-sol'}
+              >SS</button>
               <input
                 className="lp-level-name"
                 value={lvl.name}
@@ -146,11 +152,22 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
     onColumnsChange(cols => {
       const next = [...cols]; [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]; return next
     })
+    onColumnXsChange(xs => {
+      const next = [...xs]
+      // Glisse la frontière partagée : largeur de chaque colonne préservée
+      next[idx] = xs[idx - 1] + (xs[idx + 1] - xs[idx])
+      return next
+    })
   }
   const moveRight = (idx) => {
     if (idx >= columns.length - 1) return
     onColumnsChange(cols => {
       const next = [...cols]; [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]; return next
+    })
+    onColumnXsChange(xs => {
+      const next = [...xs]
+      next[idx + 1] = xs[idx] + (xs[idx + 2] - xs[idx + 1])
+      return next
     })
   }
 
@@ -162,8 +179,14 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
 
   const addCol = () => {
     const newId = uid('col')
-    onColumnsChange(cols => [...cols, { id: newId, name: `Colonne ${cols.length + 1}`, levelIds: 'all' }])
+    onColumnsChange(cols => [...cols, { id: newId, name: `Colonne ${cols.filter(c => !c.isGap).length + 1}`, levelIds: 'all' }])
     onColumnXsChange(xs => [...xs, xs[xs.length - 1] + 450])
+  }
+
+  const addGap = () => {
+    const newId = uid('gap')
+    onColumnsChange(cols => [...cols, { id: newId, name: '', levelIds: 'all', isGap: true }])
+    onColumnXsChange(xs => [...xs, xs[xs.length - 1] + 120])
   }
 
   return (
@@ -181,6 +204,18 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
       <div className="lp-levels-list">
         {columns.map((col, i) => (
           <div key={col.id}>
+            {col.isGap ? (
+              <div className="lp-level-row" style={{ opacity: 0.65 }}>
+                <span style={{ flex: 1, fontSize: 11, color: '#9ca3af', fontStyle: 'italic', paddingLeft: 4 }}>
+                  — Séparation —
+                </span>
+                <div className="lp-level-btns">
+                  <button className="lp-icon-btn" onClick={() => moveLeft(i)} disabled={i <= 0} title="Vers la gauche">◀</button>
+                  <button className="lp-icon-btn" onClick={() => moveRight(i)} disabled={i >= columns.length - 1} title="Vers la droite">▶</button>
+                  <button className="lp-icon-btn danger" onClick={() => removeCol(i)} title="Supprimer">✕</button>
+                </div>
+              </div>
+            ) : (
             <div className="lp-level-row">
               <button className="lp-icon-btn" style={{ flexShrink: 0 }}
                 onClick={() => setExpanded(x => x === col.id ? null : col.id)}>
@@ -194,7 +229,8 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
                 <button className="lp-icon-btn danger" onClick={() => removeCol(i)} disabled={columns.length <= 1} title="Supprimer">✕</button>
               </div>
             </div>
-            {expanded === col.id && (
+            )}
+            {!col.isGap && expanded === col.id && (
               <div style={{ paddingLeft: 22, paddingBottom: 8, paddingTop: 3 }}>
                 <div className="lp-label" style={{ marginBottom: 4 }}>Niveaux couverts :</div>
                 <label className="lp-checkbox-label" style={{ marginBottom: 4 }}>
@@ -224,7 +260,91 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
           </div>
         ))}
       </div>
-      <button className="lp-add-btn" onClick={addCol}>+ Ajouter une colonne</button>
+      <div style={{ display: 'flex', gap: 5, marginTop: 2 }}>
+        <button className="lp-add-btn" style={{ flex: 1 }} onClick={addCol}>+ Ajouter une colonne</button>
+        <button className="lp-add-btn" style={{ flex: 1 }} onClick={addGap}>+ Ajouter une séparation</button>
+      </div>
+    </Section>
+  )
+}
+
+// ── Chaufferie ─────────────────────────────────────────
+const DIR_BTNS = [
+  { label: '↑', rot: 270, title: 'Vers le haut' },
+  { label: '↓', rot: 90,  title: 'Vers le bas' },
+  { label: '←', rot: 180, title: 'Vers la gauche' },
+  { label: '→', rot: 0,   title: 'Vers la droite' },
+]
+
+function ChaufferieSection({
+  chaufferie, onChange, levels, editChaufferie, onEditChaufferieChange,
+  onAddPump, onAddProductionECS, onAddChaufferie, nextPumpRotation, onPumpRotationChange,
+}) {
+  const set = patch => onChange({ ...chaufferie, ...patch })
+
+  return (
+    <Section title="Équipements Chaufferie" defaultOpen={false}>
+
+      {/* Équipements — toujours visible */}
+      <div className="lp-label" style={{ fontWeight: 700, marginBottom: 6, fontSize: 11 }}>Équipements</div>
+      <button className="lp-add-btn" style={{ marginBottom: 8 }} onClick={onAddProductionECS}>
+        + Ajouter une Production ECS
+      </button>
+      <div className="lp-label" style={{ marginBottom: 4 }}>Direction de la pompe :</div>
+      <div style={{ display: 'flex', gap: 3, marginBottom: 6 }}>
+        {DIR_BTNS.map(({ label, rot, title }) => (
+          <button key={rot} className={`lp-icon-btn${nextPumpRotation === rot ? ' active' : ''}`}
+            title={title} style={{ minWidth: 26, fontWeight: 700 }}
+            onClick={() => onPumpRotationChange(rot)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <button className="lp-add-btn" onClick={onAddPump}>+ Ajouter une Pompe bouclage ECS</button>
+      <p className="lp-hint" style={{ marginTop: 4, marginBottom: 8 }}>
+        Cliquez sur le schéma pour placer l'équipement (Échap pour annuler).
+      </p>
+
+      {/* Zone chaufferie */}
+      <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 8 }}>
+        {!chaufferie.placed ? (
+          <button className="lp-add-btn" onClick={onAddChaufferie}>
+            + Définir la zone Chaufferie
+          </button>
+        ) : (
+          <>
+            <div className="lp-field">
+              <label className="lp-checkbox-label">
+                <input type="checkbox" checked={!!chaufferie.enabled}
+                  onChange={e => set({ enabled: e.target.checked })} />
+                <span>Afficher la chaufferie</span>
+              </label>
+            </div>
+            {chaufferie.enabled && (
+              <>
+                <Field label="Niveau de rattachement">
+                  <select value={chaufferie.levelId}
+                    onChange={e => set({ levelId: e.target.value })}>
+                    {[...levels].reverse().map(l => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
+                </Field>
+                <div className="lp-field">
+                  <label className="lp-checkbox-label">
+                    <input type="checkbox" checked={editChaufferie}
+                      onChange={e => onEditChaufferieChange(e.target.checked)} />
+                    <span>Modifier la chaufferie</span>
+                  </label>
+                </div>
+                {editChaufferie && (
+                  <p className="lp-hint">Glissez les bords du rectangle sur le plan pour le redimensionner ou le déplacer horizontalement.</p>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </div>
     </Section>
   )
 }
@@ -247,7 +367,7 @@ function MaterialsSection({ materials, onChange }) {
   const addCustom   = ()      => onChange(m => [...m, { id: uid('mat'), name: '', enabled: true, lambda: '', dns: [], custom: true }])
 
   return (
-    <Section title="Matériaux des canalisations">
+    <Section title="Matériaux des canalisations" defaultOpen={false}>
       {materials.map(mat => (
         <div key={mat.id} className="lp-mat-block">
           <div className="lp-mat-header">
@@ -281,6 +401,10 @@ function MaterialsSection({ materials, onChange }) {
           {mat.enabled && expanded === mat.id && (
             <>
               <table className="lp-dn-table">
+                {mat.custom
+                  ? <colgroup><col style={{width:'68px'}}/><col style={{width:'64px'}}/><col style={{width:'64px'}}/><col style={{width:'22px'}}/></colgroup>
+                  : <colgroup><col style={{width:'72px'}}/><col style={{width:'68px'}}/><col style={{width:'68px'}}/></colgroup>
+                }
                 <thead>
                   <tr><th>DN</th><th>Di (mm)</th><th>De (mm)</th>{mat.custom && <th></th>}</tr>
                 </thead>
@@ -330,7 +454,7 @@ function InsulationsSection({ insulations, onChange }) {
   const addCustom   = ()      => onChange(ins => [...ins, { id: uid('ins'), name: '', enabled: true, lambda: '', thicknesses: [], custom: true }])
 
   return (
-    <Section title="Isolants (calorifugeage)">
+    <Section title="Isolants (calorifugeage)" defaultOpen={false}>
       {insulations.map(ins => (
         <div key={ins.id} className="lp-mat-block">
           <div className="lp-mat-header">
@@ -386,10 +510,15 @@ export default function LeftPanel({
   insulations, onInsulationsChange,
   columns, columnXs, onColumnsChange, onColumnXsChange,
   editColumnsEnabled, onEditColumnsChange,
+  chaufferie, onChaufferieChange,
+  editChaufferie, onEditChaufferieChange,
+  onAddPump, onAddProductionECS, onAddChaufferie, nextPumpRotation, onPumpRotationChange,
 }) {
   return (
     <div className="left-panel">
       <GlobalParamsSection params={globalParams} onChange={onGlobalParamsChange} />
+      <MaterialsSection materials={materials} onChange={onMaterialsChange} />
+      <InsulationsSection insulations={insulations} onChange={onInsulationsChange} />
       <LevelsSection
         levels={levels} lineYs={lineYs}
         onLevelsChange={onLevelsChange} onLineYsChange={onLineYsChange}
@@ -401,8 +530,13 @@ export default function LeftPanel({
         levels={levels}
         editColumnsEnabled={editColumnsEnabled} onEditColumnsChange={onEditColumnsChange}
       />
-      <MaterialsSection materials={materials} onChange={onMaterialsChange} />
-      <InsulationsSection insulations={insulations} onChange={onInsulationsChange} />
+      <ChaufferieSection
+        chaufferie={chaufferie} onChange={onChaufferieChange}
+        levels={levels}
+        editChaufferie={editChaufferie} onEditChaufferieChange={onEditChaufferieChange}
+        onAddPump={onAddPump} onAddProductionECS={onAddProductionECS} onAddChaufferie={onAddChaufferie}
+        nextPumpRotation={nextPumpRotation} onPumpRotationChange={onPumpRotationChange}
+      />
     </div>
   )
 }

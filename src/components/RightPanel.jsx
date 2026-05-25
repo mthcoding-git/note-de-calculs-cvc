@@ -1,3 +1,5 @@
+import { getDefaultSegName, getDisplayName, buildECSDistances } from '../utils/naming'
+
 function Field({ label, unit, children }) {
   return (
     <div className="lp-field">
@@ -9,7 +11,7 @@ function Field({ label, unit, children }) {
   )
 }
 
-function SegmentPanel({ seg, onUpdate, materials, insulations }) {
+function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points }) {
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
 
   const enabledMats = materials.filter(m => m.enabled)
@@ -18,15 +20,47 @@ function SegmentPanel({ seg, onUpdate, materials, insulations }) {
   const selIns      = insulations.find(i => i.id === seg.insulationId)
   const dnDef       = selMat?.dns.find(d => d.dn === seg.dn)
 
+  const isDefault   = !seg.name
+  const ecsDistances = buildECSDistances(allSegs, points)
+  const defaultName = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, points, ecsDistances)
+  const displayName = getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, points)
+  const isDuplicate = isDefault && displayName !== defaultName
+
   return (
     <div className="rp-section">
       <h3 className="rp-title">Tronçon</h3>
 
-      <Field label="Nom">
-        <input value={seg.name || ''}
-          onChange={e => set('name', e.target.value)}
-          placeholder={`${seg.startPointId ?? '?'} → ${seg.endPointId ?? '?'}`} />
-      </Field>
+      <div className="lp-field">
+        <label className="lp-label">Nom</label>
+        <div style={{
+          fontSize: 12, lineHeight: 1.5, padding: '4px 7px',
+          background: isDefault ? '#f5f3ff' : '#f9fafb',
+          border: `1px solid ${isDefault ? '#e4dff5' : '#e5e7eb'}`,
+          borderRadius: 4, marginBottom: 5, wordBreak: 'break-word',
+          color: '#111827',
+        }}>
+          {displayName}
+        </div>
+        <input
+          value={seg.name ?? ''}
+          onChange={e => set('name', e.target.value || null)}
+          placeholder="Personnaliser le nom..."
+        />
+        {isDefault
+          ? <span style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, display: 'block' }}>
+              par défaut{isDuplicate && <strong style={{ color: '#f97316' }}> · doublon — voir identifiant ci-dessus</strong>}
+            </span>
+          : <span style={{ fontSize: 10, color: '#6b7280', marginTop: 2, display: 'block' }}>
+              personnalisé · effacez pour rétablir le défaut
+            </span>
+        }
+        <label className="lp-checkbox-label" style={{ marginTop: 6 }}>
+          <input type="checkbox"
+            checked={!!seg.showName}
+            onChange={e => set('showName', e.target.checked || null)} />
+          <span style={{ fontSize: 11, color: '#6b7280' }}>Afficher le nom dans le schéma</span>
+        </label>
+      </div>
 
       <Field label="Réseau">
         <select value={seg.type} onChange={e => set('type', e.target.value)}>
@@ -155,20 +189,74 @@ function SegmentPanel({ seg, onUpdate, materials, insulations }) {
   )
 }
 
+const DIR_BTNS = [
+  { label: '↑', rot: 270, title: 'Vers le haut' },
+  { label: '↓', rot: 90,  title: 'Vers le bas' },
+  { label: '←', rot: 180, title: 'Vers la gauche' },
+  { label: '→', rot: 0,   title: 'Vers la droite' },
+]
+
 function PointPanel({ pt, onUpdate }) {
+  const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
+
+  if (pt.type === 'pump') {
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title">Pompe</h3>
+        <Field label="Nom">
+          <input value={pt.name ?? ''} onChange={e => set('name', e.target.value || null)} />
+        </Field>
+        <Field label="Direction">
+          <div style={{ display: 'flex', gap: 3 }}>
+            {DIR_BTNS.map(btn => (
+              <button key={btn.rot}
+                className={`lp-icon-btn${(pt.rotation ?? 0) === btn.rot ? ' active' : ''}`}
+                title={btn.title} style={{ minWidth: 26, fontWeight: 700 }}
+                onClick={() => set('rotation', btn.rot)}>
+                {btn.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field label="Rayon" unit="px">
+          <input type="number" min="8" max="40" step="1"
+            value={pt.size ?? 12}
+            onChange={e => set('size', Math.max(8, Math.min(40, +e.target.value)))} />
+        </Field>
+      </div>
+    )
+  }
+
+  if (pt.type === 'productionECS') {
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title">Production ECS</h3>
+        <Field label="Largeur" unit="px">
+          <input type="number" min="30" step="1"
+            value={pt.size?.w ?? 44}
+            onChange={e => set('size', { ...(pt.size ?? { w: 44, h: 28 }), w: Math.max(30, +e.target.value) })} />
+        </Field>
+        <Field label="Hauteur" unit="px">
+          <input type="number" min="20" step="1"
+            value={pt.size?.h ?? 28}
+            onChange={e => set('size', { ...(pt.size ?? { w: 44, h: 28 }), h: Math.max(20, +e.target.value) })} />
+        </Field>
+      </div>
+    )
+  }
+
   return (
     <div className="rp-section">
-      <h3 className="rp-title">Point</h3>
-      <Field label="Nom">
-        <input value={pt.name || ''}
-          onChange={e => onUpdate(pt.id, 'point', { name: e.target.value })}
-          placeholder="ex : P1" />
-      </Field>
+      <h3 className="rp-title">Nœud</h3>
+      <p className="lp-hint">Aucune propriété modifiable sur ce nœud.</p>
     </div>
   )
 }
 
-export default function RightPanel({ selectedIds, segments, points, onUpdate, materials, insulations }) {
+export default function RightPanel({
+  selectedIds, segments, points, onUpdate, materials, insulations,
+  levels, lineYs, columns, columnXs, chaufferie,
+}) {
   if (!selectedIds || selectedIds.length === 0) {
     return (
       <div className="rp-section rp-empty">
@@ -191,8 +279,15 @@ export default function RightPanel({ selectedIds, segments, points, onUpdate, ma
   const seg = segments.find(s => s.id === selectedIds[0])
   const pt  = points.find(p => p.id === selectedIds[0])
 
-  if (seg) return <SegmentPanel seg={seg} onUpdate={onUpdate} materials={materials} insulations={insulations} />
-  if (pt)  return <PointPanel pt={pt} onUpdate={onUpdate} />
+  if (seg) return (
+    <SegmentPanel
+      seg={seg} onUpdate={onUpdate} materials={materials} insulations={insulations}
+      allSegs={segments} levels={levels} lineYs={lineYs}
+      columns={columns} columnXs={columnXs} chaufferie={chaufferie}
+      points={points}
+    />
+  )
+  if (pt) return <PointPanel pt={pt} onUpdate={onUpdate} />
 
   return null
 }

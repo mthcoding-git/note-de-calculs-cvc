@@ -8,17 +8,17 @@ import { DEFAULT_INSULATIONS } from './data/insulations'
 import './App.css'
 
 const DEFAULT_GLOBAL_PARAMS = {
-  T_depart: 55, rho: 985, cp: 4180,
+  T_depart: 60, rho: 985, cp: 4180,
   T_amb_ss: 10, T_amb_other: 20, he: 10,
 }
 
 // 5 niveaux SS-1…R+3, du bas vers le haut
 const DEFAULT_LEVELS = [
-  { id: 'ss1', name: 'SS-1' },
-  { id: 'rdc', name: 'RDC'  },
-  { id: 'r1',  name: 'R+1'  },
-  { id: 'r2',  name: 'R+2'  },
-  { id: 'r3',  name: 'R+3'  },
+  { id: 'ss1', name: 'SS-1', isSousSol: true  },
+  { id: 'rdc', name: 'RDC',  isSousSol: false },
+  { id: 'r1',  name: 'R+1',  isSousSol: false },
+  { id: 'r2',  name: 'R+2',  isSousSol: false },
+  { id: 'r3',  name: 'R+3',  isSousSol: false },
 ]
 // 6 valeurs (n+1) : lineYs[0]=fond SS-1, lineYs[5]=Toiture — espacement 210 px
 const DEFAULT_LINE_YS = [1110, 900, 690, 480, 270, 80]
@@ -33,6 +33,17 @@ const DEFAULT_COLUMNS = [
 ]
 const DEFAULT_COLUMN_XS = [200, 650, 1100, 1550, 2000, 2450]
 
+const DEFAULT_CHAUFFERIE = {
+  placed: false,
+  enabled: false,
+  levelId: 'ss1',
+  x1: 1190,
+  x2: 1460,
+  height: 150,
+}
+
+const DEFAULT_POINTS = []
+
 function initProject() {
   return {
     globalParams: DEFAULT_GLOBAL_PARAMS,
@@ -42,8 +53,9 @@ function initProject() {
     lineYs: DEFAULT_LINE_YS,
     columns: DEFAULT_COLUMNS,
     columnXs: DEFAULT_COLUMN_XS,
+    chaufferie: DEFAULT_CHAUFFERIE,
     segments: [],
-    points: [],
+    points: DEFAULT_POINTS,
   }
 }
 
@@ -82,8 +94,12 @@ export default function App() {
   const [pipeType,           setPipeType]           = useState('aller')
   const [selectedIds,        setSelectedIds]        = useState([])
   const [panelOpen,          setPanelOpen]          = useState(true)
-  const [editLevelsEnabled,  setEditLevelsEnabled]  = useState(false)
-  const [editColumnsEnabled, setEditColumnsEnabled] = useState(false)
+  const [editLevelsEnabled,    setEditLevelsEnabled]    = useState(false)
+  const [editColumnsEnabled,   setEditColumnsEnabled]   = useState(false)
+  const [editChaufferie,       setEditChaufferie]       = useState(false)
+  const [placingEquipment,     setPlacingEquipment]     = useState(null)  // null | { type, name, rotation?, size }
+  const [nextPumpRotation,     setNextPumpRotation]     = useState(0)     // rotation applied to next pump placed
+  const [placingChaufferie,    setPlacingChaufferie]    = useState(false)
 
   // Generic updater for any project key
   const update = useCallback((key, valOrFn) => {
@@ -119,6 +135,26 @@ export default function App() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [undo, redo])
+
+  const handleAddPump = () => {
+    const pumps = project.points.filter(p => p.type === 'pump')
+    const count = pumps.length
+    const name = count === 0
+      ? 'Pompe bouclage ECS'
+      : `Pompe bouclage ECS n°${count + 1}`
+    setPlacingEquipment({
+      type: 'pump', name, rotation: nextPumpRotation, size: 12,
+      ...(count === 1 ? { renameFirstPump: pumps[0].id } : {}),
+    })
+  }
+
+  const handleAddProductionECS = () => {
+    setPlacingEquipment({ type: 'productionECS', name: 'Production ECS', size: { w: 44, h: 28 } })
+  }
+
+  const handleAddChaufferie = () => {
+    setPlacingChaufferie(true)
+  }
 
   const handleSave = () => {
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' })
@@ -182,6 +218,15 @@ export default function App() {
               onColumnXsChange={v => update('columnXs', v)}
               editColumnsEnabled={editColumnsEnabled}
               onEditColumnsChange={setEditColumnsEnabled}
+              chaufferie={project.chaufferie}
+              onChaufferieChange={v => update('chaufferie', v)}
+              editChaufferie={editChaufferie}
+              onEditChaufferieChange={setEditChaufferie}
+              onAddPump={handleAddPump}
+              onAddProductionECS={handleAddProductionECS}
+              onAddChaufferie={handleAddChaufferie}
+              nextPumpRotation={nextPumpRotation}
+              onPumpRotationChange={setNextPumpRotation}
             />
           )}
         </aside>
@@ -205,6 +250,13 @@ export default function App() {
             columns={project.columns}
             columnXs={project.columnXs}
             onColumnXsChange={v => update('columnXs', v)}
+            chaufferie={project.chaufferie}
+            onChaufferieChange={v => update('chaufferie', v)}
+            editChaufferie={editChaufferie}
+            placingEquipment={placingEquipment}
+            onPlacingDone={() => setPlacingEquipment(null)}
+            placingChaufferie={placingChaufferie}
+            onPlacingChaufferieDone={() => setPlacingChaufferie(false)}
           />
         </main>
 
@@ -216,6 +268,11 @@ export default function App() {
             onUpdate={updateElement}
             materials={project.materials}
             insulations={project.insulations}
+            levels={project.levels}
+            lineYs={project.lineYs}
+            columns={project.columns}
+            columnXs={project.columnXs}
+            chaufferie={project.chaufferie}
           />
         </aside>
       </div>

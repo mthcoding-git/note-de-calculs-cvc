@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { getDisplayName } from '../utils/naming'
 
 const PT_R       = 4
 const HIT        = 8     // segment click radius
@@ -50,6 +51,7 @@ function nearestOnSegments(pos, segs) {
 }
 
 // Returns 'h', 'v', or 'free' based on connected segment directions at ptId
+// T-junction: 2h+1v → 'h' (horizontal base, vertical arm follows); 1h+2v → 'v'
 function getDragConstraint(ptId, segs) {
   const connected = segs.filter(s => s.startPointId === ptId || s.endPointId === ptId)
   if (!connected.length) return 'free'
@@ -59,43 +61,380 @@ function getDragConstraint(ptId, segs) {
     const [a, b] = seg.startPointId === ptId ? [vs[0], vs[1]] : [vs[vs.length - 2], vs[vs.length - 1]]
     return Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
   })
-  if (dirs.every(d => d === 'h')) return 'h'
-  if (dirs.every(d => d === 'v')) return 'v'
+  const hCount = dirs.filter(d => d === 'h').length
+  const vCount = dirs.filter(d => d === 'v').length
+  if (vCount === 0) return 'h'
+  if (hCount === 0) return 'v'
+  if (hCount >= 2 && vCount === 1) return 'h'
+  if (vCount >= 2 && hCount === 1) return 'v'
   return 'free'
 }
 
-// Attempts to merge two segments through ptId; returns {merged, remove} or null
-function mergeAroundPt(ptId, segs) {
-  const toEnd   = segs.filter(s => s.endPointId   === ptId)
-  const toStart = segs.filter(s => s.startPointId === ptId)
-  if (toEnd.length !== 1 || toStart.length !== 1) return null
-  const s1 = toEnd[0], s2 = toStart[0]
-  if (s1.type !== s2.type) return null
+// Delete a junction node: pair collinear segments of same type and merge them.
+// Unpaired (orphan) segments get a new endpoint node placed at the original position.
+function deleteNodeFromNetwork(ptId, segs, pts) {
+  const pt = pts.find(p => p.id === ptId)
+  if (!pt) return { newSegs: segs, newPts: pts.filter(p => p.id !== ptId) }
+
+  const ending   = segs.filter(s => s.endPointId   === ptId)
+  const starting = segs.filter(s => s.startPointId === ptId)
+
+  const edgeDir = (a, b) => Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
+
+  const resultSegs = []
+  const removeIds  = new Set()
+  const usedEnd    = new Set()
+  const usedStart  = new Set()
+
+  for (const s1 of ending) {
+    if (usedEnd.has(s1.id)) continue
+    const vs1 = s1.vertices; if (vs1.length < 2) continue
+    const dir1 = edgeDir(vs1[vs1.length - 2], vs1[vs1.length - 1])
+    for (const s2 of starting) {
+      if (usedStart.has(s2.id) || s2.type !== s1.type) continue
+      const vs2 = s2.vertices; if (vs2.length < 2) continue
+      if (edgeDir(vs2[0], vs2[1]) !== dir1) continue
+      resultSegs.push({ ...s1, id: uid('T'), vertices: [...vs1, ...vs2.slice(1)], endPointId: s2.endPointId })
+      removeIds.add(s1.id); removeIds.add(s2.id)
+      usedEnd.add(s1.id);   usedStart.add(s2.id)
+      break
+    }
+  }
+
+  const orphanE = ending.filter(s => !usedEnd.has(s.id))
+  const orphanS = starting.filter(s => !usedStart.has(s.id))
+  const extraPts = []
+  if (orphanE.length || orphanS.length) {
+    const np = { id: uid('P'), name: pt.name ?? '', x: pt.x, y: pt.y }
+    extraPts.push(np)
+    orphanE.forEach(s => { resultSegs.push({ ...s, endPointId:   np.id }); removeIds.add(s.id) })
+    orphanS.forEach(s => { resultSegs.push({ ...s, startPointId: np.id }); removeIds.add(s.id) })
+  }
+
   return {
-    merged: { ...s1, id: uid('T'), vertices: [...s1.vertices, ...s2.vertices.slice(1)], endPointId: s2.endPointId },
-    remove: [s1.id, s2.id],
+    newSegs: segs.filter(s => !removeIds.has(s.id)).concat(resultSegs),
+    newPts:  pts.filter(p => p.id !== ptId).concat(extraPts),
   }
 }
 
-// Remove points that are no longer referenced by any segment
-function pruneOrphan(segs, pts) {
-  const used = new Set(segs.flatMap(s => [s.startPointId, s.endPointId]))
-  return pts.filter(p => used.has(p.id))
+// Direction of a segment ('h', 'v', or null)
+function getSegmentDir(seg) {
+  const vs = seg.vertices
+  if (vs.length < 2) return null
+  const dx = Math.abs(vs[vs.length - 1].x - vs[0].x)
+  const dy = Math.abs(vs[vs.length - 1].y - vs[0].y)
+  if (dx === 0 && dy === 0) return null
+  return dx >= dy ? 'h' : 'v'
 }
 
-// True if pt lies strictly between a and b on the segment axis
-function isOnSegmentEdge(pt, a, b) {
-  if (Math.abs(b.x - a.x) > Math.abs(b.y - a.y)) {
-    const lo = Math.min(a.x, b.x), hi = Math.max(a.x, b.x)
-    return pt.x > lo && pt.x < hi
-  } else {
-    const lo = Math.min(a.y, b.y), hi = Math.max(a.y, b.y)
-    return pt.y > lo && pt.y < hi
+// Remove intermediate vertices that make two consecutive edges share the same axis,
+// and skip zero-length edges (duplicate consecutive vertices).
+// [A, M, B] where A→M and M→B are both horizontal → [A, B].
+// [A, A, B] (zero-length first edge) → [A, B].
+function collapseCollinear(vertices) {
+  if (vertices.length < 2) return vertices
+  const result = [vertices[0]]
+  for (let i = 1; i < vertices.length; i++) {
+    const curr = vertices[i]
+    const prev = result[result.length - 1]
+    if (curr.x === prev.x && curr.y === prev.y) continue  // arête longueur zéro
+    if (result.length >= 2) {
+      const pp   = result[result.length - 2]
+      const abH  = Math.abs(prev.x - pp.x)   >= Math.abs(prev.y - pp.y)
+      const bcH  = Math.abs(curr.x - prev.x) >= Math.abs(curr.y - prev.y)
+      if (abH === bcH) { result[result.length - 1] = curr; continue }
+    }
+    result.push(curr)
   }
+  return result
+}
+
+function collapseSegs(segs) {
+  return segs.map(s => {
+    const vs = collapseCollinear(s.vertices)
+    return vs.length < s.vertices.length ? { ...s, vertices: vs } : s
+  })
+}
+
+// Move a segment sub-edge perpendicularly by delta.
+// Horizontal edge: the entire connected horizontal bar (all sub-edges at same Y, reachable via shared nodes)
+//   moves together; connected vertical segments stretch.
+// Vertical edge: only this sub-edge moves (original per-sub-edge behaviour).
+function computeSegMove(segId, subIdx, delta, segs, pts) {
+  const seg = segs.find(s => s.id === segId)
+  if (!seg) return { newSegs: segs, newPts: pts }
+  const vs = seg.vertices
+  if (vs.length < 2 || subIdx < 0 || subIdx >= vs.length - 1) return { newSegs: segs, newPts: pts }
+  const a = vs[subIdx], b = vs[subIdx + 1]
+  const edgeDir = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
+
+  if (edgeDir === 'h') {
+    const barY = a.y
+    const onBarY = v => v.y === barY
+
+    // BFS : trouver tous les tronçons ayant un sous-trait horizontal au même Y, reliés entre eux
+    const barSegIds  = new Set()
+    const visitedSids = new Set()
+    const queue = [segId]
+    while (queue.length > 0) {
+      const sid = queue.shift()
+      if (visitedSids.has(sid)) continue
+      visitedSids.add(sid)
+      const s = segs.find(x => x.id === sid)
+      if (!s) continue
+      const hasBarEdge = s.vertices.some((v, i) => {
+        if (i >= s.vertices.length - 1) return false
+        const w = s.vertices[i + 1]
+        return Math.abs(w.x - v.x) >= Math.abs(w.y - v.y) && v.y === barY
+      })
+      if (!hasBarEdge && sid !== segId) continue
+      barSegIds.add(sid)
+      // Suivre les connexions aux extrémités situées sur la barre
+      if (onBarY(s.vertices[0]))
+        segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.startPointId || x.endPointId === s.startPointId)) queue.push(x.id) })
+      if (onBarY(s.vertices[s.vertices.length - 1]))
+        segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.endPointId || x.endPointId === s.endPointId)) queue.push(x.id) })
+    }
+
+    // Nœuds terminaux des tronçons de la barre qui sont au barY
+    const barNodeIds = new Set()
+    for (const sid of barSegIds) {
+      const s = segs.find(x => x.id === sid)
+      if (!s) continue
+      if (onBarY(s.vertices[0]))                        barNodeIds.add(s.startPointId)
+      if (onBarY(s.vertices[s.vertices.length - 1]))    barNodeIds.add(s.endPointId)
+    }
+
+    const applyDelta = v => ({ ...v, y: snap(v.y + delta) })
+    const newPts = pts.map(p => barNodeIds.has(p.id) ? applyDelta(p) : p)
+    const newSegs = segs.map(s => {
+      if (barSegIds.has(s.id))
+        return { ...s, vertices: s.vertices.map(v => onBarY(v) ? applyDelta(v) : v) }
+      // Tronçons verticaux connectés à la barre : étirer l'extrémité qui bouge
+      const v = [...s.vertices]; let changed = false
+      if (barNodeIds.has(s.startPointId)) { v[0]            = applyDelta(v[0]);            changed = true }
+      if (barNodeIds.has(s.endPointId))   { v[v.length - 1] = applyDelta(v[v.length - 1]); changed = true }
+      return changed ? { ...s, vertices: v } : s
+    })
+    return { newSegs: collapseSegs(newSegs), newPts }
+  }
+
+  // Arête verticale : BFS colonne — tous les tronçons verticaux au même X, reliés entre eux
+  const barX    = a.x
+  const onBarX  = v => v.x === barX
+  const applyDelta = v => ({ ...v, x: snap(v.x + delta) })
+
+  const colSegIds   = new Set()
+  const visitedSids = new Set()
+  const queue = [segId]
+  while (queue.length > 0) {
+    const sid = queue.shift()
+    if (visitedSids.has(sid)) continue
+    visitedSids.add(sid)
+    const s = segs.find(x => x.id === sid)
+    if (!s) continue
+    const hasColEdge = s.vertices.some((v, i) => {
+      if (i >= s.vertices.length - 1) return false
+      const w = s.vertices[i + 1]
+      return Math.abs(w.y - v.y) > Math.abs(w.x - v.x) && v.x === barX
+    })
+    if (!hasColEdge && sid !== segId) continue
+    colSegIds.add(sid)
+    if (onBarX(s.vertices[0]))
+      segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.startPointId || x.endPointId === s.startPointId)) queue.push(x.id) })
+    if (onBarX(s.vertices[s.vertices.length - 1]))
+      segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.endPointId || x.endPointId === s.endPointId)) queue.push(x.id) })
+  }
+
+  const colNodeIds = new Set()
+  for (const sid of colSegIds) {
+    const s = segs.find(x => x.id === sid)
+    if (!s) continue
+    if (onBarX(s.vertices[0]))                      colNodeIds.add(s.startPointId)
+    if (onBarX(s.vertices[s.vertices.length - 1]))  colNodeIds.add(s.endPointId)
+  }
+
+  const newPts = pts.map(p => colNodeIds.has(p.id) ? applyDelta(p) : p)
+  const newSegs = segs.map(s => {
+    if (colSegIds.has(s.id))
+      return { ...s, vertices: s.vertices.map(v => onBarX(v) ? applyDelta(v) : v) }
+    const v = [...s.vertices]; let changed = false
+    if (colNodeIds.has(s.startPointId)) { v[0]            = applyDelta(v[0]);            changed = true }
+    if (colNodeIds.has(s.endPointId))   { v[v.length - 1] = applyDelta(v[v.length - 1]); changed = true }
+    return changed ? { ...s, vertices: v } : s
+  })
+  return { newSegs: collapseSegs(newSegs), newPts }
+}
+
+// Move a node to np maintaining orthogonality.
+// T-junction (2+ segs along movAxis): perpendicular arm moves rigidly.
+// L-corner (exactly 1 seg per axis): a bend vertex is inserted in the perpendicular segment
+//   so the far end stays fixed and the corner "turns the corner".
+function computeNodeMove(ptId, np, segs, pts, constraintOverride = null) {
+  const origPt = pts.find(p => p.id === ptId)
+  if (!origPt) return { newSegs: segs, newPts: pts }
+  const dx = np.x - origPt.x, dy = np.y - origPt.y
+  if (dx === 0 && dy === 0) return { newSegs: segs, newPts: pts }
+  const constraint = constraintOverride ?? getDragConstraint(ptId, segs)
+  const movAxis = dx !== 0 ? 'h' : 'v'
+  const connected = segs.filter(s => s.startPointId === ptId || s.endPointId === ptId)
+
+  const edgeAxisAt = seg => {
+    const vs = seg.vertices; if (vs.length < 2) return null
+    const isEnd = seg.endPointId === ptId
+    const [a, b] = isEnd ? [vs[vs.length - 2], vs[vs.length - 1]] : [vs[0], vs[1]]
+    return Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
+  }
+
+  // L-corner: exactly 2 connected segments, exactly 1 along movAxis → introduce a bend
+  const segsAlongAxis = connected.filter(s => edgeAxisAt(s) === movAxis).length
+  const isLCorner = constraint !== 'free' && connected.length === 2 && segsAlongAxis === 1
+
+  const rigidPtIds = new Set()
+  if (constraint !== 'free' && !isLCorner) {
+    for (const seg of connected) {
+      const vs = seg.vertices; if (vs.length < 2) continue
+      const isEnd = seg.endPointId === ptId
+      const segAxis = edgeAxisAt(seg)
+      if (segAxis !== movAxis) rigidPtIds.add(isEnd ? seg.startPointId : seg.endPointId)
+    }
+  }
+
+  const newPts = pts.map(p => {
+    if (p.id === ptId) return { ...p, x: snap(origPt.x + dx), y: snap(origPt.y + dy) }
+    if (rigidPtIds.has(p.id)) return { ...p, x: snap(p.x + dx), y: snap(p.y + dy) }
+    return p
+  })
+
+  const newSegs = segs.map(seg => {
+    const isMainStart = seg.startPointId === ptId, isMainEnd = seg.endPointId === ptId
+    const isRigidStart = !isMainStart && rigidPtIds.has(seg.startPointId)
+    const isRigidEnd   = !isMainEnd   && rigidPtIds.has(seg.endPointId)
+
+    if (isMainStart || isMainEnd) {
+      const vs = seg.vertices; if (vs.length < 2) return seg
+      const isEnd = isMainEnd
+      const segAxis = edgeAxisAt(seg)
+      const oldEndV = { x: origPt.x, y: origPt.y }
+      const newEndV = { x: snap(origPt.x + dx), y: snap(origPt.y + dy) }
+
+      if (segAxis !== movAxis && isLCorner) {
+        // Introduce a 90° bend: keep old endpoint as intermediate vertex, new position as endpoint
+        return isEnd
+          ? { ...seg, vertices: collapseCollinear([...vs.slice(0, -1), oldEndV, newEndV]) }
+          : { ...seg, vertices: collapseCollinear([newEndV, oldEndV, ...vs.slice(1)]) }
+      }
+      if (segAxis !== movAxis && constraint !== 'free') {
+        // T-junction: rigid body shift of perpendicular arm
+        return { ...seg, vertices: seg.vertices.map(v => ({ x: snap(v.x + dx), y: snap(v.y + dy) })) }
+      }
+      // Same axis: stretch/shorten by moving only the endpoint vertex
+      const v = [...vs], idx = isEnd ? v.length - 1 : 0
+      v[idx] = { x: snap(v[idx].x + dx), y: snap(v[idx].y + dy) }
+      return { ...seg, vertices: v }
+    }
+
+    if (isRigidStart || isRigidEnd) {
+      const v = [...seg.vertices]
+      if (isRigidStart) v[0]            = { x: snap(v[0].x           + dx), y: snap(v[0].y           + dy) }
+      if (isRigidEnd)   v[v.length - 1] = { x: snap(v[v.length-1].x  + dx), y: snap(v[v.length-1].y  + dy) }
+      return { ...seg, vertices: v }
+    }
+    return seg
+  })
+  return { newSegs: collapseSegs(newSegs), newPts }
+}
+
+
+// Renvoie les Y des lignes séparant un niveau sous-sol d'un niveau non-sous-sol
+function getFrontierYs(levels, lineYs) {
+  const ys = []
+  for (let i = 1; i < levels.length; i++) {
+    if (!!levels[i - 1].isSousSol !== !!levels[i].isSousSol) ys.push(lineYs[i])
+  }
+  return ys
+}
+
+// Découpe les segments verticaux aux Y frontières et crée des nœuds verrouillés (idempotent)
+// Étape 1 : supprime les nœuds verrouillés qui ne sont plus sur une frontière et fusionne leurs tronçons
+// Étape 2 : découpe les tronçons qui traversent une frontière
+function applyFrontierSplits(segs, pts, levels, lineYs) {
+  const frontierYs = getFrontierYs(levels, lineYs)
+  let workSegs = segs, workPts = pts, anyChanged = false
+
+  // Étape 1 — nettoyage des nœuds verrouillés invalides
+  // Règles : orphelin → supprimer ; hors frontière avec 2 tronçons → fusionner ;
+  //          hors frontière avec 1 tronçon → déverrouiller (nœud ordinaire)
+  let cleanupChanged = true
+  while (cleanupChanged) {
+    cleanupChanged = false
+    for (const pt of workPts) {
+      if (!pt.isLocked) continue
+      const segIn    = workSegs.find(s => s.endPointId   === pt.id)
+      const segOut   = workSegs.find(s => s.startPointId === pt.id)
+      const atFrontier = frontierYs.includes(pt.y)
+
+      if (!segIn && !segOut) {
+        // Orphelin : aucun tronçon connecté → supprimer
+        workPts = workPts.filter(p => p.id !== pt.id)
+        anyChanged = true; cleanupChanged = true; break
+      }
+
+      if (!atFrontier) {
+        if (segIn && segOut) {
+          // Hors frontière avec deux tronçons → fusionner
+          const mergedVerts = collapseCollinear([...segIn.vertices, ...segOut.vertices.slice(1)])
+          const merged = { ...segIn, id: uid('T'), vertices: mergedVerts, endPointId: segOut.endPointId }
+          workSegs = workSegs.filter(s => s.id !== segIn.id && s.id !== segOut.id).concat([merged])
+          workPts  = workPts.filter(p => p.id !== pt.id)
+        } else {
+          // Hors frontière avec un seul tronçon → déverrouiller
+          workPts = workPts.map(p => p.id === pt.id ? { ...p, isLocked: false } : p)
+        }
+        anyChanged = true; cleanupChanged = true; break
+      }
+    }
+  }
+
+  // Étape 2 — découpe aux frontières
+  if (frontierYs.length) {
+    let loopChanged = true
+    while (loopChanged) {
+      loopChanged = false
+      outer:
+      for (let si = 0; si < workSegs.length; si++) {
+        const seg = workSegs[si]
+        const vs  = seg.vertices
+        for (let vi = 0; vi < vs.length - 1; vi++) {
+          const a = vs[vi], b = vs[vi + 1]
+          if (Math.abs(b.y - a.y) <= Math.abs(b.x - a.x)) continue
+          const x = a.x
+          const yMin = Math.min(a.y, b.y), yMax = Math.max(a.y, b.y)
+          for (const fy of frontierYs) {
+            if (fy <= yMin || fy >= yMax) continue
+            anyChanged = true; loopChanged = true
+            const splitPos = { x, y: fy }
+            let splitPt = workPts.find(p => p.x === x && p.y === fy && p.isLocked)
+            if (!splitPt) {
+              splitPt = { id: uid('F'), name: '', x, y: fy, isLocked: true }
+              workPts = [...workPts, splitPt]
+            }
+            const seg1 = { ...seg, id: uid('T'), vertices: [...vs.slice(0, vi + 1), splitPos], endPointId: splitPt.id }
+            const seg2 = { ...seg, id: uid('T'), vertices: [splitPos, ...vs.slice(vi + 1)], startPointId: splitPt.id }
+            workSegs = workSegs.filter(s => s.id !== seg.id).concat([seg1, seg2])
+            break outer
+          }
+        }
+      }
+    }
+  }
+
+  return anyChanged ? { segs: workSegs, pts: workPts } : null
 }
 
 let _c = 0
 const uid = p => `${p}-${Date.now()}-${++_c}`
+
 
 export default function DrawingCanvas({
   levels, lineYs, onLineYsChange,
@@ -106,24 +445,38 @@ export default function DrawingCanvas({
   selectedIds, onSelectIds,
   editLevelsEnabled, editColumnsEnabled,
   columns, columnXs, onColumnXsChange,
+  chaufferie, onChaufferieChange, editChaufferie,
+  placingEquipment, onPlacingDone,
+  placingChaufferie, onPlacingChaufferieDone,
 }) {
   const svgRef    = useRef(null)
   const spaceRef  = useRef(false)
-  const ptDragRef = useRef(null)  // {ptId, startX, startY, origX, origY, moved, constraint}
+  const ptDragRef    = useRef(null)   // {ptId, startX, startY, origX, origY, moved, constraint}
+  const segDragRef   = useRef(null)   // {segId, dir, startScreenX, startScreenY, origPerp, moved}
+  const blockDragRef = useRef(null)   // {startScreenX, startScreenY, moved}
 
   const [tf,        setTf]        = useState({ x: 80, y: 40, k: 1 })
   const [panSt,     setPanSt]     = useState(null)
   const [dragLine,  setDragLine]  = useState(null)
   const [dragCol,   setDragCol]   = useState(null)   // {idx, screenX, origX}
+  const [dragCh,    setDragCh]    = useState(null)   // {type, screenX, screenY, origX1, origX2, origHeight}
   const [drawing,   setDrawing]   = useState(null)
   const [mouse,     setMouse]     = useState({ x: 0, y: 0 })
   const [rectSt,    setRectSt]    = useState(null)
   const [selRect,   setSelRect]   = useState(null)
-  const [ptDragPos, setPtDragPos] = useState(null)  // live drag {ptId,x,y}
+  const [ptDragPos,    setPtDragPos]    = useState(null)  // live drag {ptId,x,y}
+  const [segDragState, setSegDragState] = useState(null)  // live drag {segId, delta}
+  const [blockDragState, setBlockDragState] = useState(null)  // live drag {dx, dy}
 
   // ── Clear drawing on mode/type change ────────────────
   useEffect(() => { if (drawMode !== 'draw') setDrawing(null) }, [drawMode])
   useEffect(() => { if (pipeType === 'point') setDrawing(null) }, [pipeType])
+
+  // ── Auto-split segments at frontier Ys ───────────────
+  useEffect(() => {
+    const result = applyFrontierSplits(segments, points, levels, lineYs)
+    if (result) onNetworkChange(result.segs, result.pts)
+  }, [segments, points, levels, lineYs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Split segment at position (atomic) ───────────────
   const splitSegment = useCallback((hitInfo, splitPos) => {
@@ -145,7 +498,7 @@ export default function DrawingCanvas({
   const commitDrawing = useCallback((d) => {
     const cur = d ?? drawing
     if (!cur || cur.vertices.length < 2) { setDrawing(null); return }
-    const verts = cur.vertices
+    const verts = collapseCollinear(cur.vertices)
     let startId = cur.startPtId
     const newPts = []
     if (!startId) {
@@ -160,7 +513,7 @@ export default function DrawingCanvas({
       newPts.push(p); endId = p.id
     }
     const seg = {
-      id: uid('T'), name: '', type: cur.type, vertices: verts,
+      id: uid('T'), name: null, showName: null, type: cur.type, vertices: verts,
       startPointId: startId, endPointId: endId,
       materialId: null, dn: null, di_override: null, de_override: null, lambda_tube_override: null,
       insulationId: null, thickness: null, lambda_insul_override: null,
@@ -173,7 +526,13 @@ export default function DrawingCanvas({
   // ── Finalize drawing to explicit endpoint ─────────────
   const finalize = useCallback((endPos, endPtId) => {
     if (!drawing || drawing.vertices.length < 1) return
-    const verts = [...drawing.vertices, endPos]
+    const lastV = drawing.vertices[drawing.vertices.length - 1]
+    const ddx = endPos.x - lastV.x, ddy = endPos.y - lastV.y
+    // Si l'endpoint n'est pas aligné avec le dernier vertex, insérer un coude orthogonal
+    const elbowVerts = (Math.abs(ddx) > 0 && Math.abs(ddy) > 0)
+      ? [Math.abs(ddx) >= Math.abs(ddy) ? { x: endPos.x, y: lastV.y } : { x: lastV.x, y: endPos.y }]
+      : []
+    const verts = collapseCollinear([...drawing.vertices, ...elbowVerts, endPos])
     if (verts.length < 2) return
     let startId = drawing.startPtId
     const newPts = []
@@ -183,11 +542,16 @@ export default function DrawingCanvas({
     }
     let endId = endPtId
     if (!endId) {
-      const p = { id: uid('P'), name: '', x: endPos.x, y: endPos.y }
-      newPts.push(p); endId = p.id
+      const existing = points.find(p => dist(p, endPos) < SNAP)
+      if (existing) {
+        endId = existing.id
+      } else {
+        const p = { id: uid('P'), name: '', x: endPos.x, y: endPos.y }
+        newPts.push(p); endId = p.id
+      }
     }
     const seg = {
-      id: uid('T'), name: '', type: drawing.type, vertices: verts,
+      id: uid('T'), name: null, showName: null, type: drawing.type, vertices: verts,
       startPointId: startId, endPointId: endId,
       materialId: null, dn: null, di_override: null, de_override: null, lambda_tube_override: null,
       insulationId: null, thickness: null, lambda_insul_override: null,
@@ -195,24 +559,14 @@ export default function DrawingCanvas({
     }
     onNetworkChange(s => [...s, seg], p => [...p, ...newPts])
     setDrawing(null)
-  }, [drawing, onNetworkChange])
+  }, [drawing, onNetworkChange, points])
 
-  // ── Delete a point with segment merging ───────────────
+  // ── Delete a point with smart segment merging ─────────
   const deletePoint = useCallback((ptId) => {
-    const op = mergeAroundPt(ptId, segments)
-    if (op) {
-      onNetworkChange(
-        s => s.filter(x => !op.remove.includes(x.id)).concat([op.merged]),
-        p => p.filter(x => x.id !== ptId)
-      )
-    } else {
-      onNetworkChange(
-        s => s.filter(x => x.startPointId !== ptId && x.endPointId !== ptId),
-        p => p.filter(x => x.id !== ptId)
-      )
-    }
+    const { newSegs, newPts } = deleteNodeFromNetwork(ptId, segments, points)
+    onNetworkChange(newSegs, newPts)
     onSelectIds([])
-  }, [segments, onNetworkChange, onSelectIds])
+  }, [segments, points, onNetworkChange, onSelectIds])
 
   // ── Resolve snap target for drawing ──────────────────
   const resolveSnap = useCallback((snapped) => {
@@ -233,6 +587,8 @@ export default function DrawingCanvas({
       if (e.target.matches('input,select,textarea')) return
       if (e.code === 'Space') { e.preventDefault(); spaceRef.current = true }
       if (e.key === 'Escape') {
+        if (placingEquipment !== null) { onPlacingDone(); return }
+        if (placingChaufferie) { onPlacingChaufferieDone(); return }
         if (drawing) commitDrawing()
         else onSelectIds([])
         return
@@ -249,19 +605,15 @@ export default function DrawingCanvas({
         }
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        const delPtIds = selectedIds.filter(id => points.some(p => p.id === id))
+        const delPtIds  = selectedIds.filter(id => points.some(p => p.id === id && !p.isLocked))
         const delSegIds = new Set(selectedIds.filter(id => segments.some(s => s.id === id)))
 
         let newSegs = segments.filter(s => !delSegIds.has(s.id))
         let newPts  = [...points]
         for (const ptId of delPtIds) {
-          const op = mergeAroundPt(ptId, newSegs)
-          if (op) {
-            newSegs = newSegs.filter(s => !op.remove.includes(s.id)).concat([op.merged])
-          } else {
-            newSegs = newSegs.filter(s => s.startPointId !== ptId && s.endPointId !== ptId)
-          }
-          newPts = newPts.filter(p => p.id !== ptId)
+          const result = deleteNodeFromNetwork(ptId, newSegs, newPts)
+          newSegs = result.newSegs
+          newPts  = result.newPts
         }
         onNetworkChange(newSegs, newPts)
         onSelectIds([])
@@ -271,7 +623,7 @@ export default function DrawingCanvas({
     window.addEventListener('keydown', kd)
     window.addEventListener('keyup',   ku)
     return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku) }
-  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds])
+  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone])
 
   // ── zoom ─────────────────────────────────────────────
   const onWheel = useCallback(e => {
@@ -291,25 +643,20 @@ export default function DrawingCanvas({
   }, [onWheel])
 
   // ── hit-test helpers ──────────────────────────────────
-  const nearPt  = useCallback(pos => {
-    let best = null, bestD = PT_HIT
-    for (const p of points) { const d = dist(p, pos); if (d < bestD) { bestD = d; best = p } }
+  const nearPt = useCallback(pos => {
+    let best = null, bestD = Infinity
+    for (const p of points) {
+      const d = dist(p, pos)
+      const r = p.type === 'pump'
+        ? Math.max(PT_HIT, p.size ?? 15)
+        : p.type === 'productionECS'
+        ? Math.max(PT_HIT, Math.max((p.size?.w ?? 44) / 2, (p.size?.h ?? 28) / 2))
+        : PT_HIT
+      if (d < r && d < bestD) { bestD = d; best = p }
+    }
     return best
   }, [points])
 
-  const nearSeg = useCallback(pos => {
-    for (const seg of segments) {
-      const vs = seg.vertices
-      for (let i = 0; i < vs.length - 1; i++) {
-        const a = vs[i], b = vs[i + 1]
-        const l2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2
-        if (!l2) continue
-        const t = Math.max(0, Math.min(1, ((pos.x - a.x) * (b.x - a.x) + (pos.y - a.y) * (b.y - a.y)) / l2))
-        if (dist(pos, { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) }) < HIT) return seg
-      }
-    }
-    return null
-  }, [segments])
 
   // ── mouse move ────────────────────────────────────────
   const onMouseMove = useCallback(e => {
@@ -344,20 +691,68 @@ export default function DrawingCanvas({
       })
       return
     }
-    if (ptDragRef.current) {
-      const dx = e.clientX - ptDragRef.current.startX
-      const dy = e.clientY - ptDragRef.current.startY
-      if (!ptDragRef.current.moved && Math.sqrt(dx * dx + dy * dy) > 4) ptDragRef.current.moved = true
-      if (ptDragRef.current.moved) {
-        const { constraint, origX, origY } = ptDragRef.current
-        const x = constraint === 'v' ? origX : snap(pos.x)
-        const y = constraint === 'h' ? origY : snap(pos.y)
-        setPtDragPos({ ptId: ptDragRef.current.ptId, x, y })
+    if (dragCh !== null && chaufferie) {
+      const MIN_H = 40, MIN_W = 80, MIN_GAP = 40
+      if (dragCh.type === 'top') {
+        const rawH = dragCh.origHeight - (e.clientY - dragCh.screenY) / tf.k
+        const levelIdx = levels.findIndex(l => l.id === chaufferie.levelId)
+        const yBottom  = levelIdx >= 0 ? lineYs[levelIdx] : 0
+        const levelAboveY = (levelIdx >= 0 && levelIdx + 1 < lineYs.length) ? lineYs[levelIdx + 1] : yBottom - 2000
+        const maxH = yBottom - levelAboveY - MIN_GAP
+        onChaufferieChange({ ...chaufferie, height: Math.round(Math.max(MIN_H, Math.min(Math.max(maxH, MIN_H), rawH))) })
+      } else if (dragCh.type === 'left') {
+        const rawX1 = dragCh.origX1 + (e.clientX - dragCh.screenX) / tf.k
+        onChaufferieChange({ ...chaufferie, x1: snap(Math.min(dragCh.origX2 - MIN_W, rawX1)) })
+      } else if (dragCh.type === 'right') {
+        const rawX2 = dragCh.origX2 + (e.clientX - dragCh.screenX) / tf.k
+        onChaufferieChange({ ...chaufferie, x2: snap(Math.max(dragCh.origX1 + MIN_W, rawX2)) })
+      } else if (dragCh.type === 'move') {
+        const rawDx = (e.clientX - dragCh.screenX) / tf.k
+        onChaufferieChange({ ...chaufferie, x1: snap(dragCh.origX1 + rawDx), x2: snap(dragCh.origX2 + rawDx) })
       }
       return
     }
+    if (ptDragRef.current) {
+      const dx = e.clientX - ptDragRef.current.startX
+      const dy = e.clientY - ptDragRef.current.startY
+      if (!ptDragRef.current.moved && Math.sqrt(dx * dx + dy * dy) > 4) {
+        ptDragRef.current.moved = true
+        // Lock axis on first movement for free-constraint nodes (L/+ junctions)
+        if (ptDragRef.current.constraint === 'free') {
+          ptDragRef.current.lockedAxis = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v'
+        }
+      }
+      if (ptDragRef.current.moved) {
+        const { constraint, lockedAxis, origX, origY } = ptDragRef.current
+        const effectiveConstraint = lockedAxis ?? constraint
+        const x = effectiveConstraint === 'v' ? origX : snap(pos.x)
+        const y = effectiveConstraint === 'h' ? origY : snap(pos.y)
+        setPtDragPos({ ptId: ptDragRef.current.ptId, x, y, effectiveConstraint })
+      }
+      return
+    }
+    if (segDragRef.current) {
+      const { dir, startScreenX, startScreenY, origPerp } = segDragRef.current
+      const rawDelta = dir === 'h'
+        ? (e.clientY - startScreenY) / tf.k
+        : (e.clientX - startScreenX) / tf.k
+      if (!segDragRef.current.moved && Math.abs(rawDelta) > 4 / tf.k) segDragRef.current.moved = true
+      if (segDragRef.current.moved) {
+        const delta = snap(origPerp + rawDelta) - origPerp
+        setSegDragState({ segId: segDragRef.current.segId, subIdx: segDragRef.current.subIdx, delta })
+      }
+      return
+    }
+    if (blockDragRef.current) {
+      const dx = (e.clientX - blockDragRef.current.startScreenX) / tf.k
+      const dy = (e.clientY - blockDragRef.current.startScreenY) / tf.k
+      if (!blockDragRef.current.moved && Math.sqrt(dx * dx + dy * dy) > 4 / tf.k)
+        blockDragRef.current.moved = true
+      if (blockDragRef.current.moved) setBlockDragState({ dx, dy })
+      return
+    }
     if (rectSt) setSelRect({ x1: rectSt.x, y1: rectSt.y, x2: pos.x, y2: pos.y })
-  }, [tf, panSt, dragLine, dragCol, rectSt, onLineYsChange, onColumnXsChange])
+  }, [tf, panSt, dragLine, dragCol, dragCh, rectSt, onLineYsChange, onColumnXsChange, chaufferie, onChaufferieChange, levels, lineYs])
 
   // ── mouse down ───────────────────────────────────────
   const onMouseDown = useCallback(e => {
@@ -372,21 +767,52 @@ export default function DrawingCanvas({
     }
     if (e.button !== 0) return
 
-    // ── Delete mode ──
-    if (drawMode === 'delete') {
-      const np = nearPt(pos)
-      if (np) { deletePoint(np.id); return }
-      const ns = nearSeg(pos)
-      if (ns) {
-        onNetworkChange(
-          s => {
-            const newSegs = s.filter(x => x.id !== ns.id)
-            return pruneOrphan(newSegs, null) !== null ? newSegs : newSegs
-          },
-          p => pruneOrphan(segments.filter(s => s.id !== ns.id), p)
-        )
-        return
+    // ── Equipment placement mode ──
+    if (placingEquipment !== null) {
+      const snapped = { x: snap(pos.x), y: snap(pos.y) }
+      const onSeg = nearestOnSegments(snapped, segments)
+      const sp = (onSeg && onSeg.d < HIT) ? onSeg.pt : snapped
+      const newPt = {
+        id: uid('eq'), name: placingEquipment.name, x: sp.x, y: sp.y,
+        type: placingEquipment.type,
+        ...(placingEquipment.type === 'pump'
+          ? { rotation: placingEquipment.rotation ?? 0, size: placingEquipment.size ?? 12 }
+          : { size: placingEquipment.size ?? { w: 44, h: 28 } }),
       }
+      const renameId = placingEquipment.renameFirstPump ?? null
+      const ptsUpdate = p => [
+        ...(renameId
+          ? p.map(x => x.id === renameId ? { ...x, name: 'Pompe bouclage ECS n°1' } : x)
+          : p),
+        newPt,
+      ]
+      if (onSeg && onSeg.d < HIT) {
+        const { seg, subIdx } = onSeg
+        const vs = seg.vertices
+        const seg1 = { ...seg, id: uid('T'), vertices: [...vs.slice(0, subIdx + 1), sp], endPointId: newPt.id }
+        const seg2 = { ...seg, id: uid('T'), vertices: [sp, ...vs.slice(subIdx + 1)], startPointId: newPt.id }
+        onNetworkChange(s => s.filter(x => x.id !== seg.id).concat([seg1, seg2]), ptsUpdate)
+      } else {
+        onNetworkChange(s => s, ptsUpdate)
+      }
+      onPlacingDone()
+      return
+    }
+
+    // ── Chaufferie placement mode ──
+    if (placingChaufferie) {
+      let li = 0
+      for (let i = 0; i < levels.length; i++) {
+        const yBot = lineYs[i], yTop = lineYs[i + 1]
+        if (yTop !== undefined && pos.y > yTop && pos.y <= yBot) { li = i; break }
+      }
+      if (levels.length > 0 && lineYs.length > levels.length && pos.y <= lineYs[levels.length]) {
+        li = levels.length - 1
+      }
+      const w = chaufferie.x2 - chaufferie.x1
+      const newX1 = snap(pos.x - w / 2)
+      onChaufferieChange({ ...chaufferie, placed: true, enabled: true, levelId: levels[li]?.id ?? chaufferie.levelId, x1: newX1, x2: newX1 + w })
+      onPlacingChaufferieDone()
       return
     }
 
@@ -418,52 +844,91 @@ export default function DrawingCanvas({
           setDrawing({ vertices: [sp], startPtId: ptId, type: pipeType })
         }
       } else {
-        const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
-        if (ptId) {
-          finalize(sp, ptId)
-        } else if (onSeg) {
-          const newPt = splitSegment(onSeg, sp)
-          finalize({ x: newPt.x, y: newPt.y }, newPt.id)
+        // Priorité : si le clic brut est proche d'un nœud existant, finaliser vers ce nœud
+        let rawNearPt = null, rawNearD = DRAW_SNAP
+        for (const p of points) {
+          const d = dist(p, pos)
+          if (d < rawNearD) { rawNearD = d; rawNearPt = p }
+        }
+        if (rawNearPt) {
+          finalize({ x: rawNearPt.x, y: rawNearPt.y }, rawNearPt.id)
         } else {
-          setDrawing(d => ({ ...d, vertices: [...d.vertices, sp] }))
+          const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
+          if (ptId) {
+            finalize(sp, ptId)
+          } else if (onSeg) {
+            const newPt = splitSegment(onSeg, sp)
+            finalize({ x: newPt.x, y: newPt.y }, newPt.id)
+          } else {
+            setDrawing(d => {
+              const verts = collapseCollinear([...d.vertices, sp])
+              return { ...d, vertices: verts }
+            })
+          }
         }
       }
       return
     }
 
     // ── Select mode ──
+
+    // Bloc drag : tous les éléments sélectionnés → déplacement libre du bloc entier
+    const allSelected = !e.shiftKey && selectedIds.length > 0
+      && segments.length + points.length > 0
+      && segments.every(s => selectedIds.includes(s.id))
+      && points.every(p => selectedIds.includes(p.id))
+    if (allSelected) {
+      const hitPt  = nearPt(pos)
+      const hitSeg = nearestOnSegments(pos, segments)
+      if (hitPt || hitSeg) {
+        blockDragRef.current = { startScreenX: e.clientX, startScreenY: e.clientY, moved: false }
+        return
+      }
+    }
+
     const np = nearPt(pos)
     if (np) {
       onSelectIds(ids => e.shiftKey
         ? ids.includes(np.id) ? ids.filter(i => i !== np.id) : [...ids, np.id]
         : [np.id])
-      ptDragRef.current = {
-        ptId: np.id, startX: e.clientX, startY: e.clientY,
-        origX: np.x, origY: np.y, moved: false,
-        constraint: getDragConstraint(np.id, segments),
+      if (!np.isLocked) {
+        ptDragRef.current = {
+          ptId: np.id, startX: e.clientX, startY: e.clientY,
+          origX: np.x, origY: np.y, moved: false,
+          constraint: getDragConstraint(np.id, segments), lockedAxis: null,
+        }
       }
       return
     }
-    const ns = nearSeg(pos)
-    if (ns) {
+    const nsInfo = nearestOnSegments(pos, segments)
+    if (nsInfo) {
+      const ns = nsInfo.seg
+      const { subIdx } = nsInfo
       onSelectIds(ids => e.shiftKey
         ? ids.includes(ns.id) ? ids.filter(i => i !== ns.id) : [...ids, ns.id]
         : [ns.id])
+      const a = ns.vertices[subIdx], b = ns.vertices[subIdx + 1]
+      const edgeDir = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
+      const origPerp = edgeDir === 'h' ? a.y : a.x
+      segDragRef.current = { segId: ns.id, subIdx, dir: edgeDir, startScreenX: e.clientX, startScreenY: e.clientY, origPerp, moved: false }
       return
     }
 
     // Empty space → rectangle de sélection (glisser) ou désélection (clic)
     setRectSt(pos)
     setSelRect({ x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y })
-  }, [tf, lineYs, drawMode, drawing, pipeType, nearPt, nearSeg,
+  }, [tf, lineYs, drawMode, drawing, pipeType, nearPt,
       finalize, splitSegment, resolveSnap, deletePoint,
-      segments, onNetworkChange, onSelectIds])
+      segments, points, selectedIds, onNetworkChange, onSelectIds,
+      placingEquipment, onPlacingDone,
+      placingChaufferie, onPlacingChaufferieDone, levels, chaufferie, onChaufferieChange])
 
   // ── mouse up ──────────────────────────────────────────
   const onMouseUp = useCallback(e => {
     setPanSt(null)
     setDragLine(null)
     setDragCol(null)
+    setDragCh(null)
 
     // Commit point drag
     if (ptDragRef.current && ptDragRef.current.moved && ptDragPos) {
@@ -483,7 +948,7 @@ export default function DrawingCanvas({
               const v = [...seg.vertices]; v[v.length - 1] = op; return { ...seg, vertices: v, endPointId: op.id }
             }
             return seg
-          }),
+          }).filter(seg => seg.startPointId !== seg.endPointId),
           p => p.filter(x => x.id !== ptId)
         )
       } else {
@@ -510,48 +975,40 @@ export default function DrawingCanvas({
             p => p.map(x => x.id === ptId ? { ...x, ...np } : x)
           )
         } else {
-          // Priority 2.5: free endpoint dragged inward along its own segment → split + keep endpoint
-          const ownSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
-          let didSplit = false
-          if (ownSegs.length === 1) {
-            const seg = ownSegs[0]
-            const vs  = seg.vertices
-            const isEnd = seg.endPointId === ptId
-            if (vs.length >= 2) {
-              const endV  = isEnd ? vs[vs.length - 1] : vs[0]
-              const anchV = isEnd ? vs[vs.length - 2] : vs[1]
-              if (isOnSegmentEdge(np, anchV, endV)) {
-                const P_new = { id: uid('P'), name: '', x: endV.x, y: endV.y }
-                const seg1  = isEnd
-                  ? { ...seg, id: uid('T'), vertices: [...vs.slice(0, -1), np], endPointId: ptId }
-                  : { ...seg, id: uid('T'), vertices: [np, ...vs.slice(1)],    startPointId: ptId }
-                const seg2  = isEnd
-                  ? { ...seg, id: uid('T'), vertices: [np, endV], startPointId: ptId, endPointId: P_new.id }
-                  : { ...seg, id: uid('T'), vertices: [endV, np], endPointId: ptId, startPointId: P_new.id }
-                onNetworkChange(
-                  s => s.filter(x => x.id !== seg.id).concat([seg1, seg2]),
-                  p => p.map(x => x.id === ptId ? { ...x, ...np } : x).concat([P_new])
-                )
-                didSplit = true
-              }
-            }
-          }
-          if (!didSplit) {
-            // Priority 3: plain move
-            onNetworkChange(
-              s => s.map(seg => {
-                if (seg.startPointId === ptId) { const v = [...seg.vertices]; v[0] = np; return { ...seg, vertices: v } }
-                if (seg.endPointId   === ptId) { const v = [...seg.vertices]; v[v.length - 1] = np; return { ...seg, vertices: v } }
-                return seg
-              }),
-              p => p.map(x => x.id === ptId ? { ...x, ...np } : x)
-            )
-          }
+          // Priority 3: move with cascade (maintains orthogonality for T/L junctions)
+          const { newSegs, newPts } = computeNodeMove(ptId, np, segments, points, ptDragPos.effectiveConstraint)
+          onNetworkChange(newSegs, newPts)
         }
       }
       setPtDragPos(null)
     }
     if (ptDragRef.current) ptDragRef.current = null
+
+    // Commit segment drag
+    if (segDragRef.current) {
+      if (segDragState && segDragState.delta !== 0) {
+        const { newSegs, newPts } = computeSegMove(segDragState.segId, segDragState.subIdx, segDragState.delta, segments, points)
+        onNetworkChange(newSegs, newPts)
+      }
+      setSegDragState(null)
+      segDragRef.current = null
+    }
+
+    // Commit bloc drag
+    if (blockDragRef.current) {
+      if (blockDragState && blockDragRef.current.moved) {
+        const { dx, dy } = blockDragState
+        const newPts = points.map(p =>
+          selectedIds.includes(p.id) ? { ...p, x: snap(p.x + dx), y: snap(p.y + dy) } : p)
+        const newSegs = segments.map(s =>
+          selectedIds.includes(s.id)
+            ? { ...s, vertices: s.vertices.map(v => ({ x: snap(v.x + dx), y: snap(v.y + dy) })) }
+            : s)
+        onNetworkChange(newSegs, newPts)
+      }
+      setBlockDragState(null)
+      blockDragRef.current = null
+    }
 
     // Rect select (ou désélection si clic sans mouvement)
     if (rectSt && selRect) {
@@ -567,13 +1024,20 @@ export default function DrawingCanvas({
       }
       setRectSt(null); setSelRect(null)
     }
-  }, [rectSt, selRect, segments, points, onSelectIds, ptDragPos, onNetworkChange])
+  }, [rectSt, selRect, segments, points, selectedIds, onSelectIds, ptDragPos, segDragState, blockDragState, onNetworkChange])
 
   // ── double-click → end segment ────────────────────────
   const onDblClick = useCallback(e => {
     if (drawMode !== 'draw' || !drawing || pipeType === 'point') return
     e.preventDefault()
     const pos = toCanvas(e, svgRef.current, tf)
+    // Priorité : nœud proche du clic brut
+    let rawNearPt = null, rawNearD = DRAW_SNAP
+    for (const p of points) {
+      const d = dist(p, pos)
+      if (d < rawNearD) { rawNearD = d; rawNearPt = p }
+    }
+    if (rawNearPt) { finalize({ x: rawNearPt.x, y: rawNearPt.y }, rawNearPt.id); return }
     const snapped = drawing.vertices.length
       ? ortho(drawing.vertices[drawing.vertices.length - 1], pos)
       : { x: snap(pos.x), y: snap(pos.y) }
@@ -586,42 +1050,76 @@ export default function DrawingCanvas({
     } else {
       finalize(sp, null)
     }
-  }, [drawMode, drawing, pipeType, tf, finalize, splitSegment, resolveSnap])
+  }, [drawMode, drawing, pipeType, tf, finalize, splitSegment, resolveSnap, points])
 
   // ── preview ───────────────────────────────────────────
   const previewTgt  = drawing && pipeType !== 'point'
     ? ortho(drawing.vertices[drawing.vertices.length - 1], mouse) : null
+
+  // Détecter un snap vers un nœud existant — utilise la position brute de la souris
+  const previewSnap = (() => {
+    if (!drawing || pipeType === 'point') return null
+    const lastV = drawing.vertices[drawing.vertices.length - 1]
+    let best = null, bestD = DRAW_SNAP
+    for (const p of points) {
+      const d = dist(p, mouse)
+      if (d < bestD) { bestD = d; best = p }
+    }
+    if (!best) return null
+    const pdx = best.x - lastV.x, pdy = best.y - lastV.y
+    const elbow = (Math.abs(pdx) > 0 && Math.abs(pdy) > 0)
+      ? (Math.abs(pdx) >= Math.abs(pdy) ? { x: best.x, y: lastV.y } : { x: lastV.x, y: best.y })
+      : null
+    return { snapPt: best, elbow }
+  })()
+
   const previewPath = previewTgt
-    ? [...drawing.vertices, previewTgt].map((v, i) => `${i ? 'L' : 'M'}${v.x},${v.y}`).join(' ')
+    ? (() => {
+        const tgt   = previewSnap ? previewSnap.snapPt : previewTgt
+        const extra = previewSnap?.elbow ? [previewSnap.elbow] : []
+        return [...drawing.vertices, ...extra, tgt].map((v, i) => `${i ? 'L' : 'M'}${v.x},${v.y}`).join(' ')
+      })()
     : null
 
   const cursor = dragLine !== null ? 'ns-resize'
     : dragCol !== null ? 'ew-resize'
+    : dragCh?.type === 'top' ? 'ns-resize'
+    : dragCh?.type === 'left' || dragCh?.type === 'right' ? 'ew-resize'
+    : dragCh?.type === 'move' ? 'move'
+    : placingEquipment !== null || placingChaufferie ? 'crosshair'
     : panSt ? 'grabbing'
+    : blockDragRef.current?.moved ? 'move'
+    : segDragState ? 'move'
     : ptDragRef.current?.moved ? 'move'
-    : drawMode === 'delete' ? 'crosshair'
     : spaceRef.current ? 'grab'
     : drawMode === 'draw' ? 'crosshair'
     : 'default'
 
-  const zones     = levels.map((lvl, i) => ({ ...lvl, yBot: lineYs[i], yTop: lineYs[i + 1] }))
-  const contentW  = Math.max(3000, ((columnXs ?? []).at(-1) ?? 0) + 400)
+  const zones      = levels.map((lvl, i) => ({ ...lvl, yBot: lineYs[i], yTop: lineYs[i + 1] }))
+  const contentW   = Math.max(3000, ((columnXs ?? []).at(-1) ?? 0) + 400)
+  const frontierYs = getFrontierYs(levels, lineYs)
 
   // Live drag overrides for rendering
-  const renderPts = ptDragPos
-    ? points.map(p => p.id === ptDragPos.ptId ? { ...p, x: ptDragPos.x, y: ptDragPos.y } : p)
-    : points
-  const renderSegs = ptDragPos
-    ? segments.map(seg => {
-        if (seg.startPointId === ptDragPos.ptId) {
-          const v = [...seg.vertices]; v[0] = { x: ptDragPos.x, y: ptDragPos.y }; return { ...seg, vertices: v }
-        }
-        if (seg.endPointId === ptDragPos.ptId) {
-          const v = [...seg.vertices]; v[v.length - 1] = { x: ptDragPos.x, y: ptDragPos.y }; return { ...seg, vertices: v }
-        }
-        return seg
-      })
-    : segments
+  const { renderSegs, renderPts } = (() => {
+    if (blockDragState) {
+      const { dx, dy } = blockDragState
+      return {
+        renderSegs: segments.map(s => selectedIds.includes(s.id)
+          ? { ...s, vertices: s.vertices.map(v => ({ x: v.x + dx, y: v.y + dy })) } : s),
+        renderPts: points.map(p => selectedIds.includes(p.id)
+          ? { ...p, x: p.x + dx, y: p.y + dy } : p),
+      }
+    }
+    if (segDragState) {
+      const { newSegs, newPts } = computeSegMove(segDragState.segId, segDragState.subIdx, segDragState.delta, segments, points)
+      return { renderSegs: newSegs, renderPts: newPts }
+    }
+    if (ptDragPos) {
+      const { newSegs, newPts } = computeNodeMove(ptDragPos.ptId, { x: ptDragPos.x, y: ptDragPos.y }, segments, points, ptDragPos.effectiveConstraint)
+      return { renderSegs: newSegs, renderPts: newPts }
+    }
+    return { renderSegs: segments, renderPts: points }
+  })()
 
   return (
     <svg
@@ -662,11 +1160,12 @@ export default function DrawingCanvas({
             yBot = lineYs[Math.min(...idxs)]
             yTop = lineYs[Math.max(...idxs) + 1]
           }
+          if (col.isGap) return <g key={col.id} />
           return (
             <g key={col.id} style={{ pointerEvents: 'none' }}>
               <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
               <line x1={x2} y1={yTop} x2={x2} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
-              <text x={(x1 + x2) / 2} y={yTop + 14} fontSize={10} fill="#b8c0cc" fontWeight="600"
+              <text x={(x1 + x2) / 2} y={yTop + 16} fontSize={12} fill="#b8c0cc" fontWeight="600"
                 textAnchor="middle" style={{ userSelect: 'none' }}>
                 {col.name}
               </text>
@@ -681,18 +1180,59 @@ export default function DrawingCanvas({
             onMouseDown={ev => { ev.stopPropagation(); setDragCol({ idx: i, screenX: ev.clientX, origX: x }) }} />
         ))}
 
+        {/* Chaufferie */}
+        {chaufferie?.enabled && (() => {
+          const levelIdx = levels.findIndex(l => l.id === chaufferie.levelId)
+          if (levelIdx < 0 || levelIdx >= lineYs.length) return null
+          const yBot = lineYs[levelIdx]
+          const yTop = yBot - chaufferie.height
+          const { x1, x2 } = chaufferie
+          const H = 6
+          return (
+            <g key="chaufferie">
+              <rect x={x1} y={yTop} width={x2 - x1} height={chaufferie.height}
+                fill="rgba(238,242,255,0.5)" stroke="#818cf8" strokeWidth={1.5}
+                style={{ pointerEvents: 'none' }} />
+              <text x={(x1 + x2) / 2} y={yTop + 13}
+                fontSize={10} fill="#818cf8" fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none', pointerEvents: 'none' }}>Chaufferie</text>
+              {editChaufferie && (
+                <>
+                  <rect x={x1 + H} y={yTop + H} width={x2 - x1 - H * 2} height={chaufferie.height - H * 2}
+                    fill="transparent" style={{ cursor: 'move' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragCh({ type: 'move', screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: chaufferie.height }) }} />
+                  <rect x={x1} y={yTop - H} width={x2 - x1} height={H * 2}
+                    fill="transparent" style={{ cursor: 'ns-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragCh({ type: 'top', screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: chaufferie.height }) }} />
+                  <rect x={x1 - H} y={yTop} width={H * 2} height={chaufferie.height}
+                    fill="transparent" style={{ cursor: 'ew-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragCh({ type: 'left', screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: chaufferie.height }) }} />
+                  <rect x={x2 - H} y={yTop} width={H * 2} height={chaufferie.height}
+                    fill="transparent" style={{ cursor: 'ew-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragCh({ type: 'right', screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: chaufferie.height }) }} />
+                </>
+              )}
+            </g>
+          )
+        })()}
+
         {/* Level lines */}
         {lineYs.map((y, i) => {
-          const isToiture = i === lineYs.length - 1
+          const isToiture  = i === lineYs.length - 1
+          const isFrontier = frontierYs.includes(y)
           return (
             <g key={`ln${i}`}>
               <line x1={0} y1={y} x2={contentW} y2={y}
-                stroke={isToiture ? '#94a3b8' : '#cbd5e1'}
-                strokeWidth={isToiture ? 1.5 : 1}
+                stroke={isToiture ? '#94a3b8' : isFrontier ? '#8899b0' : '#cbd5e1'}
+                strokeWidth={isToiture || isFrontier ? 1.5 : 1}
                 strokeDasharray={isToiture ? '8,5' : 'none'} />
               {isToiture && (
                 <text x={14} y={y - 5} fontSize={10} fill="#94a3b8" fontWeight="600"
                   style={{ userSelect: 'none', pointerEvents: 'none' }}>Toiture</text>
+              )}
+              {isFrontier && (
+                <text x={14} y={y - 5} fontSize={10} fill="#8899b0" fontWeight="600"
+                  style={{ userSelect: 'none', pointerEvents: 'none' }}>Séparation sous-sol</text>
               )}
               {editLevelsEnabled && (
                 <rect x={0} y={y - 6} width={contentW} height={12}
@@ -724,10 +1264,28 @@ export default function DrawingCanvas({
                 stroke={sel ? '#2563eb' : col} strokeWidth={sel ? 2.5 : 1.5}
                 strokeDasharray={sel ? 'none' : dash} fill="none"
                 style={{ pointerEvents: 'none' }} />
-              {seg.name && (() => {
+              {seg.showName && (() => {
+                const label = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts)
+                if (!label) return null
+                const raw = label.split(' → ')
+                const lines = raw.length >= 2
+                  ? [raw[0], '→ ' + raw.slice(1).join(' → ')]
+                  : [label]
                 const v = seg.vertices[Math.floor(seg.vertices.length / 2)] || seg.vertices[0]
-                return <text x={v.x + 4} y={v.y - 5} fontSize={9} fill={col} fontWeight="600"
-                  style={{ pointerEvents: 'none', userSelect: 'none' }}>{seg.name}</text>
+                const LH = 11, PAD = 3, CW = 5.1
+                const bgW = Math.max(...lines.map(l => l.length)) * CW + PAD * 2
+                const bgH = lines.length * LH + PAD * 2
+                const bx = v.x + 4, by = v.y - bgH - 5
+                return (
+                  <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                    <rect x={bx - PAD} y={by} width={bgW} height={bgH}
+                      fill="rgba(255,255,255,0.88)" stroke={col} strokeWidth={0.4} rx={2} />
+                    {lines.map((line, i) => (
+                      <text key={i} x={bx} y={by + PAD + (i + 1) * LH - 1}
+                        fontSize={9} fill={col} fontWeight="600">{line}</text>
+                    ))}
+                  </g>
+                )
               })()}
             </g>
           )
@@ -737,23 +1295,56 @@ export default function DrawingCanvas({
         {renderPts.map(pt => {
           const sel     = selectedIds.includes(pt.id)
           const dragged = ptDragPos?.ptId === pt.id
+          if (pt.isLocked) {
+            return (
+              <g key={pt.id} style={{ pointerEvents: 'none' }}>
+                <polygon
+                  points={`${pt.x},${pt.y - 6} ${pt.x + 6},${pt.y} ${pt.x},${pt.y + 6} ${pt.x - 6},${pt.y}`}
+                  fill="#fff7ed" stroke="#94a3b8" strokeWidth={1.5} />
+              </g>
+            )
+          }
+          const selClick = ev => {
+            ev.stopPropagation()
+            onSelectIds(ids => ev.shiftKey
+              ? ids.includes(pt.id) ? ids.filter(i => i !== pt.id) : [...ids, pt.id]
+              : [pt.id])
+          }
+          if (pt.type === 'pump') {
+            const r = pt.size ?? 15, ts = r / 15
+            return (
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+                <circle cx={pt.x} cy={pt.y} r={r + 4} fill="transparent" />
+                <g transform={`translate(${pt.x},${pt.y}) rotate(${pt.rotation ?? 0})`} style={{ pointerEvents: 'none' }}>
+                  <circle r={r} fill={sel || dragged ? '#dbeafe' : 'rgba(238,242,255,0.97)'} stroke={sel || dragged ? '#2563eb' : '#4f46e5'} strokeWidth={1.5} />
+                  <polygon points={`${-6*ts},${-7*ts} ${-6*ts},${7*ts} ${8*ts},0`} fill={sel || dragged ? '#2563eb' : '#4f46e5'} />
+                </g>
+              </g>
+            )
+          }
+          if (pt.type === 'productionECS') {
+            const w = pt.size?.w ?? 44, h = pt.size?.h ?? 28
+            const fs = Math.max(6, Math.min(9, h * 0.28))
+            const col = sel || dragged ? '#2563eb' : '#4f46e5'
+            return (
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+                <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
+                <g style={{ pointerEvents: 'none' }}>
+                  <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h} fill={sel || dragged ? '#dbeafe' : 'rgba(238,242,255,0.97)'} stroke={col} strokeWidth={1.5} rx={3} />
+                  <text x={pt.x} y={pt.y - h * 0.15} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Production</text>
+                  <text x={pt.x} y={pt.y + h * 0.28} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>ECS</text>
+                </g>
+              </g>
+            )
+          }
           return (
             <g key={pt.id}
               style={{ cursor: 'pointer' }}
-              onClick={ev => {
-                ev.stopPropagation()
-                onSelectIds(ids => ev.shiftKey
-                  ? ids.includes(pt.id) ? ids.filter(i => i !== pt.id) : [...ids, pt.id]
-                  : [pt.id])
-              }}>
+              onClick={selClick}>
               <rect x={pt.x - PT_R - 6} y={pt.y - PT_R - 6} width={(PT_R + 6) * 2} height={(PT_R + 6) * 2} fill="transparent" />
               <rect x={pt.x - PT_R} y={pt.y - PT_R} width={PT_R * 2} height={PT_R * 2}
                 fill={sel || dragged ? '#dbeafe' : '#fff'}
                 stroke={sel || dragged ? '#2563eb' : '#374151'} strokeWidth={1.5} />
-              {pt.name && (
-                <text x={pt.x + PT_R + 3} y={pt.y + 4} fontSize={10} fill="#374151" fontWeight="600"
-                  style={{ pointerEvents: 'none', userSelect: 'none' }}>{pt.name}</text>
-              )}
             </g>
           )
         })}
@@ -773,6 +1364,57 @@ export default function DrawingCanvas({
           </>
         )}
 
+        {/* Ghost de placement d'équipement */}
+        {placingEquipment !== null && (() => {
+          const gx = snap(mouse.x), gy = snap(mouse.y)
+          if (placingEquipment.type === 'pump') {
+            const r = placingEquipment.size ?? 15, ts = r / 15
+            return (
+              <g style={{ pointerEvents: 'none' }}>
+                <g transform={`translate(${gx},${gy}) rotate(${placingEquipment.rotation ?? 0})`}>
+                  <circle r={r} fill="rgba(238,242,255,0.6)" stroke="#818cf8" strokeWidth={1.5} strokeDasharray="4,3" />
+                  <polygon points={`${-6*ts},${-7*ts} ${-6*ts},${7*ts} ${8*ts},0`} fill="rgba(79,70,229,0.5)" />
+                </g>
+              </g>
+            )
+          }
+          if (placingEquipment.type === 'productionECS') {
+            const w = placingEquipment.size?.w ?? 44, h = placingEquipment.size?.h ?? 28
+            const fs = Math.max(6, Math.min(9, h * 0.28))
+            return (
+              <g style={{ pointerEvents: 'none' }}>
+                <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
+                  fill="rgba(238,242,255,0.6)" stroke="#818cf8" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
+                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(79,70,229,0.7)" fontWeight="700" textAnchor="middle">Production</text>
+                <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(79,70,229,0.7)" fontWeight="700" textAnchor="middle">ECS</text>
+              </g>
+            )
+          }
+          return null
+        })()}
+
+        {/* Ghost de placement chaufferie */}
+        {placingChaufferie && levels.length > 0 && (() => {
+          let li = 0
+          for (let i = 0; i < levels.length; i++) {
+            const yBot = lineYs[i], yTop = lineYs[i + 1]
+            if (yTop !== undefined && mouse.y > yTop && mouse.y <= yBot) { li = i; break }
+          }
+          if (lineYs.length > levels.length && mouse.y <= lineYs[levels.length]) li = levels.length - 1
+          const yBot = lineYs[li]
+          const w = chaufferie.x2 - chaufferie.x1
+          const gx1 = snap(mouse.x - w / 2)
+          return (
+            <g style={{ pointerEvents: 'none' }}>
+              <rect x={gx1} y={yBot - chaufferie.height} width={w} height={chaufferie.height}
+                fill="rgba(238,242,255,0.5)" stroke="#818cf8" strokeWidth={1.5} strokeDasharray="6,4" />
+              <text x={gx1 + w / 2} y={yBot - chaufferie.height + 13}
+                fontSize={10} fill="rgba(129,140,248,0.8)" fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none' }}>Chaufferie</text>
+            </g>
+          )
+        })()}
+
         {/* Selection rectangle */}
         {selRect && (
           <rect
@@ -787,6 +1429,11 @@ export default function DrawingCanvas({
       {drawing && pipeType !== 'point' && (
         <text x={8} y={18} fontSize={10} fill="#94a3b8">
           Clic : point · Double-clic : fin · Échap : valider · Ctrl+Z : annuler sommet · Espace+Glisser : naviguer
+        </text>
+      )}
+      {placingChaufferie && (
+        <text x={8} y={18} fontSize={10} fill="#818cf8">
+          Cliquez pour placer la chaufferie · Échap pour annuler
         </text>
       )}
       {!drawing && drawMode === 'select' && (
