@@ -156,6 +156,28 @@ function collapseSegs(segs) {
   })
 }
 
+// Déplace une extrémité de tronçon vers newPos en insérant un coude 90° si nécessaire
+// pour maintenir l'orthogonalité des arêtes adjacentes.
+// isEnd: true = extrémité finale, false = extrémité initiale
+function elbowVertices(vertices, isEnd, newPos) {
+  if (vertices.length < 2) {
+    return isEnd ? [...vertices.slice(0, -1), newPos] : [newPos, ...vertices.slice(1)]
+  }
+  if (isEnd) {
+    const prev = vertices[vertices.length - 2]
+    const curr = vertices[vertices.length - 1]
+    const horiz = Math.abs(curr.x - prev.x) >= Math.abs(curr.y - prev.y)
+    const elbow = horiz ? { x: newPos.x, y: curr.y } : { x: curr.x, y: newPos.y }
+    return collapseCollinear([...vertices.slice(0, -1), elbow, newPos])
+  } else {
+    const next = vertices[1]
+    const curr = vertices[0]
+    const horiz = Math.abs(next.x - curr.x) >= Math.abs(next.y - curr.y)
+    const elbow = horiz ? { x: newPos.x, y: curr.y } : { x: curr.x, y: newPos.y }
+    return collapseCollinear([newPos, elbow, ...vertices.slice(1)])
+  }
+}
+
 // Move a segment sub-edge perpendicularly by delta.
 // Horizontal edge: the entire connected horizontal bar (all sub-edges at same Y, reachable via shared nodes)
 //   moves together; connected vertical segments stretch.
@@ -432,6 +454,75 @@ function applyFrontierSplits(segs, pts, levels, lineYs) {
   return anyChanged ? { segs: workSegs, pts: workPts } : null
 }
 
+// Connexion automatique de Production ECS au réseau :
+// 1. Fusionne tout nœud ordinaire à l'intérieur du rectangle ECS (ECS survit)
+// 2. Si ECS n'a aucun tronçon connecté, le snapping sur le tronçon qui traverse son rectangle
+function applySpecialPtSnap(segs, pts) {
+  let workSegs = segs, workPts = pts, anyChanged = false
+
+  for (const ecsOrig of pts.filter(p => p.type === 'productionECS')) {
+    const ecs = workPts.find(p => p.id === ecsOrig.id)
+    if (!ecs) continue
+    const w = ecs.size?.w ?? 44, h = ecs.size?.h ?? 28
+    const hw = w / 2, hh = h / 2
+
+    // 1. Fusionner les nœuds ordinaires à l'intérieur du rectangle ECS → garder ECS
+    let changed = true
+    while (changed) {
+      changed = false
+      const inside = workPts.find(p =>
+        p.id !== ecs.id && !p.isLocked && p.type !== 'pump' && p.type !== 'productionECS' &&
+        Math.abs(p.x - ecs.x) <= hw && Math.abs(p.y - ecs.y) <= hh
+      )
+      if (inside) {
+        const ecsPt = { x: ecs.x, y: ecs.y }
+        workSegs = workSegs.map(seg => {
+          let s = seg
+          if (s.startPointId === inside.id)
+            s = { ...s, vertices: elbowVertices(s.vertices, false, ecsPt), startPointId: ecs.id }
+          if (s.endPointId === inside.id)
+            s = { ...s, vertices: elbowVertices(s.vertices, true,  ecsPt), endPointId: ecs.id }
+          return s
+        }).filter(s => s.startPointId !== s.endPointId)
+        workPts = workPts.filter(p => p.id !== inside.id)
+        anyChanged = true; changed = true
+      }
+    }
+
+    // 2. Si aucun tronçon connecté : snapping sur le tronçon traversant le rectangle ECS
+    const hasConnected = workSegs.some(s => s.startPointId === ecs.id || s.endPointId === ecs.id)
+    if (!hasConnected) {
+      let bestHit = null, bestD = Infinity
+      for (const seg of workSegs) {
+        const vs = seg.vertices
+        for (let i = 0; i < vs.length - 1; i++) {
+          const a = vs[i], b = vs[i + 1]
+          const dx = b.x - a.x, dy = b.y - a.y
+          const l2 = dx * dx + dy * dy
+          if (!l2) continue
+          const t = Math.max(0, Math.min(1, ((ecs.x - a.x) * dx + (ecs.y - a.y) * dy) / l2))
+          const proj = { x: a.x + t * dx, y: a.y + t * dy }
+          if (Math.abs(proj.x - ecs.x) > hw || Math.abs(proj.y - ecs.y) > hh) continue
+          const d = Math.hypot(proj.x - ecs.x, proj.y - ecs.y)
+          if (d < bestD) { bestD = d; bestHit = { seg, subIdx: i, proj } }
+        }
+      }
+      if (bestHit) {
+        const { seg, subIdx, proj } = bestHit
+        const sp = { x: snap(proj.x), y: snap(proj.y) }
+        const vs = seg.vertices
+        const seg1 = { ...seg, id: uid('T'), vertices: collapseCollinear([...vs.slice(0, subIdx + 1), sp]), endPointId: ecs.id }
+        const seg2 = { ...seg, id: uid('T'), vertices: collapseCollinear([sp, ...vs.slice(subIdx + 1)]), startPointId: ecs.id }
+        workSegs = workSegs.filter(s => s.id !== seg.id).concat([seg1, seg2])
+        workPts  = workPts.map(p => p.id === ecs.id ? { ...p, x: sp.x, y: sp.y } : p)
+        anyChanged = true
+      }
+    }
+  }
+
+  return anyChanged ? { segs: workSegs, pts: workPts } : null
+}
+
 let _c = 0
 const uid = p => `${p}-${Date.now()}-${++_c}`
 
@@ -448,6 +539,7 @@ export default function DrawingCanvas({
   chaufferie, onChaufferieChange, editChaufferie,
   placingEquipment, onPlacingDone,
   placingChaufferie, onPlacingChaufferieDone,
+  editParam, onAssignParam,
 }) {
   const svgRef    = useRef(null)
   const spaceRef  = useRef(false)
@@ -477,6 +569,12 @@ export default function DrawingCanvas({
     const result = applyFrontierSplits(segments, points, levels, lineYs)
     if (result) onNetworkChange(result.segs, result.pts)
   }, [segments, points, levels, lineYs]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto-connect Production ECS to network ───────────
+  useEffect(() => {
+    const result = applySpecialPtSnap(segments, points)
+    if (result) onNetworkChange(result.segs, result.pts)
+  }, [segments, points]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Split segment at position (atomic) ───────────────
   const splitSegment = useCallback((hitInfo, splitPos) => {
@@ -708,7 +806,13 @@ export default function DrawingCanvas({
         onChaufferieChange({ ...chaufferie, x2: snap(Math.max(dragCh.origX1 + MIN_W, rawX2)) })
       } else if (dragCh.type === 'move') {
         const rawDx = (e.clientX - dragCh.screenX) / tf.k
-        onChaufferieChange({ ...chaufferie, x1: snap(dragCh.origX1 + rawDx), x2: snap(dragCh.origX2 + rawDx) })
+        const mouseY = dragCh.origCenterY + (e.clientY - dragCh.screenY) / tf.k
+        let newLevelId = chaufferie.levelId
+        for (let i = 0; i < levels.length; i++) {
+          const yBot = lineYs[i], yTop = lineYs[i + 1]
+          if (yTop !== undefined && mouseY > yTop && mouseY <= yBot) { newLevelId = levels[i].id; break }
+        }
+        onChaufferieChange({ ...chaufferie, x1: snap(dragCh.origX1 + rawDx), x2: snap(dragCh.origX2 + rawDx), levelId: newLevelId })
       }
       return
     }
@@ -935,21 +1039,30 @@ export default function DrawingCanvas({
       const { ptId } = ptDragRef.current
       const np = { x: ptDragPos.x, y: ptDragPos.y }
 
-      // Priority 1: overlapping another point → merge
+      // Priority 1: overlapping another point → merge (productionECS > pump > regular)
+      const dragged = points.find(p => p.id === ptId)
       const overlap = points.find(p => p.id !== ptId && dist(p, np) < PT_HIT)
-      if (overlap) {
-        const op = { x: overlap.x, y: overlap.y, id: overlap.id }
+      if (overlap && dragged) {
+        const rank = p => p?.type === 'productionECS' ? 2 : p?.type === 'pump' ? 1 : 0
+        const draggedWins = rank(dragged) > rank(overlap)
+        const winner = draggedWins ? dragged : overlap
+        const loser  = draggedWins ? overlap : dragged
+        const winPos = draggedWins ? np : { x: overlap.x, y: overlap.y }
         onNetworkChange(
           s => s.map(seg => {
-            if (seg.startPointId === ptId) {
-              const v = [...seg.vertices]; v[0] = op; return { ...seg, vertices: v, startPointId: op.id }
+            let vs = seg.vertices, sid = seg.startPointId, eid = seg.endPointId
+            let sFixed = false, eFixed = false
+            if (sid === loser.id) { vs = elbowVertices(vs, false, winPos); sid = winner.id; sFixed = true }
+            if (eid === loser.id) { vs = elbowVertices(vs, true,  winPos); eid = winner.id; eFixed = true }
+            if (draggedWins) {
+              if (!sFixed && sid === winner.id) vs = elbowVertices(vs, false, winPos)
+              if (!eFixed && eid === winner.id) vs = elbowVertices(vs, true,  winPos)
             }
-            if (seg.endPointId === ptId) {
-              const v = [...seg.vertices]; v[v.length - 1] = op; return { ...seg, vertices: v, endPointId: op.id }
-            }
-            return seg
-          }).filter(seg => seg.startPointId !== seg.endPointId),
-          p => p.filter(x => x.id !== ptId)
+            return { ...seg, vertices: vs, startPointId: sid, endPointId: eid }
+          }).filter(s => s.startPointId !== s.endPointId),
+          p => p
+            .filter(x => x.id !== loser.id)
+            .map(x => x.id === winner.id ? { ...x, x: winPos.x, y: winPos.y } : x)
         )
       } else {
         // Priority 2: dropping on a segment → split and become junction
@@ -1200,7 +1313,7 @@ export default function DrawingCanvas({
                 <>
                   <rect x={x1 + H} y={yTop + H} width={x2 - x1 - H * 2} height={chaufferie.height - H * 2}
                     fill="transparent" style={{ cursor: 'move' }}
-                    onMouseDown={ev => { ev.stopPropagation(); setDragCh({ type: 'move', screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: chaufferie.height }) }} />
+                    onMouseDown={ev => { ev.stopPropagation(); setDragCh({ type: 'move', screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: chaufferie.height, origCenterY: yBot - chaufferie.height / 2 }) }} />
                   <rect x={x1} y={yTop - H} width={x2 - x1} height={H * 2}
                     fill="transparent" style={{ cursor: 'ns-resize' }}
                     onMouseDown={ev => { ev.stopPropagation(); setDragCh({ type: 'top', screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: chaufferie.height }) }} />
@@ -1249,21 +1362,110 @@ export default function DrawingCanvas({
           const col  = seg.type === 'retour' ? '#f97316' : '#dc2626'
           const dash = seg.type === 'retour' ? '10,6' : 'none'
           const path = seg.vertices.map((v, i) => `${i ? 'L' : 'M'}${v.x},${v.y}`).join(' ')
+
+          // Edit-params coloring
+          let editStyle = null
+          if (editParam) {
+            const { paramType, segType, materialId, dn, insulationId, thickness,
+                    length, flowVelocityMode, flowVelocityValue } = editParam
+            if (paramType === 'type' && segType) {
+              editStyle = seg.type === segType ? 'match' : 'other'
+            } else if (paramType === 'material' && materialId && dn) {
+              if (seg.materialId === materialId && seg.dn === dn) editStyle = 'match'
+              else if (!seg.materialId || !seg.dn) editStyle = 'missing'
+              else editStyle = 'other'
+            } else if (paramType === 'insulation' && insulationId) {
+              const thickOk = thickness == null || String(seg.thickness) === String(thickness)
+              if (seg.insulationId === insulationId && thickOk) editStyle = 'match'
+              else if (!seg.insulationId) editStyle = 'missing'
+              else editStyle = 'other'
+            } else if (paramType === 'length') {
+              if (length != null) {
+                if (seg.length_override === length) editStyle = 'match'
+                else if (seg.length_override == null) editStyle = 'missing'
+                else editStyle = 'other'
+              } else {
+                editStyle = seg.length_override != null ? 'match' : 'missing'
+              }
+            } else if (paramType === 'flowVelocity') {
+              const hasAny = seg.flowRate != null || seg.velocity != null
+              if (flowVelocityValue != null) {
+                const matches = flowVelocityMode === 'flowRate'
+                  ? seg.flowRate === flowVelocityValue
+                  : seg.velocity === flowVelocityValue
+                editStyle = matches ? 'match' : hasAny ? 'other' : 'missing'
+              } else {
+                editStyle = hasAny ? 'match' : 'missing'
+              }
+            }
+          }
+
+          // match=green · missing=red · other=gray · dash always follows segment type
+          const strokeColor = editStyle === 'match'   ? '#16a34a'
+            : editStyle === 'missing' ? '#ef4444'
+            : editStyle === 'other'   ? '#9ca3af'
+            : sel ? '#2563eb' : col
+          const strokeW = editStyle === 'match' ? 3 : editStyle === 'missing' ? 2 : editStyle === 'other' ? 1 : sel ? 2.5 : 1.5
+          const segDash = sel ? 'none' : dash
+          const opacity = 1
+
           return (
             <g key={seg.id}>
               <path d={path} stroke="transparent" strokeWidth={14} fill="none"
-                style={{ cursor: drawMode === 'delete' ? 'crosshair' : 'pointer' }}
+                style={{ cursor: editParam ? 'crosshair' : drawMode === 'delete' ? 'crosshair' : 'pointer' }}
                 onClick={ev => {
                   if (drawMode === 'delete') return
                   ev.stopPropagation()
+                  if (editParam) { onAssignParam(seg.id); return }
                   onSelectIds(ids => ev.shiftKey
                     ? ids.includes(seg.id) ? ids.filter(i => i !== seg.id) : [...ids, seg.id]
                     : [seg.id])
                 }} />
               <path d={path}
-                stroke={sel ? '#2563eb' : col} strokeWidth={sel ? 2.5 : 1.5}
-                strokeDasharray={sel ? 'none' : dash} fill="none"
+                stroke={strokeColor} strokeWidth={strokeW}
+                strokeDasharray={segDash} fill="none"
                 style={{ pointerEvents: 'none' }} />
+              {seg.showDN && seg.dn && (() => {
+                const vs = seg.vertices
+                if (vs.length < 2) return null
+                let totalLen = 0
+                for (let i = 0; i < vs.length - 1; i++) totalLen += Math.hypot(vs[i+1].x - vs[i].x, vs[i+1].y - vs[i].y)
+                let cumLen = 0, mid = vs[0], edgeDir = 'h'
+                const half = totalLen / 2
+                for (let i = 0; i < vs.length - 1; i++) {
+                  const sl = Math.hypot(vs[i+1].x - vs[i].x, vs[i+1].y - vs[i].y)
+                  if (cumLen + sl >= half) {
+                    const t = (half - cumLen) / sl
+                    mid = { x: vs[i].x + t * (vs[i+1].x - vs[i].x), y: vs[i].y + t * (vs[i+1].y - vs[i].y) }
+                    edgeDir = Math.abs(vs[i+1].x - vs[i].x) >= Math.abs(vs[i+1].y - vs[i].y) ? 'h' : 'v'
+                    break
+                  }
+                  cumLen += sl
+                }
+                const lbl = seg.dn
+                const tw = lbl.length * 5 + 6
+                const BH = 11, OFF = 7
+                if (edgeDir === 'h') {
+                  return (
+                    <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                      <rect x={mid.x - tw/2} y={mid.y + OFF - 1} width={tw} height={BH}
+                        fill="rgba(255,255,255,0.88)" stroke={col} strokeWidth={0.3} rx={2} />
+                      <text x={mid.x} y={mid.y + OFF + BH/2 - 1}
+                        fontSize={8} fill={col} fontWeight="600"
+                        textAnchor="middle" dominantBaseline="central">{lbl}</text>
+                    </g>
+                  )
+                }
+                return (
+                  <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                    <rect x={mid.x + OFF - 1} y={mid.y - BH/2} width={tw} height={BH}
+                      fill="rgba(255,255,255,0.88)" stroke={col} strokeWidth={0.3} rx={2} />
+                    <text x={mid.x + OFF + 1} y={mid.y}
+                      fontSize={8} fill={col} fontWeight="600"
+                      textAnchor="start" dominantBaseline="central">{lbl}</text>
+                  </g>
+                )
+              })()}
               {seg.showName && (() => {
                 const label = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts)
                 if (!label) return null
@@ -1315,7 +1517,7 @@ export default function DrawingCanvas({
             return (
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
                 <circle cx={pt.x} cy={pt.y} r={r + 4} fill="transparent" />
-                <g transform={`translate(${pt.x},${pt.y}) rotate(${pt.rotation ?? 0})`} style={{ pointerEvents: 'none' }}>
+                <g transform={`translate(${pt.x},${pt.y}) rotate(${pt.rotation ?? 180})`} style={{ pointerEvents: 'none' }}>
                   <circle r={r} fill={sel || dragged ? '#dbeafe' : 'rgba(238,242,255,0.97)'} stroke={sel || dragged ? '#2563eb' : '#4f46e5'} strokeWidth={1.5} />
                   <polygon points={`${-6*ts},${-7*ts} ${-6*ts},${7*ts} ${8*ts},0`} fill={sel || dragged ? '#2563eb' : '#4f46e5'} />
                 </g>

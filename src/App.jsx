@@ -98,13 +98,39 @@ export default function App() {
   const [editColumnsEnabled,   setEditColumnsEnabled]   = useState(false)
   const [editChaufferie,       setEditChaufferie]       = useState(false)
   const [placingEquipment,     setPlacingEquipment]     = useState(null)  // null | { type, name, rotation?, size }
-  const [nextPumpRotation,     setNextPumpRotation]     = useState(0)     // rotation applied to next pump placed
+  const [nextPumpRotation,     setNextPumpRotation]     = useState(180)   // rotation applied to next pump placed
   const [placingChaufferie,    setPlacingChaufferie]    = useState(false)
+  const [editParam, setEditParam] = useState({
+    paramType: 'type', segType: 'aller',
+    materialId: null, dn: null,
+    insulationId: null, thickness: null,
+    length: null,
+    flowVelocityMode: 'flowRate', flowVelocityValue: null,
+  })
 
   // Generic updater for any project key
   const update = useCallback((key, valOrFn) => {
     setProject(p => ({ ...p, [key]: typeof valOrFn === 'function' ? valOrFn(p[key]) : valOrFn }))
   }, [setProject])
+
+  const onAssignParam = useCallback((segId) => {
+    update('segments', segs => segs.map(s => {
+      if (s.id !== segId) return s
+      if (editParam.paramType === 'type')
+        return { ...s, type: editParam.segType }
+      if (editParam.paramType === 'material')
+        return { ...s, materialId: editParam.materialId, dn: editParam.dn, di_override: null, de_override: null, lambda_tube_override: null }
+      if (editParam.paramType === 'insulation')
+        return { ...s, insulationId: editParam.insulationId, thickness: editParam.thickness, lambda_insul_override: null }
+      if (editParam.paramType === 'length' && editParam.length != null)
+        return { ...s, length_override: editParam.length }
+      if (editParam.paramType === 'flowVelocity' && editParam.flowVelocityValue != null)
+        return editParam.flowVelocityMode === 'flowRate'
+          ? { ...s, flowRate: editParam.flowVelocityValue, velocity: null }
+          : { ...s, velocity: editParam.flowVelocityValue, flowRate: null }
+      return s
+    }))
+  }, [editParam, update])
 
   // Combined atomic update (single undo entry)
   const updateNetwork = useCallback((segsFnOrVal, ptsFnOrVal) => {
@@ -227,6 +253,12 @@ export default function App() {
               onAddChaufferie={handleAddChaufferie}
               nextPumpRotation={nextPumpRotation}
               onPumpRotationChange={setNextPumpRotation}
+              segments={project.segments}
+              points={project.points}
+              drawMode={drawMode}
+              editParam={editParam}
+              onEditParamChange={setEditParam}
+              onSelectIds={setSelectedIds}
             />
           )}
         </aside>
@@ -257,6 +289,8 @@ export default function App() {
             onPlacingDone={() => setPlacingEquipment(null)}
             placingChaufferie={placingChaufferie}
             onPlacingChaufferieDone={() => setPlacingChaufferie(false)}
+            editParam={drawMode === 'editParams' ? editParam : null}
+            onAssignParam={onAssignParam}
           />
         </main>
 

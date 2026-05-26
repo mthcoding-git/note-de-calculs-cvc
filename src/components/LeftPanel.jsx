@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useMemo, useEffect } from 'react'
+import { getDisplayName } from '../utils/naming'
 
 let _uid = 0
 const uid = (p = 'x') => `${p}-${Date.now()}-${++_uid}`
@@ -77,7 +78,8 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLev
     const newYs  = [...lineYs]
     const topY   = newYs[newYs.length - 1]
     const prevY  = newYs[newYs.length - 2]
-    newYs.splice(newYs.length - 1, 0, Math.round((topY + prevY) / 2))
+    const h      = prevY - topY   // hauteur du niveau supérieur actuel
+    newYs.push(topY - h)          // la toiture monte d'une hauteur de niveau
     onLevelsChange([...levels, newLvl])
     onLineYsChange(newYs)
   }
@@ -270,10 +272,10 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
 
 // ── Chaufferie ─────────────────────────────────────────
 const DIR_BTNS = [
-  { label: '↑', rot: 270, title: 'Vers le haut' },
-  { label: '↓', rot: 90,  title: 'Vers le bas' },
   { label: '←', rot: 180, title: 'Vers la gauche' },
+  { label: '↑', rot: 270, title: 'Vers le haut' },
   { label: '→', rot: 0,   title: 'Vers la droite' },
+  { label: '↓', rot: 90,  title: 'Vers le bas' },
 ]
 
 function ChaufferieSection({
@@ -285,65 +287,57 @@ function ChaufferieSection({
   return (
     <Section title="Équipements Chaufferie" defaultOpen={false}>
 
-      {/* Équipements — toujours visible */}
-      <div className="lp-label" style={{ fontWeight: 700, marginBottom: 6, fontSize: 11 }}>Équipements</div>
-      <button className="lp-add-btn" style={{ marginBottom: 8 }} onClick={onAddProductionECS}>
-        + Ajouter une Production ECS
-      </button>
-      <div className="lp-label" style={{ marginBottom: 4 }}>Direction de la pompe :</div>
-      <div style={{ display: 'flex', gap: 3, marginBottom: 6 }}>
-        {DIR_BTNS.map(({ label, rot, title }) => (
-          <button key={rot} className={`lp-icon-btn${nextPumpRotation === rot ? ' active' : ''}`}
-            title={title} style={{ minWidth: 26, fontWeight: 700 }}
-            onClick={() => onPumpRotationChange(rot)}>
-            {label}
-          </button>
-        ))}
-      </div>
-      <button className="lp-add-btn" onClick={onAddPump}>+ Ajouter une Pompe bouclage ECS</button>
-      <p className="lp-hint" style={{ marginTop: 4, marginBottom: 8 }}>
-        Cliquez sur le schéma pour placer l'équipement (Échap pour annuler).
-      </p>
-
       {/* Zone chaufferie */}
-      <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 8 }}>
-        {!chaufferie.placed ? (
-          <button className="lp-add-btn" onClick={onAddChaufferie}>
-            + Définir la zone Chaufferie
-          </button>
-        ) : (
-          <>
-            <div className="lp-field">
-              <label className="lp-checkbox-label">
-                <input type="checkbox" checked={!!chaufferie.enabled}
-                  onChange={e => set({ enabled: e.target.checked })} />
-                <span>Afficher la chaufferie</span>
-              </label>
-            </div>
-            {chaufferie.enabled && (
-              <>
-                <Field label="Niveau de rattachement">
-                  <select value={chaufferie.levelId}
-                    onChange={e => set({ levelId: e.target.value })}>
-                    {[...levels].reverse().map(l => (
-                      <option key={l.id} value={l.id}>{l.name}</option>
-                    ))}
-                  </select>
-                </Field>
-                <div className="lp-field">
-                  <label className="lp-checkbox-label">
-                    <input type="checkbox" checked={editChaufferie}
-                      onChange={e => onEditChaufferieChange(e.target.checked)} />
-                    <span>Modifier la chaufferie</span>
-                  </label>
-                </div>
-                {editChaufferie && (
-                  <p className="lp-hint">Glissez les bords du rectangle sur le plan pour le redimensionner ou le déplacer horizontalement.</p>
-                )}
-              </>
-            )}
-          </>
-        )}
+      {!chaufferie.placed ? (
+        <button className="lp-add-btn" style={{ marginBottom: 8 }} onClick={onAddChaufferie}>
+          + Définir la zone Chaufferie
+        </button>
+      ) : (
+        <>
+          <div className="lp-field">
+            <label className="lp-checkbox-label">
+              <input type="checkbox" checked={!!chaufferie.enabled}
+                onChange={e => set({ enabled: e.target.checked })} />
+              <span>Afficher la chaufferie</span>
+            </label>
+          </div>
+          {chaufferie.enabled && (
+            <>
+              <div className="lp-field">
+                <label className="lp-checkbox-label">
+                  <input type="checkbox" checked={editChaufferie}
+                    onChange={e => onEditChaufferieChange(e.target.checked)} />
+                  <span>Modifier la chaufferie</span>
+                </label>
+              </div>
+              {editChaufferie && (
+                <p className="lp-hint">Glissez l'intérieur pour déplacer (change de niveau selon la position), les bords pour redimensionner.</p>
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      {/* Équipements */}
+      <div style={{ borderTop: '1px solid #e5e7eb', marginTop: 8, paddingTop: 8 }}>
+        <div className="lp-label" style={{ fontWeight: 700, marginBottom: 6, fontSize: 11 }}>Équipements Chaufferie</div>
+        <button className="lp-add-btn" style={{ marginBottom: 8 }} onClick={onAddProductionECS}>
+          + Ajouter une Production ECS
+        </button>
+        <div className="lp-label" style={{ marginBottom: 4 }}>Direction de la pompe :</div>
+        <div style={{ display: 'flex', gap: 3, marginBottom: 6 }}>
+          {DIR_BTNS.map(({ label, rot, title }) => (
+            <button key={rot} className={`lp-icon-btn${nextPumpRotation === rot ? ' active' : ''}`}
+              title={title} style={{ minWidth: 26, fontWeight: 700 }}
+              onClick={() => onPumpRotationChange(rot)}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <button className="lp-add-btn" onClick={onAddPump}>+ Ajouter une Pompe bouclage ECS</button>
+        <p className="lp-hint" style={{ marginTop: 4 }}>
+          Cliquez sur le schéma pour placer l'équipement (Échap pour annuler).
+        </p>
       </div>
     </Section>
   )
@@ -502,6 +496,333 @@ function InsulationsSection({ insulations, onChange }) {
   )
 }
 
+// ── Attribution ────────────────────────────────────────
+const PARAM_COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#14b8a6']
+
+function computeGroups(paramType, segments, materials, insulations) {
+  if (paramType === 'type') {
+    const aller = [], retour = []
+    for (const s of segments) { if (s.type === 'aller') aller.push(s.id); else retour.push(s.id) }
+    return { rows: [
+      { key: 'aller',  label: 'Aller ECS',  ids: aller,  color: '#dc2626' },
+      { key: 'retour', label: 'Retour ECS', ids: retour, color: '#f97316' },
+    ], missing: [] }
+  }
+  if (paramType === 'material') {
+    const byKey = new Map(), none = []
+    for (const s of segments) {
+      if (!s.materialId || !s.dn) { none.push(s.id); continue }
+      const k = `${s.materialId}||${s.dn}`
+      if (!byKey.has(k)) byKey.set(k, { ids: [], materialId: s.materialId, dn: s.dn })
+      byKey.get(k).ids.push(s.id)
+    }
+    const rows = []
+    for (const [, v] of byKey) {
+      const mat = materials.find(m => m.id === v.materialId)
+      rows.push({ key: `${v.materialId}||${v.dn}`, label: `${mat?.name ?? v.materialId} – ${v.dn}`, ids: v.ids, color: '#64748b' })
+    }
+    rows.sort((a, b) => a.label.localeCompare(b.label))
+    return { rows, missing: none }
+  }
+  if (paramType === 'insulation') {
+    const byKey = new Map(), none = []
+    for (const s of segments) {
+      if (!s.insulationId) { none.push(s.id); continue }
+      const k = `${s.insulationId}||${s.thickness ?? '__'}`
+      if (!byKey.has(k)) byKey.set(k, { ids: [], insulationId: s.insulationId, thickness: s.thickness })
+      byKey.get(k).ids.push(s.id)
+    }
+    const rows = []
+    for (const [, v] of byKey) {
+      const ins = insulations.find(i => i.id === v.insulationId)
+      const thick = v.thickness != null ? `${v.thickness} mm` : 'ép. non définie'
+      rows.push({ key: `${v.insulationId}||${v.thickness ?? '__'}`, label: `${ins?.name ?? v.insulationId} – ${thick}`, ids: v.ids, color: '#64748b' })
+    }
+    rows.sort((a, b) => a.label.localeCompare(b.label))
+    return { rows, missing: none }
+  }
+  if (paramType === 'length') {
+    const byLen = new Map(), none = []
+    for (const s of segments) {
+      if (s.length_override == null) { none.push(s.id); continue }
+      const k = String(s.length_override)
+      if (!byLen.has(k)) byLen.set(k, { ids: [], length: s.length_override })
+      byLen.get(k).ids.push(s.id)
+    }
+    const rows = []
+    for (const [, v] of byLen)
+      rows.push({ key: String(v.length), label: `${v.length} m`, ids: v.ids, color: '#64748b' })
+    rows.sort((a, b) => parseFloat(a.key) - parseFloat(b.key))
+    return { rows, missing: none }
+  }
+  if (paramType === 'flowVelocity') {
+    const byKey = new Map(), none = []
+    for (const s of segments) {
+      const hasFlow = s.flowRate != null, hasVel = s.velocity != null
+      if (!hasFlow && !hasVel) { none.push(s.id); continue }
+      const k = hasFlow ? `flow||${s.flowRate}` : `vel||${s.velocity}`
+      if (!byKey.has(k)) byKey.set(k, { ids: [], isFlow: hasFlow, value: hasFlow ? s.flowRate : s.velocity })
+      byKey.get(k).ids.push(s.id)
+    }
+    const rows = []
+    for (const [k, v] of byKey)
+      rows.push({ key: k, label: v.isFlow ? `${v.value} L/h` : `${v.value} m/s`, ids: v.ids, color: '#64748b' })
+    return { rows, missing: none }
+  }
+  return { rows: [], missing: [] }
+}
+
+function EditParamsPanel({
+  segments, points, materials, insulations,
+  levels, lineYs, columns, columnXs, chaufferie,
+  editParam, onEditParamChange, onSelectIds,
+}) {
+  const set = patch => onEditParamChange({ ...editParam, ...patch })
+  const { paramType, segType, materialId, dn, insulationId, thickness,
+          length, flowVelocityMode, flowVelocityValue } = editParam
+
+  const enabledMats = materials.filter(m => m.enabled)
+  const enabledIns  = insulations.filter(i => i.enabled)
+  const selMat = enabledMats.find(m => m.id === materialId)
+  const selIns = enabledIns.find(i => i.id === insulationId)
+
+  const connIssues = useMemo(() => {
+    const ptCount = new Map()
+    for (const s of segments) {
+      if (s.startPointId) ptCount.set(s.startPointId, (ptCount.get(s.startPointId) ?? 0) + 1)
+      if (s.endPointId)   ptCount.set(s.endPointId,   (ptCount.get(s.endPointId)   ?? 0) + 1)
+    }
+    return segments.filter(s => {
+      const sc = (ptCount.get(s.startPointId) ?? 0) >= 2
+      const ec = (ptCount.get(s.endPointId)   ?? 0) >= 2
+      return (sc ? 1 : 0) + (ec ? 1 : 0) <= 1
+    })
+  }, [segments])
+
+  const { rows: groups, missing } = useMemo(
+    () => computeGroups(paramType, segments, materials, insulations),
+    [paramType, segments, materials, insulations]
+  )
+
+  const currentKey = paramType === 'type' ? segType
+    : paramType === 'material' ? (materialId && dn ? `${materialId}||${dn}` : null)
+    : paramType === 'insulation' ? (insulationId ? `${insulationId}||${thickness ?? '__'}` : null)
+    : paramType === 'length' ? (length != null ? String(length) : null)
+    : paramType === 'flowVelocity' ? (flowVelocityValue != null ? `${flowVelocityMode === 'flowRate' ? 'flow' : 'vel'}||${flowVelocityValue}` : null)
+    : null
+
+  return (
+    <div style={{ padding: '6px 2px' }}>
+
+      {/* Param type */}
+      <div className="lp-field">
+        <label className="lp-label">Paramètre</label>
+        <select value={paramType} onChange={e => set({ paramType: e.target.value, materialId: null, dn: null, insulationId: null, thickness: null, length: null, flowVelocityValue: null })}>
+          <option value="type">Réseau (Aller / Retour ECS)</option>
+          <option value="material">Matériau & DN</option>
+          <option value="insulation">Isolant & épaisseur</option>
+          <option value="length">Longueur</option>
+          <option value="flowVelocity">Débit / Vitesse</option>
+        </select>
+      </div>
+
+      {/* Value selector */}
+      {paramType === 'type' && (
+        <div className="lp-field">
+          <label className="lp-label">Valeur à appliquer</label>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[{ v: 'aller', label: 'Aller ECS', col: '#dc2626' }, { v: 'retour', label: 'Retour ECS', col: '#f97316' }].map(({ v, label, col }) => (
+              <button key={v} onClick={() => set({ segType: v })}
+                className="lp-icon-btn"
+                style={{ flex: 1, fontWeight: 600, fontSize: 11, padding: '4px 0',
+                  background: segType === v ? col : undefined,
+                  color: segType === v ? '#fff' : undefined,
+                  border: `1.5px solid ${segType === v ? col : '#d1d5db'}`,
+                }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {paramType === 'material' && (<>
+        <div className="lp-field">
+          <label className="lp-label">Matériau</label>
+          <select value={materialId ?? ''} onChange={e => set({ materialId: e.target.value || null, dn: null })}>
+            <option value="">— Choisir —</option>
+            {enabledMats.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+        </div>
+        {selMat && (
+          <div className="lp-field">
+            <label className="lp-label">DN</label>
+            <select value={dn ?? ''} onChange={e => set({ dn: e.target.value || null })}>
+              <option value="">— Choisir —</option>
+              {selMat.dns.map(d => <option key={d.dn} value={d.dn}>{d.dn}</option>)}
+            </select>
+          </div>
+        )}
+      </>)}
+      {paramType === 'insulation' && (<>
+        <div className="lp-field">
+          <label className="lp-label">Isolant</label>
+          <select value={insulationId ?? ''} onChange={e => set({ insulationId: e.target.value || null, thickness: null })}>
+            <option value="">— Choisir —</option>
+            {enabledIns.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+          </select>
+        </div>
+        {selIns && (
+          <div className="lp-field">
+            <label className="lp-label">Épaisseur</label>
+            {selIns.thicknesses.length > 0 ? (
+              <select value={thickness ?? ''} onChange={e => set({ thickness: e.target.value === '' ? null : +e.target.value })}>
+                <option value="">— Toutes —</option>
+                {selIns.thicknesses.map(t => <option key={t} value={t}>{t} mm</option>)}
+              </select>
+            ) : (
+              <input type="number" placeholder="mm" value={thickness ?? ''}
+                onChange={e => set({ thickness: e.target.value === '' ? null : +e.target.value })} />
+            )}
+          </div>
+        )}
+      </>)}
+
+      {paramType === 'length' && (
+        <div className="lp-field">
+          <label className="lp-label">Valeur à appliquer</label>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <input type="number" min="0" step="0.1" style={{ flex: 1 }}
+              value={length ?? ''} placeholder="m"
+              onChange={e => set({ length: e.target.value === '' ? null : +e.target.value })} />
+            <span style={{ fontSize: 11, color: '#6b7280' }}>m</span>
+          </div>
+        </div>
+      )}
+      {paramType === 'flowVelocity' && (
+        <div className="lp-field">
+          <label className="lp-label">Valeur à appliquer</label>
+          <div style={{ display: 'flex', gap: 4, marginBottom: 5 }}>
+            {[{ v: 'flowRate', label: 'Débit (L/h)' }, { v: 'velocity', label: 'Vitesse (m/s)' }].map(({ v, label }) => (
+              <button key={v} onClick={() => set({ flowVelocityMode: v, flowVelocityValue: null })}
+                className="lp-icon-btn"
+                style={{ flex: 1, fontSize: 11, fontWeight: 600, padding: '4px 0',
+                  background: flowVelocityMode === v ? '#3b82f6' : undefined,
+                  color: flowVelocityMode === v ? '#fff' : undefined,
+                  border: `1.5px solid ${flowVelocityMode === v ? '#3b82f6' : '#d1d5db'}`,
+                }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <input type="number" min="0"
+            step={flowVelocityMode === 'flowRate' ? '1' : '0.01'}
+            value={flowVelocityValue ?? ''}
+            placeholder={flowVelocityMode === 'flowRate' ? 'L/h' : 'm/s'}
+            onChange={e => set({ flowVelocityValue: e.target.value === '' ? null : +e.target.value })} />
+        </div>
+      )}
+
+      {/* Groups */}
+      <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 6, marginTop: 4 }}>
+        <div className="lp-label" style={{ marginBottom: 4 }}>Tronçons existants</div>
+        {groups.length === 0 && <p className="lp-hint">Aucun tronçon avec cette valeur.</p>}
+        {groups.map(g => {
+          const isTarget = currentKey === g.key
+          return (
+            <div key={g.key}
+              onClick={() => {
+                if (paramType === 'material') { const [mid, d] = g.key.split('||'); set({ materialId: mid, dn: d }) }
+                else if (paramType === 'insulation') { const [iid, t] = g.key.split('||'); set({ insulationId: iid, thickness: t === '__' ? null : +t }) }
+                else if (paramType === 'length') { set({ length: +g.key }) }
+                else if (paramType === 'flowVelocity') { const [mode, val] = g.key.split('||'); set({ flowVelocityMode: mode === 'flow' ? 'flowRate' : 'velocity', flowVelocityValue: +val }) }
+              }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 7,
+                padding: '5px 7px', marginBottom: 3, borderRadius: 5,
+                border: `1.5px solid ${isTarget ? '#16a34a' : '#e5e7eb'}`,
+                background: isTarget ? '#f0fdf4' : '#fafafa',
+                cursor: paramType !== 'type' ? 'pointer' : 'default', userSelect: 'none',
+              }}>
+              <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
+                background: isTarget ? '#16a34a' : '#d1d5db',
+                boxShadow: isTarget ? '0 0 0 2px #16a34a40' : 'none' }} />
+              <span style={{ flex: 1, fontSize: 11, color: isTarget ? '#15803d' : '#111827', fontWeight: isTarget ? 600 : 400 }}>{g.label}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: isTarget ? '#16a34a' : '#6b7280',
+                background: isTarget ? '#dcfce7' : '#f3f4f6',
+                borderRadius: 10, padding: '1px 6px' }}>{g.ids.length}</span>
+            </div>
+          )
+        })}
+        {missing.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7,
+            padding: '5px 7px', borderRadius: 5,
+            border: '1px solid #fde68a', background: '#fffbeb', userSelect: 'none' }}>
+            <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: '#f59e0b' }} />
+            <span style={{ flex: 1, fontSize: 11, color: '#92400e' }}>
+              Sans {paramType === 'material' ? 'matériau / DN'
+                  : paramType === 'insulation' ? 'isolant'
+                  : paramType === 'length' ? 'longueur'
+                  : 'débit / vitesse'}
+            </span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e',
+              background: '#fde68a', borderRadius: 10, padding: '1px 6px' }}>{missing.length}</span>
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 8, borderTop: '1px solid #e5e7eb', paddingTop: 8 }}>
+        {currentKey ? (<>
+          <p className="lp-hint" style={{ marginBottom: 6 }}>Cliquez sur un tronçon du schéma pour lui attribuer la valeur sélectionnée.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {[
+              { color: '#16a34a', label: 'Valeur déjà attribuée', line: 'thick' },
+              { color: '#ef4444', label: 'Paramètre absent — à attribuer', line: 'normal' },
+              { color: '#9ca3af', label: 'Autre valeur attribuée', line: 'normal' },
+            ].map(({ color, label, line }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <svg width={28} height={12} style={{ flexShrink: 0 }}>
+                  <line x1={2} y1={6} x2={26} y2={6}
+                    stroke={color}
+                    strokeWidth={line === 'thick' ? 3 : line === 'normal' ? 2 : 1}
+                    strokeDasharray={line === 'thin' ? '4,3' : 'none'} />
+                </svg>
+                <span style={{ fontSize: 10, color: '#374151' }}>{label}</span>
+              </div>
+            ))}
+          </div>
+        </>) : (
+          <p className="lp-hint">Sélectionnez une valeur ci-dessus, puis cliquez sur un tronçon.</p>
+        )}
+      </div>
+
+      {connIssues.length > 0 && (
+        <div style={{ border: '1px solid #fde68a', background: '#fffbeb', borderRadius: 5, padding: '7px 8px', marginTop: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+            <span style={{ fontSize: 13 }}>⚠</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#92400e' }}>
+              {connIssues.length} tronçon{connIssues.length > 1 ? 's' : ''} avec extrémité non connectée
+            </span>
+          </div>
+          <div style={{ maxHeight: 120, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {connIssues.map(s => (
+              <div key={s.id}
+                onClick={() => onSelectIds?.([s.id])}
+                style={{
+                  fontSize: 10, color: '#78350f', padding: '3px 6px',
+                  borderRadius: 3, cursor: onSelectIds ? 'pointer' : 'default',
+                  lineHeight: 1.4,
+                  ':hover': { background: '#fde68a' },
+                }}>
+                {getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points)}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function LeftPanel({
   globalParams, onGlobalParamsChange,
   levels, lineYs, onLevelsChange, onLineYsChange,
@@ -513,7 +834,33 @@ export default function LeftPanel({
   chaufferie, onChaufferieChange,
   editChaufferie, onEditChaufferieChange,
   onAddPump, onAddProductionECS, onAddChaufferie, nextPumpRotation, onPumpRotationChange,
+  segments, points,
+  drawMode, editParam, onEditParamChange,
+  onSelectIds,
 }) {
+  if (drawMode === 'editParams') {
+    return (
+      <div className="left-panel">
+        <div className="lp-section">
+          <div className="lp-section-header" style={{ pointerEvents: 'none' }}>
+            <span>⊞ Attribution des paramètres</span>
+          </div>
+          <div className="lp-section-body">
+            <EditParamsPanel
+              segments={segments} points={points}
+              materials={materials} insulations={insulations}
+              levels={levels} lineYs={lineYs}
+              columns={columns} columnXs={columnXs}
+              chaufferie={chaufferie}
+              editParam={editParam} onEditParamChange={onEditParamChange}
+              onSelectIds={onSelectIds}
+            />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="left-panel">
       <GlobalParamsSection params={globalParams} onChange={onGlobalParamsChange} />

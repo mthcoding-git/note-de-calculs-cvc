@@ -1,4 +1,5 @@
-import { getDefaultSegName, getDisplayName, buildECSDistances } from '../utils/naming'
+import { useState, useEffect } from 'react'
+import { getDisplayName } from '../utils/naming'
 
 function Field({ label, unit, children }) {
   return (
@@ -21,15 +22,27 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
   const dnDef       = selMat?.dns.find(d => d.dn === seg.dn)
 
   const isDefault   = !seg.name
-  const ecsDistances = buildECSDistances(allSegs, points)
-  const defaultName = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, points, ecsDistances)
   const displayName = getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, points)
-  const isDuplicate = isDefault && displayName !== defaultName
+
+  // Local state for flow/velocity mode — resets when switching segment
+  const [flowMode, setFlowMode] = useState(() => seg.velocity != null ? 'velocity' : 'flowRate')
+  useEffect(() => {
+    setFlowMode(seg.velocity != null ? 'velocity' : 'flowRate')
+  }, [seg.id])
+
+  const SectionLabel = ({ children }) => (
+    <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
+      letterSpacing: '0.05em', marginBottom: 5, marginTop: 2 }}>
+      {children}
+    </div>
+  )
 
   return (
     <div className="rp-section">
       <h3 className="rp-title">Tronçon</h3>
 
+      {/* Identification */}
+      <SectionLabel>Identification</SectionLabel>
       <div className="lp-field">
         <label className="lp-label">Nom</label>
         <div style={{
@@ -47,29 +60,64 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
           placeholder="Personnaliser le nom..."
         />
         {isDefault
-          ? <span style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, display: 'block' }}>
-              par défaut{isDuplicate && <strong style={{ color: '#f97316' }}> · doublon — voir identifiant ci-dessus</strong>}
-            </span>
-          : <span style={{ fontSize: 10, color: '#6b7280', marginTop: 2, display: 'block' }}>
-              personnalisé · effacez pour rétablir le défaut
-            </span>
+          ? <span style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, display: 'block' }}>par défaut</span>
+          : <span style={{ fontSize: 10, color: '#6b7280', marginTop: 2, display: 'block' }}>personnalisé · effacez pour rétablir le défaut</span>
         }
-        <label className="lp-checkbox-label" style={{ marginTop: 6 }}>
-          <input type="checkbox"
-            checked={!!seg.showName}
-            onChange={e => set('showName', e.target.checked || null)} />
-          <span style={{ fontSize: 11, color: '#6b7280' }}>Afficher le nom dans le schéma</span>
-        </label>
       </div>
 
-      <Field label="Réseau">
+      <hr className="rp-divider" />
+
+      {/* Hydraulique */}
+      <SectionLabel>Hydraulique</SectionLabel>
+      <Field label="Longueur" unit="m">
+        <input type="number" min="0"
+          value={seg.length_override ?? ''}
+          placeholder="saisie manuelle"
+          onChange={e => set('length_override', e.target.value === '' ? null : +e.target.value)} />
+      </Field>
+
+      <div className="lp-field">
+        <label className="lp-label">Débit / Vitesse</label>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 5 }}>
+          <button
+            className={`lp-icon-btn${flowMode === 'flowRate' ? ' active' : ''}`}
+            style={{ flex: 1, fontSize: 11, fontWeight: 600, padding: '4px 0' }}
+            onClick={() => { setFlowMode('flowRate'); set('velocity', null) }}>
+            Débit (L/h)
+          </button>
+          <button
+            className={`lp-icon-btn${flowMode === 'velocity' ? ' active' : ''}`}
+            style={{ flex: 1, fontSize: 11, fontWeight: 600, padding: '4px 0' }}
+            onClick={() => { setFlowMode('velocity'); set('flowRate', null) }}>
+            Vitesse (m/s)
+          </button>
+        </div>
+        {flowMode === 'flowRate' ? (
+          <input type="number" min="0" placeholder="L/h"
+            value={seg.flowRate ?? ''}
+            onChange={e => set('flowRate', e.target.value === '' ? null : +e.target.value)} />
+        ) : (
+          <input type="number" min="0" step="0.01" placeholder="m/s"
+            value={seg.velocity ?? ''}
+            onChange={e => set('velocity', e.target.value === '' ? null : +e.target.value)} />
+        )}
+      </div>
+
+      <hr className="rp-divider" />
+
+      {/* Réseau */}
+      <SectionLabel>Réseau</SectionLabel>
+      <Field label="Type">
         <select value={seg.type} onChange={e => set('type', e.target.value)}>
           <option value="aller">Aller ECS</option>
           <option value="retour">Retour ECS</option>
         </select>
       </Field>
 
-      {/* Material */}
+      <hr className="rp-divider" />
+
+      {/* Canalisation */}
+      <SectionLabel>Canalisation</SectionLabel>
       <Field label="Matériau">
         {enabledMats.length === 0
           ? <p className="lp-hint">Aucun matériau activé dans les paramètres.</p>
@@ -119,7 +167,20 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
         </>
       )}
 
-      {/* Insulation */}
+      {/* Affichage schéma — bas de section Canalisation */}
+      {seg.dn && (
+        <label className="lp-checkbox-label" style={{ marginTop: 6 }}>
+          <input type="checkbox"
+            checked={!!seg.showDN}
+            onChange={e => set('showDN', e.target.checked || null)} />
+          <span style={{ fontSize: 11, color: '#6b7280' }}>Afficher le DN sur le schéma</span>
+        </label>
+      )}
+
+      <hr className="rp-divider" />
+
+      {/* Isolation */}
+      <SectionLabel>Isolation</SectionLabel>
       <Field label="Isolant">
         {enabledIns.length === 0
           ? <p className="lp-hint">Aucun isolant activé dans les paramètres.</p>
@@ -165,35 +226,15 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
         </>
       )}
 
-      <hr className="rp-divider" />
-
-      <Field label="Longueur" unit="m">
-        <input type="number" min="0"
-          value={seg.length_override ?? ''}
-          placeholder="saisie manuelle"
-          onChange={e => set('length_override', e.target.value === '' ? null : +e.target.value)} />
-      </Field>
-
-      <Field label="Débit" unit="L/h">
-        <input type="number" min="0"
-          value={seg.flowRate ?? ''}
-          onChange={e => set('flowRate', e.target.value === '' ? null : +e.target.value)} />
-      </Field>
-
-      <Field label="Vitesse" unit="m/s">
-        <input type="number" min="0" step="0.01"
-          value={seg.velocity ?? ''}
-          onChange={e => set('velocity', e.target.value === '' ? null : +e.target.value)} />
-      </Field>
     </div>
   )
 }
 
 const DIR_BTNS = [
-  { label: '↑', rot: 270, title: 'Vers le haut' },
-  { label: '↓', rot: 90,  title: 'Vers le bas' },
   { label: '←', rot: 180, title: 'Vers la gauche' },
+  { label: '↑', rot: 270, title: 'Vers le haut' },
   { label: '→', rot: 0,   title: 'Vers la droite' },
+  { label: '↓', rot: 90,  title: 'Vers le bas' },
 ]
 
 function PointPanel({ pt, onUpdate }) {
@@ -210,7 +251,7 @@ function PointPanel({ pt, onUpdate }) {
           <div style={{ display: 'flex', gap: 3 }}>
             {DIR_BTNS.map(btn => (
               <button key={btn.rot}
-                className={`lp-icon-btn${(pt.rotation ?? 0) === btn.rot ? ' active' : ''}`}
+                className={`lp-icon-btn${(pt.rotation ?? 180) === btn.rot ? ' active' : ''}`}
                 title={btn.title} style={{ minWidth: 26, fontWeight: 700 }}
                 onClick={() => set('rotation', btn.rot)}>
                 {btn.label}
