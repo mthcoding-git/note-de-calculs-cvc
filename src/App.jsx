@@ -1,10 +1,12 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import DrawingCanvas from './components/DrawingCanvas'
 import LeftPanel from './components/LeftPanel'
 import RightPanel from './components/RightPanel'
 import Toolbar from './components/Toolbar'
 import { DEFAULT_MATERIALS } from './data/materials'
 import { DEFAULT_INSULATIONS } from './data/insulations'
+import { computeFlowDirections } from './utils/flowDirection'
+import { computeNetworkFlows } from './utils/flowCalc'
 import './App.css'
 
 const DEFAULT_GLOBAL_PARAMS = {
@@ -90,7 +92,37 @@ function useHistory(init) {
 
 export default function App() {
   const { project, setProject, undo, redo, canUndo, canRedo } = useHistory(initProject())
+
+  // Sens d'écoulement par tronçon — recalculé à chaque modification du réseau
+  const flowDirections = useMemo(
+    () => computeFlowDirections(project.segments, project.points),
+    [project.segments, project.points]
+  )
+
+  // Débits/vitesses résolus par loi des nœuds
+  const networkFlows = useMemo(
+    () => computeNetworkFlows(project.segments, project.points, project.materials, flowDirections),
+    [project.segments, project.points, project.materials, flowDirections]
+  )
+
+  const errorCount = useMemo(() => {
+    const ptCount = new Map()
+    for (const s of project.segments) {
+      if (s.startPointId) ptCount.set(s.startPointId, (ptCount.get(s.startPointId) ?? 0) + 1)
+      if (s.endPointId)   ptCount.set(s.endPointId,   (ptCount.get(s.endPointId)   ?? 0) + 1)
+    }
+    const conn = project.segments.filter(s => {
+      const sc = (ptCount.get(s.startPointId) ?? 0) >= 2
+      const ec = (ptCount.get(s.endPointId)   ?? 0) >= 2
+      return (sc ? 1 : 0) + (ec ? 1 : 0) <= 1
+    }).length
+    let flow = 0
+    for (const [, v] of networkFlows) { if (v.hasError) flow++ }
+    return conn + flow
+  }, [project.segments, networkFlows])
+
   const [drawMode,           setDrawMode]           = useState('select')
+  const [connHighlightIds,   setConnHighlightIds]   = useState([])
   const [pipeType,           setPipeType]           = useState('aller')
   const [selectedIds,        setSelectedIds]        = useState([])
   const [panelOpen,          setPanelOpen]          = useState(true)
@@ -149,6 +181,14 @@ export default function App() {
       setProject(p => ({ ...p, points: p.points.map(pt => pt.id !== id ? pt : { ...pt, ...newData }) }))
     }
   }, [setProject])
+
+  // Auto-exit errors mode when all errors are resolved
+  useEffect(() => {
+    if (drawMode === 'errors' && errorCount === 0) {
+      setDrawMode('select')
+      setConnHighlightIds([])
+    }
+  }, [drawMode, errorCount])
 
   // Ctrl+Z / Ctrl+Y
   useEffect(() => {
@@ -211,7 +251,7 @@ export default function App() {
         <div className="header-actions">
           <button onClick={handleSave} className="btn btn-secondary">💾 Sauvegarder</button>
           <button onClick={handleLoad} className="btn btn-secondary">📂 Charger</button>
-          <button className="btn btn-primary" disabled>⚡ Calculer</button>
+          <button className="btn btn-primary" disabled>🧮 Calculer</button>
           <button className="btn btn-success" disabled>📊 Export Excel</button>
         </div>
       </header>
@@ -220,6 +260,8 @@ export default function App() {
         drawMode={drawMode} setDrawMode={setDrawMode}
         pipeType={pipeType} setPipeType={setPipeType}
         panelOpen={panelOpen} onTogglePanel={() => setPanelOpen(o => !o)}
+        errorCount={errorCount}
+        onShowErrors={() => { setDrawMode('errors'); setPanelOpen(true) }}
       />
 
       <div className="app-body">
@@ -255,10 +297,12 @@ export default function App() {
               onPumpRotationChange={setNextPumpRotation}
               segments={project.segments}
               points={project.points}
+              networkFlows={networkFlows}
               drawMode={drawMode}
               editParam={editParam}
               onEditParamChange={setEditParam}
               onSelectIds={setSelectedIds}
+              onConnHighlight={setConnHighlightIds}
             />
           )}
         </aside>
@@ -291,6 +335,9 @@ export default function App() {
             onPlacingChaufferieDone={() => setPlacingChaufferie(false)}
             editParam={drawMode === 'editParams' ? editParam : null}
             onAssignParam={onAssignParam}
+            connHighlightIds={connHighlightIds}
+            onConnHighlight={setConnHighlightIds}
+            networkFlows={networkFlows}
           />
         </main>
 
@@ -307,6 +354,8 @@ export default function App() {
             columns={project.columns}
             columnXs={project.columnXs}
             chaufferie={project.chaufferie}
+            flowDirections={flowDirections}
+            networkFlows={networkFlows}
           />
         </aside>
       </div>

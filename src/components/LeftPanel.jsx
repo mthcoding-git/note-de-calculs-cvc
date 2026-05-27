@@ -566,7 +566,7 @@ function computeGroups(paramType, segments, materials, insulations) {
     }
     const rows = []
     for (const [k, v] of byKey)
-      rows.push({ key: k, label: v.isFlow ? `${v.value} L/h` : `${v.value} m/s`, ids: v.ids, color: '#64748b' })
+      rows.push({ key: k, label: v.isFlow ? `${v.value} m³/h` : `${v.value} m/s`, ids: v.ids, color: '#64748b' })
     return { rows, missing: none }
   }
   return { rows: [], missing: [] }
@@ -575,7 +575,7 @@ function computeGroups(paramType, segments, materials, insulations) {
 function EditParamsPanel({
   segments, points, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie,
-  editParam, onEditParamChange, onSelectIds,
+  editParam, onEditParamChange,
 }) {
   const set = patch => onEditParamChange({ ...editParam, ...patch })
   const { paramType, segType, materialId, dn, insulationId, thickness,
@@ -585,19 +585,6 @@ function EditParamsPanel({
   const enabledIns  = insulations.filter(i => i.enabled)
   const selMat = enabledMats.find(m => m.id === materialId)
   const selIns = enabledIns.find(i => i.id === insulationId)
-
-  const connIssues = useMemo(() => {
-    const ptCount = new Map()
-    for (const s of segments) {
-      if (s.startPointId) ptCount.set(s.startPointId, (ptCount.get(s.startPointId) ?? 0) + 1)
-      if (s.endPointId)   ptCount.set(s.endPointId,   (ptCount.get(s.endPointId)   ?? 0) + 1)
-    }
-    return segments.filter(s => {
-      const sc = (ptCount.get(s.startPointId) ?? 0) >= 2
-      const ec = (ptCount.get(s.endPointId)   ?? 0) >= 2
-      return (sc ? 1 : 0) + (ec ? 1 : 0) <= 1
-    })
-  }, [segments])
 
   const { rows: groups, missing } = useMemo(
     () => computeGroups(paramType, segments, materials, insulations),
@@ -702,7 +689,7 @@ function EditParamsPanel({
         <div className="lp-field">
           <label className="lp-label">Valeur à appliquer</label>
           <div style={{ display: 'flex', gap: 4, marginBottom: 5 }}>
-            {[{ v: 'flowRate', label: 'Débit (L/h)' }, { v: 'velocity', label: 'Vitesse (m/s)' }].map(({ v, label }) => (
+            {[{ v: 'flowRate', label: 'Débit (m³/h)' }, { v: 'velocity', label: 'Vitesse (m/s)' }].map(({ v, label }) => (
               <button key={v} onClick={() => set({ flowVelocityMode: v, flowVelocityValue: null })}
                 className="lp-icon-btn"
                 style={{ flex: 1, fontSize: 11, fontWeight: 600, padding: '4px 0',
@@ -715,9 +702,9 @@ function EditParamsPanel({
             ))}
           </div>
           <input type="number" min="0"
-            step={flowVelocityMode === 'flowRate' ? '1' : '0.01'}
+            step={flowVelocityMode === 'flowRate' ? '0.001' : '0.001'}
             value={flowVelocityValue ?? ''}
-            placeholder={flowVelocityMode === 'flowRate' ? 'L/h' : 'm/s'}
+            placeholder={flowVelocityMode === 'flowRate' ? 'm³/h' : 'm/s'}
             onChange={e => set({ flowVelocityValue: e.target.value === '' ? null : +e.target.value })} />
         </div>
       )}
@@ -795,28 +782,88 @@ function EditParamsPanel({
         )}
       </div>
 
+    </div>
+  )
+}
+
+function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chaufferie, networkFlows, onSelectIds, onConnHighlight }) {
+  const [showConnHighlight,   setShowConnHighlight]   = useState(false)
+  const [showManualHighlight, setShowManualHighlight] = useState(false)
+
+  const connIssues = useMemo(() => {
+    const ptCount = new Map()
+    for (const s of segments) {
+      if (s.startPointId) ptCount.set(s.startPointId, (ptCount.get(s.startPointId) ?? 0) + 1)
+      if (s.endPointId)   ptCount.set(s.endPointId,   (ptCount.get(s.endPointId)   ?? 0) + 1)
+    }
+    return segments.filter(s => {
+      const sc = (ptCount.get(s.startPointId) ?? 0) >= 2
+      const ec = (ptCount.get(s.endPointId)   ?? 0) >= 2
+      return (sc ? 1 : 0) + (ec ? 1 : 0) <= 1
+    })
+  }, [segments])
+
+  const flowErrorSegs = useMemo(() => {
+    if (!networkFlows) return []
+    return segments.filter(s => networkFlows.get(s.id)?.hasError)
+  }, [segments, networkFlows])
+
+  const manualFlowSegs = useMemo(
+    () => segments.filter(s => s.flowRate != null || s.velocity != null),
+    [segments]
+  )
+
+  useEffect(() => {
+    const ids = [
+      ...(showConnHighlight   ? connIssues.map(s => s.id)     : []),
+      ...(showManualHighlight ? manualFlowSegs.map(s => s.id) : []),
+    ]
+    onConnHighlight?.(ids)
+  }, [showConnHighlight, showManualHighlight, connIssues, manualFlowSegs])
+
+  useEffect(() => () => { onConnHighlight?.([]) }, [])
+
+  const segItem = (s) => (
+    <div key={s.id} onClick={() => onSelectIds?.([s.id])}
+      style={{
+        fontSize: 10, padding: '3px 8px', borderRadius: 3, cursor: 'pointer', lineHeight: 1.5,
+        background: '#f9fafb', border: '1px solid transparent', color: '#6b7280', marginBottom: 2,
+      }}>
+      {getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points)}
+    </div>
+  )
+
+  return (
+    <div className="left-panel" style={{ gap: 0 }}>
+      <div style={{ padding: '10px 12px', background: '#fffbeb', borderBottom: '1px solid #fde68a' }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#92400e' }}>⚠ Erreurs dans le réseau</span>
+      </div>
+
       {connIssues.length > 0 && (
-        <div style={{ border: '1px solid #fde68a', background: '#fffbeb', borderRadius: 5, padding: '7px 8px', marginTop: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
-            <span style={{ fontSize: 13 }}>⚠</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#92400e' }}>
-              {connIssues.length} tronçon{connIssues.length > 1 ? 's' : ''} avec extrémité non connectée
-            </span>
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb' }}>
+          <div style={{ fontWeight: 600, fontSize: 11, color: '#374151', marginBottom: 6 }}>
+            Extrémités non connectées ({connIssues.length})
           </div>
-          <div style={{ maxHeight: 120, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {connIssues.map(s => (
-              <div key={s.id}
-                onClick={() => onSelectIds?.([s.id])}
-                style={{
-                  fontSize: 10, color: '#78350f', padding: '3px 6px',
-                  borderRadius: 3, cursor: onSelectIds ? 'pointer' : 'default',
-                  lineHeight: 1.4,
-                  ':hover': { background: '#fde68a' },
-                }}>
-                {getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points)}
-              </div>
-            ))}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginBottom: 8, cursor: 'pointer', color: '#374151' }}>
+            <input type="checkbox" checked={showConnHighlight}
+              onChange={e => setShowConnHighlight(e.target.checked)} />
+            Afficher les tronçons non reliés
+          </label>
+          <div>{connIssues.map(s => segItem(s))}</div>
+        </div>
+      )}
+
+      {flowErrorSegs.length > 0 && (
+        <div style={{ padding: '10px 12px' }}>
+          <div style={{ fontWeight: 600, fontSize: 11, color: '#374151', marginBottom: 6 }}>
+            Débits incohérents ({flowErrorSegs.length})
           </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginBottom: 8, cursor: 'pointer', color: '#374151' }}>
+            <input type="checkbox" checked={showManualHighlight}
+              onChange={e => setShowManualHighlight(e.target.checked)} />
+            Afficher les tronçons avec débit / vitesse manuel
+          </label>
+          <div>{manualFlowSegs.map(s => segItem(s))}</div>
         </div>
       )}
     </div>
@@ -834,16 +881,16 @@ export default function LeftPanel({
   chaufferie, onChaufferieChange,
   editChaufferie, onEditChaufferieChange,
   onAddPump, onAddProductionECS, onAddChaufferie, nextPumpRotation, onPumpRotationChange,
-  segments, points,
+  segments, points, networkFlows,
   drawMode, editParam, onEditParamChange,
-  onSelectIds,
+  onSelectIds, onConnHighlight,
 }) {
   if (drawMode === 'editParams') {
     return (
       <div className="left-panel">
         <div className="lp-section">
           <div className="lp-section-header" style={{ pointerEvents: 'none' }}>
-            <span>⊞ Attribution des paramètres</span>
+            <span>🏷 Attribution des paramètres</span>
           </div>
           <div className="lp-section-body">
             <EditParamsPanel
@@ -853,11 +900,24 @@ export default function LeftPanel({
               columns={columns} columnXs={columnXs}
               chaufferie={chaufferie}
               editParam={editParam} onEditParamChange={onEditParamChange}
-              onSelectIds={onSelectIds}
             />
           </div>
         </div>
       </div>
+    )
+  }
+
+  if (drawMode === 'errors') {
+    return (
+      <ErrorPanel
+        segments={segments} points={points}
+        levels={levels} lineYs={lineYs}
+        columns={columns} columnXs={columnXs}
+        chaufferie={chaufferie}
+        networkFlows={networkFlows}
+        onSelectIds={onSelectIds}
+        onConnHighlight={onConnHighlight}
+      />
     )
   }
 

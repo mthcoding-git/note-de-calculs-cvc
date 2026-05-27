@@ -2,6 +2,7 @@ export default function Toolbar({
   drawMode, setDrawMode,
   pipeType, setPipeType,
   panelOpen, onTogglePanel,
+  errorCount, onShowErrors,
 }) {
   return (
     <div className="toolbar">
@@ -26,7 +27,7 @@ export default function Toolbar({
         </button>
         <button className={`tb-btn ${drawMode === 'editParams' ? 'active' : ''}`}
           onClick={() => setDrawMode('editParams')} title="Attribuer des paramètres">
-          ⊞ Attribuer
+          🏷 Attribuer
         </button>
       </div>
 
@@ -52,6 +53,18 @@ export default function Toolbar({
               <span className="pipe-prev-point" /> Nœud
             </button>
           </div>
+        </>
+      )}
+
+      {(errorCount > 0 || drawMode === 'errors') && (
+        <>
+          <div className="toolbar-sep" />
+          <button
+            className={`tb-btn${drawMode === 'errors' ? ' active' : ''}`}
+            onClick={() => drawMode === 'errors' ? setDrawMode('select') : onShowErrors()}
+            style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', fontWeight: 700 }}>
+            ⚠ {errorCount} erreur{errorCount > 1 ? 's' : ''}
+          </button>
         </>
       )}
 

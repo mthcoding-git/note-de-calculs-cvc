@@ -540,6 +540,8 @@ export default function DrawingCanvas({
   placingEquipment, onPlacingDone,
   placingChaufferie, onPlacingChaufferieDone,
   editParam, onAssignParam,
+  connHighlightIds, onConnHighlight,
+  networkFlows,
 }) {
   const svgRef    = useRef(null)
   const spaceRef  = useRef(false)
@@ -871,6 +873,8 @@ export default function DrawingCanvas({
     }
     if (e.button !== 0) return
 
+    if (connHighlightIds?.length > 0) onConnHighlight?.([])
+
     // ── Equipment placement mode ──
     if (placingEquipment !== null) {
       const snapped = { x: snap(pos.x), y: snap(pos.y) }
@@ -974,6 +978,9 @@ export default function DrawingCanvas({
       return
     }
 
+    // ── Attribution mode: segment assignment handled by onClick, block all other interactions ──
+    if (editParam) return
+
     // ── Select mode ──
 
     // Bloc drag : tous les éléments sélectionnés → déplacement libre du bloc entier
@@ -1025,7 +1032,8 @@ export default function DrawingCanvas({
       finalize, splitSegment, resolveSnap, deletePoint,
       segments, points, selectedIds, onNetworkChange, onSelectIds,
       placingEquipment, onPlacingDone,
-      placingChaufferie, onPlacingChaufferieDone, levels, chaufferie, onChaufferieChange])
+      placingChaufferie, onPlacingChaufferieDone, levels, chaufferie, onChaufferieChange,
+      connHighlightIds, onConnHighlight])
 
   // ── mouse up ──────────────────────────────────────────
   const onMouseUp = useCallback(e => {
@@ -1400,19 +1408,25 @@ export default function DrawingCanvas({
             }
           }
 
+          // connHighlight: highlighted segment → normal color, others → light gray
+          const isHighlighted = connHighlightIds?.length > 0 && connHighlightIds.includes(seg.id)
+          const isGrayed      = connHighlightIds?.length > 0 && !connHighlightIds.includes(seg.id)
+
           // match=green · missing=red · other=gray · dash always follows segment type
-          const strokeColor = editStyle === 'match'   ? '#16a34a'
+          const strokeColor = isGrayed      ? '#d1d5db'
+            : editStyle === 'match'   ? '#16a34a'
             : editStyle === 'missing' ? '#ef4444'
             : editStyle === 'other'   ? '#9ca3af'
             : sel ? '#2563eb' : col
-          const strokeW = editStyle === 'match' ? 3 : editStyle === 'missing' ? 2 : editStyle === 'other' ? 1 : sel ? 2.5 : 1.5
+          const strokeW = isGrayed ? 1
+            : editStyle === 'match' ? 3 : editStyle === 'missing' ? 2 : editStyle === 'other' ? 1 : sel ? 2.5 : 1.5
           const segDash = sel ? 'none' : dash
           const opacity = 1
 
           return (
             <g key={seg.id}>
               <path d={path} stroke="transparent" strokeWidth={14} fill="none"
-                style={{ cursor: editParam ? 'crosshair' : drawMode === 'delete' ? 'crosshair' : 'pointer' }}
+                style={{ cursor: editParam ? 'pointer' : drawMode === 'delete' ? 'crosshair' : 'pointer' }}
                 onClick={ev => {
                   if (drawMode === 'delete') return
                   ev.stopPropagation()
@@ -1463,6 +1477,47 @@ export default function DrawingCanvas({
                     <text x={mid.x + OFF + 1} y={mid.y}
                       fontSize={8} fill={col} fontWeight="600"
                       textAnchor="start" dominantBaseline="central">{lbl}</text>
+                  </g>
+                )
+              })()}
+              {seg.showFlowRate && (seg.flowRate != null || seg.velocity != null) && (() => {
+                const vs = seg.vertices
+                if (vs.length < 2) return null
+                let totalLen = 0
+                for (let i = 0; i < vs.length - 1; i++) totalLen += Math.hypot(vs[i+1].x - vs[i].x, vs[i+1].y - vs[i].y)
+                let cumLen = 0, mid = vs[0], edgeDir = 'h'
+                const half = totalLen / 2
+                for (let i = 0; i < vs.length - 1; i++) {
+                  const sl = Math.hypot(vs[i+1].x - vs[i].x, vs[i+1].y - vs[i].y)
+                  if (cumLen + sl >= half) {
+                    const t = (half - cumLen) / sl
+                    mid = { x: vs[i].x + t * (vs[i+1].x - vs[i].x), y: vs[i].y + t * (vs[i+1].y - vs[i].y) }
+                    edgeDir = Math.abs(vs[i+1].x - vs[i].x) >= Math.abs(vs[i+1].y - vs[i].y) ? 'h' : 'v'
+                    break
+                  }
+                  cumLen += sl
+                }
+                const lbl = seg.flowRate != null ? `${seg.flowRate} m³/h` : `${seg.velocity} m/s`
+                const tw = lbl.length * 5 + 6
+                const BH = 11, OFF = 7
+                if (edgeDir === 'h') {
+                  return (
+                    <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                      <rect x={mid.x - tw/2} y={mid.y - OFF - BH + 1} width={tw} height={BH}
+                        fill="rgba(255,255,255,0.88)" stroke={col} strokeWidth={0.3} rx={2} />
+                      <text x={mid.x} y={mid.y - OFF - BH/2 + 1}
+                        fontSize={8} fill={col} fontWeight="600"
+                        textAnchor="middle" dominantBaseline="central">{lbl}</text>
+                    </g>
+                  )
+                }
+                return (
+                  <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                    <rect x={mid.x - OFF - tw + 1} y={mid.y - BH/2} width={tw} height={BH}
+                      fill="rgba(255,255,255,0.88)" stroke={col} strokeWidth={0.3} rx={2} />
+                    <text x={mid.x - OFF - 1} y={mid.y}
+                      fontSize={8} fill={col} fontWeight="600"
+                      textAnchor="end" dominantBaseline="central">{lbl}</text>
                   </g>
                 )
               })()}
@@ -1638,7 +1693,7 @@ export default function DrawingCanvas({
           Cliquez pour placer la chaufferie · Échap pour annuler
         </text>
       )}
-      {!drawing && drawMode === 'select' && (
+      {!drawing && (drawMode === 'select' || drawMode === 'errors') && (
         <text x={8} y={18} fontSize={10} fill="#cbd5e1">
           Ctrl+Glisser : déplacer la vue · Glisser sur vide : sélection rect · Shift+Clic : multi-sélection · Suppr : effacer · Ctrl+Z/Y : annuler/rétablir
         </text>
