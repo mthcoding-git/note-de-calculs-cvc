@@ -4,7 +4,7 @@ import { getDisplayName } from '../utils/naming'
 let _uid = 0
 const uid = (p = 'x') => `${p}-${Date.now()}-${++_uid}`
 
-function Section({ title, children, defaultOpen = true }) {
+function Section({ title, children, defaultOpen = true, noPad = false }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div className="lp-section">
@@ -12,7 +12,7 @@ function Section({ title, children, defaultOpen = true }) {
         <span>{title}</span>
         <span className="lp-chevron">{open ? '▾' : '▸'}</span>
       </button>
-      {open && <div className="lp-section-body">{children}</div>}
+      {open && <div className={noPad ? 'lp-section-body-nopad' : 'lp-section-body'}>{children}</div>}
     </div>
   )
 }
@@ -870,6 +870,46 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
   )
 }
 
+function LocalsSection({ locauxMode, onLocauxModeChange, locauxEditMode, onLocauxEditModeChange, showLocalNames, onShowLocalNamesChange }) {
+  return (
+    <Section title="Locaux" defaultOpen={true}>
+      <div className="lp-field">
+        <label className="lp-label">Mode réseau</label>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            className={`lp-ss-btn lp-icon-btn${locauxMode !== 'locaux' ? ' lp-ss-active' : ''}`}
+            onClick={() => onLocauxModeChange('simple')}>
+            Simple
+          </button>
+          <button
+            className={`lp-ss-btn lp-icon-btn${locauxMode === 'locaux' ? ' lp-ss-active' : ''}`}
+            onClick={() => onLocauxModeChange('locaux')}>
+            Avec locaux
+          </button>
+        </div>
+      </div>
+      {locauxMode === 'locaux' && (
+        <>
+          <div className="lp-field">
+            <label className="lp-checkbox-label">
+              <input type="checkbox" checked={!!locauxEditMode}
+                onChange={e => onLocauxEditModeChange(e.target.checked)} />
+              <span>Modifier les locaux</span>
+            </label>
+          </div>
+          <div className="lp-field">
+            <label className="lp-checkbox-label">
+              <input type="checkbox" checked={!!showLocalNames}
+                onChange={e => onShowLocalNamesChange(e.target.checked)} />
+              <span>Afficher les noms des locaux</span>
+            </label>
+          </div>
+        </>
+      )}
+    </Section>
+  )
+}
+
 export default function LeftPanel({
   globalParams, onGlobalParamsChange,
   levels, lineYs, onLevelsChange, onLineYsChange,
@@ -884,6 +924,8 @@ export default function LeftPanel({
   segments, points, networkFlows,
   drawMode, editParam, onEditParamChange,
   onSelectIds, onConnHighlight,
+  locauxMode, onLocauxModeChange,
+  locauxEditMode, onLocauxEditModeChange, showLocalNames, onShowLocalNamesChange,
 }) {
   if (drawMode === 'editParams') {
     return (
@@ -926,17 +968,24 @@ export default function LeftPanel({
       <GlobalParamsSection params={globalParams} onChange={onGlobalParamsChange} />
       <MaterialsSection materials={materials} onChange={onMaterialsChange} />
       <InsulationsSection insulations={insulations} onChange={onInsulationsChange} />
-      <LevelsSection
-        levels={levels} lineYs={lineYs}
-        onLevelsChange={onLevelsChange} onLineYsChange={onLineYsChange}
-        editLevelsEnabled={editLevelsEnabled} onEditLevelsChange={onEditLevelsChange}
-      />
-      <ColumnsSection
-        columns={columns} columnXs={columnXs}
-        onColumnsChange={onColumnsChange} onColumnXsChange={onColumnXsChange}
-        levels={levels}
-        editColumnsEnabled={editColumnsEnabled} onEditColumnsChange={onEditColumnsChange}
-      />
+      <Section title="Structure du bâtiment" defaultOpen={true} noPad>
+        <LevelsSection
+          levels={levels} lineYs={lineYs}
+          onLevelsChange={onLevelsChange} onLineYsChange={onLineYsChange}
+          editLevelsEnabled={editLevelsEnabled} onEditLevelsChange={onEditLevelsChange}
+        />
+        <ColumnsSection
+          columns={columns} columnXs={columnXs}
+          onColumnsChange={onColumnsChange} onColumnXsChange={onColumnXsChange}
+          levels={levels}
+          editColumnsEnabled={editColumnsEnabled} onEditColumnsChange={onEditColumnsChange}
+        />
+        <LocalsSection
+          locauxMode={locauxMode} onLocauxModeChange={onLocauxModeChange}
+          locauxEditMode={locauxEditMode} onLocauxEditModeChange={onLocauxEditModeChange}
+          showLocalNames={showLocalNames} onShowLocalNamesChange={onShowLocalNamesChange}
+        />
+      </Section>
       <ChaufferieSection
         chaufferie={chaufferie} onChange={onChaufferieChange}
         levels={levels}

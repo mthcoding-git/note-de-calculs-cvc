@@ -68,6 +68,12 @@
 .tb-btn.active-retour { background: #fff7ed; border-color: #f97316; color: #f97316; }
 .tb-btn.active-delete { background: #fef2f2; border-color: #dc2626; color: #dc2626; font-weight: 700; }
 .tb-panel-toggle { font-weight: 600; }
+.tb-checkbox-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 500; color: #374151;
+  cursor: pointer; white-space: nowrap; user-select: none;
+}
+.tb-checkbox-label input[type="checkbox"] { width: 13px; height: 13px; accent-color: #4f46e5; cursor: pointer; }
 
 .pipe-btn { gap: 7px; }
 .pipe-prev-aller {
@@ -124,6 +130,7 @@
 .lp-section-header:hover { background: #f9fafb; }
 .lp-chevron { font-size: 10px; }
 .lp-section-body { padding: 8px 14px 12px; }
+.lp-section-body-nopad { padding: 0; }
 
 .lp-field { margin-bottom: 8px; }
 .lp-label { display: block; font-size: 12px; color: #374151; margin-bottom: 3px; font-weight: 500; }

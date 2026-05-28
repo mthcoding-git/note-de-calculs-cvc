@@ -3,6 +3,7 @@ import DrawingCanvas from './components/DrawingCanvas'
 import LeftPanel from './components/LeftPanel'
 import RightPanel from './components/RightPanel'
 import Toolbar from './components/Toolbar'
+import OnboardingWizard, { buildProjectFromConfig } from './components/OnboardingWizard'
 import { DEFAULT_MATERIALS } from './data/materials'
 import { DEFAULT_INSULATIONS } from './data/insulations'
 import { computeFlowDirections } from './utils/flowDirection'
@@ -58,6 +59,7 @@ function initProject() {
     chaufferie: DEFAULT_CHAUFFERIE,
     segments: [],
     points: DEFAULT_POINTS,
+    locauxMode: 'simple',
   }
 }
 
@@ -92,6 +94,12 @@ function useHistory(init) {
 
 export default function App() {
   const { project, setProject, undo, redo, canUndo, canRedo } = useHistory(initProject())
+  const [onboardingDone, setOnboardingDone] = useState(false)
+
+  const handleWizardComplete = useCallback((config) => {
+    setProject(buildProjectFromConfig(config))
+    setOnboardingDone(true)
+  }, [setProject])
 
   // Sens d'écoulement par tronçon — recalculé à chaque modification du réseau
   const flowDirections = useMemo(
@@ -123,6 +131,8 @@ export default function App() {
 
   const [drawMode,           setDrawMode]           = useState('select')
   const [connHighlightIds,   setConnHighlightIds]   = useState([])
+  const [locauxEditMode,     setLocauxEditMode]     = useState(false)
+  const [showLocalNames,     setShowLocalNames]     = useState(false)
   const [pipeType,           setPipeType]           = useState('aller')
   const [selectedIds,        setSelectedIds]        = useState([])
   const [panelOpen,          setPanelOpen]          = useState(true)
@@ -163,6 +173,21 @@ export default function App() {
       return s
     }))
   }, [editParam, update])
+
+  const handleLocauxModeChange = useCallback((newMode) => {
+    setProject(p => {
+      if (newMode === p.locauxMode) return p
+      const colCount = p.columns.length
+      if (newMode === 'simple') {
+        const newColXs = Array.from({ length: colCount + 1 }, (_, i) => 200 + i * 450)
+        return { ...p, locauxMode: 'simple', points: p.points.filter(pt => pt.type !== 'local'), columnXs: newColXs }
+      } else {
+        const newColXs = Array.from({ length: colCount + 1 }, (_, i) => 200 + i * 380)
+        return { ...p, locauxMode: 'locaux', columnXs: newColXs }
+      }
+    })
+    if (newMode === 'simple') { setLocauxEditMode(false); setShowLocalNames(false) }
+  }, [setProject])
 
   // Combined atomic update (single undo entry)
   const updateNetwork = useCallback((segsFnOrVal, ptsFnOrVal) => {
@@ -233,7 +258,7 @@ export default function App() {
     input.onchange = e => {
       const reader = new FileReader()
       reader.onload = ev => {
-        try { setProject(JSON.parse(ev.target.result)); setSelectedIds([]) }
+        try { setProject(JSON.parse(ev.target.result)); setSelectedIds([]); setOnboardingDone(true) }
         catch { alert('Fichier invalide.') }
       }
       reader.readAsText(e.target.files[0])
@@ -243,6 +268,7 @@ export default function App() {
 
   return (
     <div className="app">
+      {!onboardingDone && <OnboardingWizard onComplete={handleWizardComplete} />}
       <header className="app-header">
         <div className="app-title">
           <span className="app-title-main">Bouclage ECS</span>
@@ -303,6 +329,9 @@ export default function App() {
               onEditParamChange={setEditParam}
               onSelectIds={setSelectedIds}
               onConnHighlight={setConnHighlightIds}
+              locauxMode={project.locauxMode} onLocauxModeChange={handleLocauxModeChange}
+              locauxEditMode={locauxEditMode} onLocauxEditModeChange={setLocauxEditMode}
+              showLocalNames={showLocalNames} onShowLocalNamesChange={setShowLocalNames}
             />
           )}
         </aside>
@@ -338,6 +367,9 @@ export default function App() {
             connHighlightIds={connHighlightIds}
             onConnHighlight={setConnHighlightIds}
             networkFlows={networkFlows}
+            locauxMode={project.locauxMode}
+            locauxEditMode={locauxEditMode}
+            showLocalNames={showLocalNames}
           />
         </main>
 

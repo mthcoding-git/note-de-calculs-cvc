@@ -471,7 +471,7 @@ function applySpecialPtSnap(segs, pts) {
     while (changed) {
       changed = false
       const inside = workPts.find(p =>
-        p.id !== ecs.id && !p.isLocked && p.type !== 'pump' && p.type !== 'productionECS' &&
+        p.id !== ecs.id && !p.isLocked && p.type !== 'pump' && p.type !== 'productionECS' && p.type !== 'local' &&
         Math.abs(p.x - ecs.x) <= hw && Math.abs(p.y - ecs.y) <= hh
       )
       if (inside) {
@@ -542,6 +542,9 @@ export default function DrawingCanvas({
   editParam, onAssignParam,
   connHighlightIds, onConnHighlight,
   networkFlows,
+  locauxMode,
+  locauxEditMode,
+  showLocalNames,
 }) {
   const svgRef    = useRef(null)
   const spaceRef  = useRef(false)
@@ -705,7 +708,7 @@ export default function DrawingCanvas({
         }
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        const delPtIds  = selectedIds.filter(id => points.some(p => p.id === id && !p.isLocked))
+        const delPtIds  = selectedIds.filter(id => points.some(p => p.id === id && !p.isLocked && (p.type !== 'local' || locauxEditMode)))
         const delSegIds = new Set(selectedIds.filter(id => segments.some(s => s.id === id)))
 
         let newSegs = segments.filter(s => !delSegIds.has(s.id))
@@ -723,7 +726,7 @@ export default function DrawingCanvas({
     window.addEventListener('keydown', kd)
     window.addEventListener('keyup',   ku)
     return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku) }
-  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone])
+  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone, locauxEditMode])
 
   // ── zoom ─────────────────────────────────────────────
   const onWheel = useCallback(e => {
@@ -751,6 +754,8 @@ export default function DrawingCanvas({
         ? Math.max(PT_HIT, p.size ?? 15)
         : p.type === 'productionECS'
         ? Math.max(PT_HIT, Math.max((p.size?.w ?? 44) / 2, (p.size?.h ?? 28) / 2))
+        : p.type === 'local'
+        ? Math.max(PT_HIT, 26)
         : PT_HIT
       if (d < r && d < bestD) { bestD = d; best = p }
     }
@@ -823,7 +828,7 @@ export default function DrawingCanvas({
       const dy = e.clientY - ptDragRef.current.startY
       if (!ptDragRef.current.moved && Math.sqrt(dx * dx + dy * dy) > 4) {
         ptDragRef.current.moved = true
-        // Lock axis on first movement for free-constraint nodes (L/+ junctions)
+        // Lock axis on first movement for free-constraint nodes (L/+ junctions and locals)
         if (ptDragRef.current.constraint === 'free') {
           ptDragRef.current.lockedAxis = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v'
         }
@@ -1002,11 +1007,12 @@ export default function DrawingCanvas({
       onSelectIds(ids => e.shiftKey
         ? ids.includes(np.id) ? ids.filter(i => i !== np.id) : [...ids, np.id]
         : [np.id])
-      if (!np.isLocked) {
+      if (!np.isLocked && (np.type !== 'local' || locauxEditMode)) {
         ptDragRef.current = {
           ptId: np.id, startX: e.clientX, startY: e.clientY,
           origX: np.x, origY: np.y, moved: false,
-          constraint: getDragConstraint(np.id, segments), lockedAxis: null,
+          constraint: getDragConstraint(np.id, segments),
+          lockedAxis: null,
         }
       }
       return
@@ -1033,7 +1039,7 @@ export default function DrawingCanvas({
       segments, points, selectedIds, onNetworkChange, onSelectIds,
       placingEquipment, onPlacingDone,
       placingChaufferie, onPlacingChaufferieDone, levels, chaufferie, onChaufferieChange,
-      connHighlightIds, onConnHighlight])
+      connHighlightIds, onConnHighlight, locauxEditMode])
 
   // ── mouse up ──────────────────────────────────────────
   const onMouseUp = useCallback(e => {
@@ -1140,12 +1146,12 @@ export default function DrawingCanvas({
       } else {
         const ids = []
         segments.forEach(s => { if (segInRect(s, selRect)) ids.push(s.id) })
-        points.forEach(p   => { if (ptInRect(p, selRect))  ids.push(p.id) })
+        points.forEach(p => { if (ptInRect(p, selRect) && (p.type !== 'local' || locauxEditMode)) ids.push(p.id) })
         onSelectIds(prev => e.shiftKey ? [...new Set([...prev, ...ids])] : ids)
       }
       setRectSt(null); setSelRect(null)
     }
-  }, [rectSt, selRect, segments, points, selectedIds, onSelectIds, ptDragPos, segDragState, blockDragState, onNetworkChange])
+  }, [rectSt, selRect, segments, points, selectedIds, onSelectIds, ptDragPos, segDragState, blockDragState, onNetworkChange, lineYs, columnXs, locauxEditMode])
 
   // ── double-click → end segment ────────────────────────
   const onDblClick = useCallback(e => {
@@ -1282,17 +1288,20 @@ export default function DrawingCanvas({
             yTop = lineYs[Math.max(...idxs) + 1]
           }
           if (col.isGap) return <g key={col.id} />
+          const hasLocaux = locauxMode === 'locaux'
+          const pipeRight = hasLocaux ? Math.min(x1 + 250, x2) : x2
           return (
             <g key={col.id} style={{ pointerEvents: 'none' }}>
               <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
-              <line x1={x2} y1={yTop} x2={x2} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
-              <text x={(x1 + x2) / 2} y={yTop + 16} fontSize={12} fill="#b8c0cc" fontWeight="600"
+              <line x1={pipeRight} y1={yTop} x2={pipeRight} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
+              <text x={(x1 + pipeRight) / 2} y={yTop + 16} fontSize={12} fill="#b8c0cc" fontWeight="600"
                 textAnchor="middle" style={{ userSelect: 'none' }}>
                 {col.name}
               </text>
             </g>
           )
         })}
+
         {editColumnsEnabled && (columnXs ?? []).map((x, i) => (
           <rect key={`cdrag${i}`}
             x={x - 5} y={lineYs[lineYs.length - 1]}
@@ -1480,7 +1489,11 @@ export default function DrawingCanvas({
                   </g>
                 )
               })()}
-              {seg.showFlowRate && (seg.flowRate != null || seg.velocity != null) && (() => {
+              {seg.showFlowRate && (() => {
+                const resolved = networkFlows?.get(seg.id)
+                const displayQ = seg.flowRate ?? resolved?.flowRate
+                const displayV = seg.velocity ?? resolved?.velocity
+                if (displayQ == null && displayV == null) return null
                 const vs = seg.vertices
                 if (vs.length < 2) return null
                 let totalLen = 0
@@ -1497,7 +1510,7 @@ export default function DrawingCanvas({
                   }
                   cumLen += sl
                 }
-                const lbl = seg.flowRate != null ? `${seg.flowRate} m³/h` : `${seg.velocity} m/s`
+                const lbl = displayQ != null ? `${displayQ.toFixed(3)} m³/h` : `${displayV.toFixed(3)} m/s`
                 const tw = lbl.length * 5 + 6
                 const BH = 11, OFF = 7
                 if (edgeDir === 'h') {
@@ -1575,6 +1588,26 @@ export default function DrawingCanvas({
                 <g transform={`translate(${pt.x},${pt.y}) rotate(${pt.rotation ?? 180})`} style={{ pointerEvents: 'none' }}>
                   <circle r={r} fill={sel || dragged ? '#dbeafe' : 'rgba(238,242,255,0.97)'} stroke={sel || dragged ? '#2563eb' : '#4f46e5'} strokeWidth={1.5} />
                   <polygon points={`${-6*ts},${-7*ts} ${-6*ts},${7*ts} ${8*ts},0`} fill={sel || dragged ? '#2563eb' : '#4f46e5'} />
+                </g>
+              </g>
+            )
+          }
+          if (pt.type === 'local') {
+            const w = 50, h = 26
+            const col = sel || dragged ? '#2563eb' : '#4b5563'
+            const bg  = sel || dragged ? '#dbeafe' : '#f3f4f6'
+            return (
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+                <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
+                <g style={{ pointerEvents: 'none' }}>
+                  <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
+                    fill={bg} stroke={col} strokeWidth={1.2} rx={3} />
+                  {(showLocalNames || pt.showName) && pt.name && (
+                    <text x={pt.x} y={pt.y + 1} fontSize={8} fill={col} fontWeight="600"
+                      textAnchor="middle" dominantBaseline="central" style={{ userSelect: 'none' }}>
+                      {pt.name}
+                    </text>
+                  )}
                 </g>
               </g>
             )
@@ -1691,11 +1724,6 @@ export default function DrawingCanvas({
       {placingChaufferie && (
         <text x={8} y={18} fontSize={10} fill="#818cf8">
           Cliquez pour placer la chaufferie · Échap pour annuler
-        </text>
-      )}
-      {!drawing && (drawMode === 'select' || drawMode === 'errors') && (
-        <text x={8} y={18} fontSize={10} fill="#cbd5e1">
-          Ctrl+Glisser : déplacer la vue · Glisser sur vide : sélection rect · Shift+Clic : multi-sélection · Suppr : effacer · Ctrl+Z/Y : annuler/rétablir
         </text>
       )}
     </svg>

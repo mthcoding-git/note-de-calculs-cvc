@@ -319,6 +319,23 @@ function PointPanel({ pt, onUpdate }) {
     )
   }
 
+  if (pt.type === 'local') {
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title">Local</h3>
+        <Field label="Nom">
+          <input value={pt.name ?? ''} onChange={e => set('name', e.target.value || null)}
+            placeholder="Nom du local..." />
+        </Field>
+        <label className="lp-checkbox-label" style={{ marginTop: 4 }}>
+          <input type="checkbox" checked={!!pt.showName}
+            onChange={e => set('showName', e.target.checked)} />
+          <span style={{ fontSize: 11, color: '#6b7280' }}>Afficher le nom sur le schéma</span>
+        </label>
+      </div>
+    )
+  }
+
   if (pt.type === 'productionECS') {
     return (
       <div className="rp-section">
