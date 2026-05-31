@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { getDisplayName } from '../utils/naming'
+import { computeSegUI } from '../utils/thermalCalc'
 
 function Field({ label, unit, children }) {
   return (
@@ -11,7 +13,18 @@ function Field({ label, unit, children }) {
   )
 }
 
-function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData }) {
+
+function SectionLabel({ children }) {
+  return (
+    <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
+      letterSpacing: '0.05em', marginBottom: 5, marginTop: 2 }}>
+      {children}
+    </div>
+  )
+}
+
+function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData }) {
+  const [tab, setTab] = useState('params')
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
 
   const enabledMats = materials.filter(m => m.enabled)
@@ -23,18 +36,171 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
   const isDefault   = !seg.name
   const displayName = getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, points)
 
-
-  const SectionLabel = ({ children }) => (
-    <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
-      letterSpacing: '0.05em', marginBottom: 5, marginTop: 2 }}>
-      {children}
-    </div>
-  )
+  const he = globalParams?.he ?? 10
+  const uiValue = computeSegUI(seg, materials, insulations, he)
 
   return (
     <div className="rp-section">
       <h3 className="rp-title">📐 Tronçon</h3>
 
+      {/* Tab toggle */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
+        {[['params', 'Paramètres'], ['results', 'Résultats']].map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)} style={{
+            flex: 1, padding: '5px 0', fontSize: 11, fontWeight: tab === key ? 700 : 500,
+            border: `1px solid ${tab === key ? '#6366f1' : '#e5e7eb'}`,
+            borderRadius: 5, cursor: 'pointer',
+            background: tab === key ? '#eef2ff' : '#f9fafb',
+            color: tab === key ? '#4338ca' : '#6b7280',
+          }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'results' && (
+        <div>
+          {thermalData ? (() => {
+            const { Q, deltaT, T_from, T_to, T_amb } = thermalData
+            const velocity = flowData?.velocity
+            const flowRate = flowData?.flowRate
+            const T_depart = globalParams?.T_depart ?? 60
+            const dT_depuis_depart = T_to - T_depart
+
+            const de_mm = seg.de_override ?? dnDef?.de
+            const di_mm = seg.di_override ?? dnDef?.di
+            const e_mm  = typeof seg.thickness === 'number' ? seg.thickness : null
+            const lt    = seg.lambda_tube_override ?? selMat?.lambda
+            const li    = seg.lambda_insul_override ?? selIns?.lambda
+
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+                {/* ── Températures ── */}
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[['T° amont', T_from], ['T° aval', T_to]].map(([label, val]) => (
+                    <div key={label} style={{ flex: 1, padding: '9px 8px', background: '#fffbeb',
+                      border: '1px solid #fde68a', borderRadius: 6, textAlign: 'center' }}>
+                      <div style={{ fontSize: 9, color: '#a16207', fontWeight: 700, marginBottom: 3,
+                        textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: '#111827', lineHeight: 1 }}>
+                        {val.toFixed(2)}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>°C</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* ΔT depuis départ — simple texte */}
+                <div style={{ textAlign: 'center', fontSize: 11, color: '#6b7280', lineHeight: 1.4 }}>
+                  ΔT depuis départ :{' '}
+                  <span style={{ fontWeight: 700, color: '#374151' }}>{dT_depuis_depart.toFixed(2)} K</span>
+                  <span style={{ color: '#9ca3af', marginLeft: 5, fontSize: 10 }}>
+                    ({T_depart.toFixed(0)} → {T_to.toFixed(2)} °C)
+                  </span>
+                </div>
+
+                {/* ── Vitesse ── */}
+                <div style={{ padding: '8px 12px', background: '#fff',
+                  border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                  <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase',
+                    letterSpacing: '0.05em', marginBottom: 3 }}>Vitesse</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                    <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>
+                      {velocity != null ? velocity.toFixed(3) : '—'}
+                    </span>
+                    <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
+                  </div>
+                </div>
+
+                {/* ── Débit · UI · Pertes ── */}
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr 1px 1fr' }}>
+                    {[
+                      { label: 'Débit',  value: flowRate != null ? flowRate.toFixed(3) : '—', unit: 'm³/h'   },
+                      { label: 'UI',     value: uiValue  != null ? uiValue.toFixed(4)  : '—', unit: 'W/(m·K)' },
+                      { label: 'Pertes', value: Q.toFixed(1),                                  unit: 'W'      },
+                    ].reduce((acc, item, i) => {
+                      if (i > 0) acc.push(
+                        <div key={`sep${i}`} style={{ background: '#e5e7eb' }} />
+                      )
+                      acc.push(
+                        <div key={item.label} style={{ padding: '7px 6px', background: '#fff', textAlign: 'center' }}>
+                          <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
+                            textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 3 }}>
+                            {item.label}
+                          </div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#111827', lineHeight: 1.2 }}>
+                            {item.value}
+                          </div>
+                          <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 1 }}>{item.unit}</div>
+                        </div>
+                      )
+                      return acc
+                    }, [])}
+                  </div>
+                </div>
+
+                {/* ── Données techniques ── */}
+                <div style={{ padding: '6px 10px', background: '#f9fafb',
+                  border: '1px solid #f3f4f6', borderRadius: 5 }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af',
+                    textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                    Données techniques
+                  </div>
+                  <div style={{ fontSize: 10, color: '#9ca3af', lineHeight: 1.9 }}>
+                    <div>T amb = {T_amb.toFixed(1)} °C · ΔT tronçon = {Math.abs(deltaT).toFixed(3)} K</div>
+                    <div>
+                      he = {he} W/(m²·K)
+                      {de_mm != null && <> · de = {de_mm} · di = {di_mm ?? '—'} mm</>}
+                    </div>
+                    {e_mm != null && <div>e = {e_mm} mm</div>}
+                    {lt != null && (
+                      <div>λ tube = {lt}{li != null ? ` · λ isol = ${li}` : ''} W/(m·K)</div>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+            )
+          })() : (() => {
+            const velocity = flowData?.velocity
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {velocity != null && (
+                  <div style={{ padding: '8px 12px', background: '#fff',
+                    border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                    <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase',
+                      letterSpacing: '0.05em', marginBottom: 3 }}>Vitesse</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{velocity.toFixed(3)}</span>
+                      <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
+                    </div>
+                  </div>
+                )}
+                {uiValue != null && (
+                  <div style={{ padding: '8px 12px', background: '#fff',
+                    border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                    <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase',
+                      letterSpacing: '0.05em', marginBottom: 3 }}>UI</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{uiValue.toFixed(4)}</span>
+                      <span style={{ fontSize: 11, color: '#9ca3af' }}>W/(m·K)</span>
+                    </div>
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>
+                  {!seg.length_override
+                    ? 'Saisissez une longueur manuelle pour calculer les pertes thermiques.'
+                    : 'En attente des données amont (température de départ, débit, UI).'}
+                </div>
+              </div>
+            )
+          })()}
+        </div>
+      )}
+
+      {tab === 'params' && <>
       {/* Identification */}
       <SectionLabel>Identification</SectionLabel>
       <div className="lp-field">
@@ -277,6 +443,8 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
         </>
       )}
 
+      </>}
+
     </div>
   )
 }
@@ -288,8 +456,32 @@ const DIR_BTNS = [
   { label: '↓', rot: 90,  title: 'Vers le bas' },
 ]
 
-function PointPanel({ pt, onUpdate }) {
+function TempBadge({ temp, T_depart }) {
+  if (temp == null) return null
+  const dT = T_depart != null ? temp - T_depart : null
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ padding: '7px 10px', background: '#fffbeb',
+        border: '1px solid #fde68a', borderRadius: 6 }}>
+        <div style={{ fontSize: 9, color: '#a16207', fontWeight: 700, marginBottom: 3,
+          textTransform: 'uppercase', letterSpacing: '0.05em' }}>Température au nœud</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+          <span style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>{temp.toFixed(2)}</span>
+          <span style={{ fontSize: 10, color: '#9ca3af' }}>°C</span>
+        </div>
+      </div>
+      {dT != null && (
+        <div style={{ marginTop: 2, textAlign: 'center', fontSize: 10, color: '#6b7280' }}>
+          ΔT depuis départ : <span style={{ fontWeight: 700, color: '#374151' }}>{dT.toFixed(2)} K</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams }) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
+  const T_depart = globalParams?.T_depart ?? null
 
   if (pt.type === 'pump') {
     return (
@@ -315,23 +507,25 @@ function PointPanel({ pt, onUpdate }) {
             value={pt.size ?? 12}
             onChange={e => set('size', Math.max(8, Math.min(40, +e.target.value)))} />
         </Field>
+        <TempBadge temp={nodeTemp} T_depart={T_depart} />
       </div>
     )
   }
 
-  if (pt.type === 'local') {
+  if (pt.type === 'groupe') {
     return (
       <div className="rp-section">
-        <h3 className="rp-title">Local</h3>
+        <h3 className="rp-title">Groupe de points de puisage</h3>
         <Field label="Nom">
           <input value={pt.name ?? ''} onChange={e => set('name', e.target.value || null)}
-            placeholder="Nom du local..." />
+            placeholder="Nom du groupe..." />
         </Field>
         <label className="lp-checkbox-label" style={{ marginTop: 4 }}>
           <input type="checkbox" checked={!!pt.showName}
             onChange={e => set('showName', e.target.checked)} />
           <span style={{ fontSize: 11, color: '#6b7280' }}>Afficher le nom sur le schéma</span>
         </label>
+        <TempBadge temp={nodeTemp} T_depart={T_depart} />
       </div>
     )
   }
@@ -350,22 +544,152 @@ function PointPanel({ pt, onUpdate }) {
             value={pt.size?.h ?? 28}
             onChange={e => set('size', { ...(pt.size ?? { w: 44, h: 28 }), h: Math.max(20, +e.target.value) })} />
         </Field>
+        <TempBadge temp={nodeTemp} T_depart={T_depart} />
       </div>
     )
   }
 
+  // ── Nœud de jonction ────────────────────────────────────────────
+  const dT_depuis_depart = nodeTemp != null && T_depart != null ? nodeTemp - T_depart : null
+
   return (
     <div className="rp-section">
       <h3 className="rp-title">Nœud</h3>
-      <p className="lp-hint">Aucune propriété modifiable sur ce nœud.</p>
+
+      {nodeTemp != null ? (
+        <>
+          <div style={{ padding: '9px 10px', background: '#fffbeb',
+            border: '1px solid #fde68a', borderRadius: 6 }}>
+            <div style={{ fontSize: 9, color: '#a16207', fontWeight: 700, marginBottom: 3,
+              textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Température au nœud
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+              <span style={{ fontSize: 22, fontWeight: 700, color: '#111827' }}>
+                {nodeTemp.toFixed(2)}
+              </span>
+              <span style={{ fontSize: 11, color: '#9ca3af' }}>°C</span>
+            </div>
+          </div>
+          {dT_depuis_depart != null && (
+            <div style={{ marginTop: 3, textAlign: 'center', fontSize: 10, color: '#6b7280' }}>
+              ΔT depuis départ :{' '}
+              <span style={{ fontWeight: 700, color: '#374151' }}>{dT_depuis_depart.toFixed(2)} K</span>
+              <span style={{ color: '#9ca3af', marginLeft: 5 }}>
+                ({T_depart.toFixed(0)} → {nodeTemp.toFixed(2)} °C)
+              </span>
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="lp-hint" style={{ marginBottom: 8 }}>
+          Température non calculée — vérifiez longueur, débit et données matériau des tronçons amont.
+        </p>
+      )}
+
+      {/* Tronçons arrivants */}
+      {inSegs.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          {inSegs.length > 1 && (
+            <SectionLabel>Tronçons arrivants ({inSegs.length})</SectionLabel>
+          )}
+          {inSegs.map(s => (
+            <div key={s.id} style={{ padding: '8px 10px', background: '#f9fafb',
+              border: '1px solid #e5e7eb', borderRadius: 5, marginBottom: 5 }}>
+              {/* Nom sur autant de lignes que nécessaire */}
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#111827',
+                marginBottom: 6, lineHeight: 1.4, wordBreak: 'break-word' }}>
+                {s.name}
+                <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700,
+                  color: '#6b7280', background: '#e5e7eb',
+                  borderRadius: 3, padding: '1px 4px' }}>
+                  {s.type ?? '—'}
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                <div>
+                  <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>Débit</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#111827' }}>
+                    {s.flowRate != null ? s.flowRate.toFixed(3) + ' m³/h' : '—'}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>T arrivée</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>
+                    {s.T_to != null ? s.T_to.toFixed(2) + ' °C' : '—'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {inSegs.length === 0 && nodeTemp == null && (
+        <p className="lp-hint">Aucune propriété modifiable.</p>
+      )}
+    </div>
+  )
+}
+
+function ChaufferiePanel({ chaufferie, onChange, levels }) {
+  const set = (key, val) => onChange({ ...chaufferie, [key]: val })
+  const width  = Math.round(chaufferie.x2 - chaufferie.x1)
+  const height = Math.round(chaufferie.height)
+
+  return (
+    <div className="rp-section">
+      <h3 className="rp-title">Zone chaufferie</h3>
+
+      <label className="lp-checkbox-label" style={{ marginBottom: 8 }}>
+        <input type="checkbox"
+          checked={!!chaufferie.enabled}
+          onChange={e => set('enabled', e.target.checked)} />
+        <span style={{ fontSize: 11, color: '#374151' }}>Afficher la chaufferie</span>
+      </label>
+
+      <Field label="Niveau">
+        <select
+          value={chaufferie.levelId ?? ''}
+          onChange={e => set('levelId', e.target.value)}>
+          {levels.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
+      </Field>
+
+      <Field label="Largeur" unit="px">
+        <input type="number" min="20" step="10"
+          value={width}
+          onChange={e => {
+            const w = Math.max(20, +e.target.value)
+            set('x2', chaufferie.x1 + w)
+          }} />
+      </Field>
+
+      <Field label="Hauteur" unit="px">
+        <input type="number" min="20" step="10"
+          value={height}
+          onChange={e => set('height', Math.max(20, +e.target.value))} />
+      </Field>
     </div>
   )
 }
 
 export default function RightPanel({
   selectedIds, segments, points, onUpdate, materials, insulations,
-  levels, lineYs, columns, columnXs, chaufferie, flowDirections, networkFlows,
+  levels, lineYs, columns, columnXs, chaufferie, onChaufferieChange,
+  editChaufferie, flowDirections, networkFlows, globalParams, thermalResults,
 }) {
+  // In editChaufferie mode, chaufferie panel takes priority
+  if (editChaufferie && chaufferie?.placed) {
+    return (
+      <ChaufferiePanel
+        chaufferie={chaufferie}
+        onChange={onChaufferieChange}
+        levels={levels ?? []}
+      />
+    )
+  }
+
   if (!selectedIds || selectedIds.length === 0) {
     return (
       <div className="rp-section rp-empty">
@@ -395,9 +719,29 @@ export default function RightPanel({
       columns={columns} columnXs={columnXs} chaufferie={chaufferie}
       points={points}
       flowData={networkFlows?.get(seg.id)}
+      globalParams={globalParams}
+      thermalData={thermalResults?.segResults.get(seg.id)}
     />
   )
-  if (pt) return <PointPanel pt={pt} onUpdate={onUpdate} />
+  if (pt) {
+    const inSegs = segments
+      .filter(s => flowDirections?.get(s.id)?.toId === pt.id)
+      .map(s => ({
+        id: s.id,
+        name: getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points),
+        flowRate: networkFlows?.get(s.id)?.flowRate ?? null,
+        T_to:     thermalResults?.segResults.get(s.id)?.T_to ?? null,
+        type:     s.type,
+      }))
+    return (
+      <PointPanel
+        pt={pt} onUpdate={onUpdate}
+        nodeTemp={thermalResults?.nodeTemps.get(pt.id)}
+        inSegs={inSegs}
+        globalParams={globalParams}
+      />
+    )
+  }
 
   return null
 }

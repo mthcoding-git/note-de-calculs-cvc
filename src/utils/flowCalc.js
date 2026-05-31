@@ -54,6 +54,17 @@ export function computeNetworkFlows(segments, points, materials, flowDirections)
     )
   }
 
+  // ── Étape 1b : tronçons connectés à un groupe de puisage → débit = 0 ─
+  // Un groupe est un bout fermé du réseau (l'eau est puisée, pas retournée).
+  for (const seg of segments) {
+    if (flowMap.get(seg.id).source !== null) continue
+    const startPt = points.find(p => p.id === seg.startPointId)
+    const endPt   = points.find(p => p.id === seg.endPointId)
+    if (startPt?.type === 'groupe' || endPt?.type === 'groupe') {
+      flowMap.set(seg.id, { value: 0, source: 'computed' })
+    }
+  }
+
   // ── Étape 2 : propagation itérative par loi des nœuds ────────────────
   // Pour chaque nœud : si une seule inconnue → on la calcule.
   // On itère jusqu'à stabilité (au plus n+2 tours pour un arbre).
