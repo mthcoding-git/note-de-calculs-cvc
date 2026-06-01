@@ -91,7 +91,7 @@ function EdgeForm({ edge, onUpdate }) {
       </div>
 
       <div className="field">
-        <label>Débit (L/h)</label>
+        <label>Débit (m³/h)</label>
         <input type="number" min="0" value={d.flow_rate ?? ''} onChange={e => set('flow_rate', e.target.value)} />
       </div>
     </div>

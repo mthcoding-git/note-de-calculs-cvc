@@ -9,6 +9,7 @@ import { DEFAULT_INSULATIONS } from './data/insulations'
 import { computeFlowDirections } from './utils/flowDirection'
 import { computeNetworkFlows } from './utils/flowCalc'
 import { computeThermal } from './utils/thermalCalc'
+import ResultsTable from './components/ResultsTable'
 import './App.css'
 
 let _uid = 0
@@ -306,13 +307,21 @@ export default function App() {
     }).length
     let flow = 0
     for (const [, v] of networkFlows) { if (v.hasError) flow++ }
-    return conn + flow
+    const hasAllerRetour = project.segments.some(s => s.type === 'aller' || s.type === 'retour')
+    const hasProdECS     = project.points.some(p => p.type === 'productionECS')
+    const missingProd    = hasAllerRetour && !hasProdECS ? 1 : 0
+    return conn + flow + missingProd
   }, [project.segments, project.points, networkFlows])
 
   const [drawMode,           setDrawMode]           = useState('select')
   const [connHighlightIds,   setConnHighlightIds]   = useState([])
   const [groupesEditMode,    setGroupesEditMode]    = useState(false)
   const [showGroupeNames,    setShowGroupeNames]    = useState(false)
+  const [canvasDisplay, setCanvasDisplay] = useState({ material: false, length: false, flowVelocity: false, insulation: false })
+  const [showResultsTable, setShowResultsTable] = useState(false)
+  const [tableHeight, setTableHeight] = useState(300)
+  const tableHeightRef = useRef(0)
+  tableHeightRef.current = tableHeight
   const [pipeType,           setPipeType]           = useState('aller')
   const [selectedIds,        setSelectedIds]        = useState([])
   const [panelOpen,          setPanelOpen]          = useState(true)
@@ -340,19 +349,48 @@ export default function App() {
       if (s.id !== segId) return s
       if (editParam.paramType === 'type')
         return { ...s, type: editParam.segType }
-      if (editParam.paramType === 'material')
+      if (editParam.paramType === 'material') {
+        if (s.materialId === editParam.materialId && s.dn === editParam.dn)
+          return { ...s, materialId: null, dn: null, di_override: null, de_override: null, lambda_tube_override: null }
         return { ...s, materialId: editParam.materialId, dn: editParam.dn, di_override: null, de_override: null, lambda_tube_override: null }
-      if (editParam.paramType === 'insulation')
+      }
+      if (editParam.paramType === 'insulation') {
+        if (s.insulationId === editParam.insulationId && s.thickness === editParam.thickness)
+          return { ...s, insulationId: null, thickness: null, lambda_insul_override: null }
         return { ...s, insulationId: editParam.insulationId, thickness: editParam.thickness, lambda_insul_override: null }
-      if (editParam.paramType === 'length' && editParam.length != null)
+      }
+      if (editParam.paramType === 'length' && editParam.length != null) {
+        if (s.length_override === editParam.length)
+          return { ...s, length_override: null }
         return { ...s, length_override: editParam.length }
-      if (editParam.paramType === 'flowVelocity' && editParam.flowVelocityValue != null)
+      }
+      if (editParam.paramType === 'flowVelocity' && editParam.flowVelocityValue != null) {
+        const alreadySet = editParam.flowVelocityMode === 'flowRate'
+          ? s.flowRate === editParam.flowVelocityValue && s.velocity == null
+          : s.velocity === editParam.flowVelocityValue && s.flowRate == null
+        if (alreadySet)
+          return { ...s, flowRate: null, velocity: null }
         return editParam.flowVelocityMode === 'flowRate'
           ? { ...s, flowRate: editParam.flowVelocityValue, velocity: null }
           : { ...s, velocity: editParam.flowVelocityValue, flowRate: null }
+      }
       return s
     }))
   }, [editParam, update])
+
+  const handleSegmentFieldUpdate = useCallback((segId, fields) => {
+    update('segments', segs => segs.map(s => s.id === segId ? { ...s, ...fields } : s))
+  }, [update])
+
+  const startTableResize = useCallback((e) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startH = tableHeightRef.current
+    const onMove = ev => setTableHeight(Math.max(120, Math.min(620, startH + (startY - ev.clientY))))
+    const onUp   = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [])
 
   const handleRemoveColumn = useCallback((idx) => {
     setProject(p => {
@@ -628,7 +666,6 @@ export default function App() {
         placingEquipment={placingEquipment}
         onAddProductionECS={handleAddProductionECS}
         onAddPump={handleAddPump}
-
       />
 
       <div className="app-body">
@@ -665,6 +702,8 @@ export default function App() {
               drawMode={drawMode}
               editParam={editParam}
               onEditParamChange={setEditParam}
+              canvasDisplay={canvasDisplay}
+              onCanvasDisplayToggle={key => setCanvasDisplay(d => ({ ...d, [key]: !d[key] }))}
               onSelectIds={setSelectedIds}
               onConnHighlight={setConnHighlightIds}
               groupesEditMode={groupesEditMode} onGroupesEditModeChange={setGroupesEditMode}
@@ -674,6 +713,7 @@ export default function App() {
           )}
         </aside>
 
+        <div className="canvas-col">
         <main className="canvas-area">
           <DrawingCanvas
             levels={project.levels}
@@ -707,8 +747,44 @@ export default function App() {
             networkFlows={networkFlows}
             groupesEditMode={groupesEditMode}
             showGroupeNames={showGroupeNames}
+            canvasDisplay={canvasDisplay}
+            materials={project.materials}
+            insulations={project.insulations}
           />
         </main>
+
+        {showResultsTable && (
+          <div className="rt-resizer" onMouseDown={startTableResize} />
+        )}
+        {showResultsTable && (
+          <ResultsTable
+            height={tableHeight}
+            segments={project.segments}
+            points={project.points}
+            materials={project.materials}
+            insulations={project.insulations}
+            levels={project.levels}
+            lineYs={project.lineYs}
+            columns={project.columns}
+            columnXs={project.columnXs}
+            chaufferie={project.chaufferie}
+            flowDirections={flowDirections}
+            networkFlows={networkFlows}
+            thermalResults={thermalResults}
+            globalParams={project.globalParams}
+            selectedIds={selectedIds}
+            onSelectIds={setSelectedIds}
+            onSegmentUpdate={handleSegmentFieldUpdate}
+          />
+        )}
+
+        <div className="rt-toggle-bar">
+          <button className="rt-toggle-btn" onClick={() => setShowResultsTable(v => !v)}>
+            {showResultsTable ? '▼ Masquer les résultats' : '▲ Afficher les résultats'}
+          </button>
+        </div>
+
+        </div>{/* canvas-col */}
 
         <aside className="sidebar-right">
           <RightPanel

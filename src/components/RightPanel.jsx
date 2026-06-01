@@ -23,6 +23,16 @@ function SectionLabel({ children }) {
   )
 }
 
+function segSousSol(seg, levels, lineYs) {
+  if (!seg.vertices?.length) return false
+  const midY = seg.vertices.reduce((s, v) => s + v.y, 0) / seg.vertices.length
+  for (let i = 0; i < levels.length; i++) {
+    const yBot = lineYs[i], yTop = lineYs[i + 1]
+    if (yTop !== undefined && midY >= yTop && midY <= yBot) return !!levels[i].isSousSol
+  }
+  return false
+}
+
 function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData }) {
   const [tab, setTab] = useState('params')
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
@@ -73,44 +83,81 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
             const lt    = seg.lambda_tube_override ?? selMat?.lambda
             const li    = seg.lambda_insul_override ?? selIns?.lambda
 
+            const isSS       = segSousSol(seg, levels, lineYs)
+            const dtFromProd = T_depart - T_to
+            const isRetour   = seg.type === 'retour'
+            const prodECS    = points?.find(p => p.type === 'productionECS')
+            const isLinkedToProdECS = prodECS != null
+              && (seg.startPointId === prodECS.id || seg.endPointId === prodECS.id)
+
+            const DtuAlert = ({ msg }) => (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4,
+                padding: '3px 7px', background: '#fef2f2',
+                border: '1px solid #fecaca', borderRadius: 4, fontSize: 10 }}>
+                <span style={{ color: '#dc2626', fontWeight: 700, flexShrink: 0 }}>⚠</span>
+                <span style={{ color: '#b91c1c', fontWeight: 500 }}>{msg}</span>
+                <span style={{ color: '#9ca3af', fontSize: 9, marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>NF DTU 60.11</span>
+              </div>
+            )
+
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 
                 {/* ── Températures ── */}
-                <div style={{ display: 'flex', gap: 6 }}>
-                  {[['T° amont', T_from], ['T° aval', T_to]].map(([label, val]) => (
-                    <div key={label} style={{ flex: 1, padding: '9px 8px', background: '#fffbeb',
-                      border: '1px solid #fde68a', borderRadius: 6, textAlign: 'center' }}>
-                      <div style={{ fontSize: 9, color: '#a16207', fontWeight: 700, marginBottom: 3,
-                        textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
-                      <div style={{ fontSize: 20, fontWeight: 700, color: '#111827', lineHeight: 1 }}>
-                        {val.toFixed(2)}
+                <div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {[['T° amont', T_from], ['T° aval', T_to]].map(([label, val]) => (
+                      <div key={label} style={{ flex: 1, padding: '9px 8px', background: '#fffbeb',
+                        border: '1px solid #fde68a', borderRadius: 6, textAlign: 'center' }}>
+                        <div style={{ fontSize: 9, color: '#a16207', fontWeight: 700, marginBottom: 3,
+                          textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: '#111827', lineHeight: 1 }}>
+                          {val.toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>°C</div>
                       </div>
-                      <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>°C</div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                  {T_to < 50 && (
+                    <DtuAlert msg="T° < 50 °C en tout point — risque de développement de Légionelles" />
+                  )}
                 </div>
 
-                {/* ΔT depuis départ — simple texte */}
-                <div style={{ textAlign: 'center', fontSize: 11, color: '#6b7280', lineHeight: 1.4 }}>
-                  ΔT depuis départ :{' '}
-                  <span style={{ fontWeight: 700, color: '#374151' }}>{dT_depuis_depart.toFixed(2)} K</span>
-                  <span style={{ color: '#9ca3af', marginLeft: 5, fontSize: 10 }}>
-                    ({T_depart.toFixed(0)} → {T_to.toFixed(2)} °C)
-                  </span>
+                {/* ΔT depuis départ */}
+                <div>
+                  <div style={{ textAlign: 'center', fontSize: 11, color: '#6b7280', lineHeight: 1.4 }}>
+                    ΔT depuis départ :{' '}
+                    <span style={{ fontWeight: 700, color: dtFromProd > 5 && isRetour && isLinkedToProdECS ? '#dc2626' : '#374151' }}>
+                      {dtFromProd.toFixed(2)} K
+                    </span>
+                    <span style={{ color: '#9ca3af', marginLeft: 5, fontSize: 10 }}>
+                      ({T_depart.toFixed(0)} → {T_to.toFixed(2)} °C)
+                    </span>
+                  </div>
+                  {dtFromProd > 5 && isRetour && isLinkedToProdECS && (
+                    <DtuAlert msg={`ΔT depuis départ = ${dtFromProd.toFixed(1)} °C > 5 °C — pertes thermiques excessives`} />
+                  )}
                 </div>
 
                 {/* ── Vitesse ── */}
-                <div style={{ padding: '8px 12px', background: '#fff',
-                  border: '1px solid #e5e7eb', borderRadius: 6 }}>
-                  <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase',
-                    letterSpacing: '0.05em', marginBottom: 3 }}>Vitesse</div>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                    <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>
-                      {velocity != null ? velocity.toFixed(3) : '—'}
-                    </span>
-                    <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
+                <div>
+                  <div style={{ padding: '8px 12px', background: '#fff',
+                    border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                    <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase',
+                      letterSpacing: '0.05em', marginBottom: 3 }}>Vitesse</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>
+                        {velocity != null ? velocity.toFixed(3) : '—'}
+                      </span>
+                      <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
+                    </div>
                   </div>
+                  {isRetour && velocity != null && velocity < 0.2 && (
+                    <DtuAlert msg="Vitesse < 0,2 m/s — risque de dépôts et d'entartrage" />
+                  )}
+                  {isRetour && velocity != null && velocity > (isSS ? 1 : 0.5) && (
+                    <DtuAlert msg={`Vitesse > ${isSS ? '1' : '0,5'} m/s${isSS ? ' (sous-sol)' : ''} — risque de bruit`} />
+                  )}
                 </div>
 
                 {/* ── Débit · UI · Pertes ── */}

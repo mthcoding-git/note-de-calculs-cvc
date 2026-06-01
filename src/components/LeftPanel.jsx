@@ -499,6 +499,7 @@ function EditParamsPanel({
   segments, points, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie,
   editParam, onEditParamChange,
+  canvasDisplay, onCanvasDisplayToggle,
 }) {
   const set = patch => onEditParamChange({ ...editParam, ...patch })
   const { paramType, segType, materialId, dn, insulationId, thickness,
@@ -523,6 +524,31 @@ function EditParamsPanel({
 
   return (
     <div style={{ padding: '6px 2px' }}>
+
+      {/* Affichage sur le schéma */}
+      <div style={{ marginBottom: 10 }}>
+        <div className="lp-label" style={{ marginBottom: 5 }}>Afficher sur le schéma</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {[
+            { key: 'material',     label: 'Matériau & DN' },
+            { key: 'insulation',   label: 'Isolant & épaisseur' },
+            { key: 'length',       label: 'Longueur' },
+            { key: 'flowVelocity', label: 'Débit / Vitesse' },
+          ].map(({ key, label }) => (
+            <button key={key}
+              onClick={() => onCanvasDisplayToggle(key)}
+              className="lp-icon-btn"
+              style={{
+                fontSize: 10, padding: '3px 7px', fontWeight: 600,
+                background: canvasDisplay?.[key] ? '#2563eb' : undefined,
+                color:      canvasDisplay?.[key] ? '#fff'    : undefined,
+                border: `1.5px solid ${canvasDisplay?.[key] ? '#2563eb' : '#d1d5db'}`,
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Param type */}
       <div className="lp-field">
@@ -760,11 +786,28 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
     </div>
   )
 
+  const hasAllerRetour = segments.some(s => s.type === 'aller' || s.type === 'retour')
+  const hasProdECS     = points.some(p => p.type === 'productionECS')
+  const missingProdECS = hasAllerRetour && !hasProdECS
+
   return (
     <div className="left-panel" style={{ gap: 0 }}>
       <div style={{ padding: '10px 12px', background: '#fffbeb', borderBottom: '1px solid #fde68a' }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: '#92400e' }}>⚠ Erreurs dans le réseau</span>
       </div>
+
+      {missingProdECS && (
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb', background: '#fef2f2' }}>
+          <div style={{ fontWeight: 600, fontSize: 11, color: '#991b1b', marginBottom: 4 }}>
+            Production ECS manquante
+          </div>
+          <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.5 }}>
+            Le réseau contient des tronçons Aller / Retour ECS mais aucun nœud
+            « Production ECS » n'est placé sur le synoptique. Les calculs
+            thermiques et hydrauliques ne peuvent pas s'effectuer.
+          </div>
+        </div>
+      )}
 
       {connIssues.length > 0 && (
         <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb' }}>
@@ -879,6 +922,7 @@ export default function LeftPanel({
   onSelectIds, onConnHighlight,
   groupesEditMode, onGroupesEditModeChange, showGroupeNames, onShowGroupeNamesChange,
   onAddGroupe, onRemoveGroupe,
+  canvasDisplay, onCanvasDisplayToggle,
 }) {
   if (drawMode === 'editParams') {
     return (
@@ -903,6 +947,7 @@ export default function LeftPanel({
               columns={columns} columnXs={columnXs}
               chaufferie={chaufferie}
               editParam={editParam} onEditParamChange={onEditParamChange}
+              canvasDisplay={canvasDisplay} onCanvasDisplayToggle={onCanvasDisplayToggle}
             />
           </div>
         </div>

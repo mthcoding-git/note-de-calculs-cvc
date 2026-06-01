@@ -311,9 +311,13 @@ function computeNodeMove(ptId, np, segs, pts, constraintOverride = null) {
   }
   const edgeAxisAt = seg => axisAt(seg, ptId)
 
-  // Returns true if every sub-edge of seg is perpendicular to axis.
-  // Multi-sub-edge segments with a parallel sub-edge (L/U shapes) must NOT have
-  // their far endpoint added to rigidPtIds — their internal sub-edges handle movement.
+  // L-corner: exactly 2 connected segments with different axes (1 perp + 1 parallel).
+  // The node can move freely; the perpendicular segment gets a 90° elbow while its
+  // far end stays fixed; the parallel segment stretches.
+  const segsAlongAxis = connected.filter(s => edgeAxisAt(s) === movAxis).length
+  const isLCorner = connected.length === 2 && segsAlongAxis === 1
+
+  // Returns true if every sub-edge of seg is perpendicular to movAxis.
   const isFullyPerp = seg => {
     const vs = seg.vertices
     for (let i = 1; i < vs.length; i++) {
@@ -324,23 +328,26 @@ function computeNodeMove(ptId, np, segs, pts, constraintOverride = null) {
   }
 
   // BFS: far ends of fully-perpendicular segments → must translate rigidly with the moved node.
+  // Not needed for L-corners (far ends stay fixed; elbow handles the perpendicular segment).
   // Cascades along perpendicular chains; stops at locked frontier nodes.
   const rigidPtIds = new Set()
-  const queue = []
-  for (const seg of connected) {
-    if (edgeAxisAt(seg) !== movAxis && isFullyPerp(seg)) {
-      const farPtId = seg.endPointId === ptId ? seg.startPointId : seg.endPointId
-      if (!rigidPtIds.has(farPtId)) { rigidPtIds.add(farPtId); queue.push(farPtId) }
+  if (!isLCorner) {
+    const queue = []
+    for (const seg of connected) {
+      if (edgeAxisAt(seg) !== movAxis && isFullyPerp(seg)) {
+        const farPtId = seg.endPointId === ptId ? seg.startPointId : seg.endPointId
+        if (!rigidPtIds.has(farPtId)) { rigidPtIds.add(farPtId); queue.push(farPtId) }
+      }
     }
-  }
-  while (queue.length > 0) {
-    const curPtId = queue.shift()
-    if (pts.find(p => p.id === curPtId)?.isLocked) continue
-    for (const seg of segs.filter(s => s.startPointId === curPtId || s.endPointId === curPtId)) {
-      if (axisAt(seg, curPtId) !== movAxis && isFullyPerp(seg)) {
-        const farPtId = seg.endPointId === curPtId ? seg.startPointId : seg.endPointId
-        if (farPtId !== ptId && !rigidPtIds.has(farPtId)) {
-          rigidPtIds.add(farPtId); queue.push(farPtId)
+    while (queue.length > 0) {
+      const curPtId = queue.shift()
+      if (pts.find(p => p.id === curPtId)?.isLocked) continue
+      for (const seg of segs.filter(s => s.startPointId === curPtId || s.endPointId === curPtId)) {
+        if (axisAt(seg, curPtId) !== movAxis && isFullyPerp(seg)) {
+          const farPtId = seg.endPointId === curPtId ? seg.startPointId : seg.endPointId
+          if (farPtId !== ptId && !rigidPtIds.has(farPtId)) {
+            rigidPtIds.add(farPtId); queue.push(farPtId)
+          }
         }
       }
     }
@@ -362,11 +369,16 @@ function computeNodeMove(ptId, np, segs, pts, constraintOverride = null) {
       const segAxis = edgeAxisAt(seg)
 
       if (segAxis !== movAxis) {
-        // First sub-edge is perpendicular: walk from the moving end, translating vertices
-        // through consecutive perpendicular sub-edges, stop at the first parallel one.
-        // Simple segments (2 vertices) → full rigid shift.
-        // L/U-shaped segments → only the initial perpendicular run translates; the first
-        // parallel sub-edge stretches; everything beyond stays in place.
+        if (isLCorner) {
+          // L-corner: introduce a 90° bend — far end stays fixed, old position becomes elbow
+          const oldEndV = { x: origPt.x, y: origPt.y }
+          const newEndV = { x: snap(origPt.x + dx), y: snap(origPt.y + dy) }
+          return isMainEnd
+            ? { ...seg, vertices: collapseCollinear([...vs.slice(0, -1), oldEndV, newEndV]) }
+            : { ...seg, vertices: collapseCollinear([newEndV, oldEndV, ...vs.slice(1)]) }
+        }
+        // Non-L-corner: walk from the moving end, translating vertices through consecutive
+        // perpendicular sub-edges, stop at the first parallel one (which stretches).
         const newVs = vs.map(v => ({ ...v }))
         if (!isMainEnd) {
           newVs[0] = { x: snap(vs[0].x + dx), y: snap(vs[0].y + dy) }
@@ -587,6 +599,9 @@ export default function DrawingCanvas({
   networkFlows,
   groupesEditMode,
   showGroupeNames,
+  canvasDisplay,
+  materials,
+  insulations,
 }) {
   const svgRef    = useRef(null)
   const spaceRef  = useRef(false)
@@ -1063,7 +1078,8 @@ export default function DrawingCanvas({
       onSelectIds(ids => e.shiftKey
         ? ids.includes(np.id) ? ids.filter(i => i !== np.id) : [...ids, np.id]
         : [np.id])
-      if (!np.isLocked && (np.type !== 'groupe' || groupesEditMode)) {
+      const connectedSegs = segments.filter(s => s.startPointId === np.id || s.endPointId === np.id)
+      if (!np.isLocked && (np.type !== 'groupe' || groupesEditMode) && connectedSegs.length <= 2) {
         ptDragRef.current = {
           ptId: np.id, startX: e.clientX, startY: e.clientY,
           origX: np.x, origY: np.y, moved: false,
@@ -1482,14 +1498,19 @@ export default function DrawingCanvas({
                 editStyle = seg.length_override != null ? 'match' : 'missing'
               }
             } else if (paramType === 'flowVelocity') {
-              const hasAny = seg.flowRate != null || seg.velocity != null
+              const hasAny   = seg.flowRate != null || seg.velocity != null
+              const computed = networkFlows?.get(seg.id)
               if (flowVelocityValue != null) {
-                const matches = flowVelocityMode === 'flowRate'
+                const storedMatch = flowVelocityMode === 'flowRate'
                   ? seg.flowRate === flowVelocityValue
                   : seg.velocity === flowVelocityValue
-                editStyle = matches ? 'match' : hasAny ? 'other' : 'missing'
+                const computedMatch = flowVelocityMode === 'flowRate'
+                  ? computed?.flowRate != null && Math.abs(computed.flowRate - flowVelocityValue) < 1e-6
+                  : computed?.velocity != null && Math.abs(computed.velocity - flowVelocityValue) < 1e-6
+                editStyle = (storedMatch || computedMatch) ? 'match'
+                  : hasAny ? 'other' : 'missing'
               } else {
-                editStyle = hasAny ? 'match' : 'missing'
+                editStyle = (hasAny || computed?.flowRate != null) ? 'match' : 'missing'
               }
             }
           }
@@ -1608,6 +1629,62 @@ export default function DrawingCanvas({
                     <text x={mid.x - OFF - 1} y={mid.y}
                       fontSize={8} fill={col} fontWeight="600"
                       textAnchor="end" dominantBaseline="central">{lbl}</text>
+                  </g>
+                )
+              })()}
+              {(() => {
+                const lines = []
+                if (canvasDisplay?.material && seg.dn) {
+                  const mat = materials?.find(m => m.id === seg.materialId)
+                  lines.push(mat ? `${mat.name} ${seg.dn}` : seg.dn)
+                }
+                if (canvasDisplay?.length && seg.length_override != null) {
+                  lines.push(`${seg.length_override} m`)
+                }
+                if (canvasDisplay?.flowVelocity) {
+                  const flow = networkFlows?.get(seg.id)
+                  if (flow) {
+                    if (flow.flowRate != null) lines.push(`${flow.flowRate.toFixed(3)} m³/h`)
+                    if (flow.velocity != null) lines.push(`${flow.velocity.toFixed(2)} m/s`)
+                  }
+                }
+                if (canvasDisplay?.insulation && seg.insulationId) {
+                  const ins = insulations?.find(i => i.id === seg.insulationId)
+                  if (ins) {
+                    lines.push(seg.thickness != null ? `${ins.name} ${seg.thickness}mm` : ins.name)
+                  }
+                }
+                if (!lines.length) return null
+                const vs = seg.vertices
+                if (vs.length < 2) return null
+                let totalLen = 0
+                for (let i = 0; i < vs.length - 1; i++) totalLen += Math.hypot(vs[i+1].x - vs[i].x, vs[i+1].y - vs[i].y)
+                let cumLen = 0, mid = vs[0], edgeDir = 'h'
+                const half = totalLen / 2
+                for (let i = 0; i < vs.length - 1; i++) {
+                  const sl = Math.hypot(vs[i+1].x - vs[i].x, vs[i+1].y - vs[i].y)
+                  if (cumLen + sl >= half) {
+                    const t = (half - cumLen) / sl
+                    mid = { x: vs[i].x + t * (vs[i+1].x - vs[i].x), y: vs[i].y + t * (vs[i+1].y - vs[i].y) }
+                    edgeDir = Math.abs(vs[i+1].x - vs[i].x) >= Math.abs(vs[i+1].y - vs[i].y) ? 'h' : 'v'
+                    break
+                  }
+                  cumLen += sl
+                }
+                const CW = 5.1, LH = 10, PAD = 3
+                const bgW = Math.max(...lines.map(l => l.length)) * CW + PAD * 2
+                const bgH = lines.length * LH + PAD * 2
+                const OFF = 8
+                const bx = edgeDir === 'h' ? mid.x - bgW / 2 : mid.x + OFF - 1
+                const by = edgeDir === 'h' ? mid.y - bgH - OFF + 1 : mid.y - bgH / 2
+                return (
+                  <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                    <rect x={bx} y={by} width={bgW} height={bgH}
+                      fill="rgba(255,255,255,0.9)" stroke={col} strokeWidth={0.4} rx={2} />
+                    {lines.map((line, i) => (
+                      <text key={i} x={bx + PAD} y={by + PAD + (i + 1) * LH - 1}
+                        fontSize={8.5} fill={col} fontWeight="600">{line}</text>
+                    ))}
                   </g>
                 )
               })()}

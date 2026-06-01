@@ -41,7 +41,8 @@ export function computeSegUI(seg, materials, insulations, he) {
  * Température ambiante du tronçon selon le niveau dans lequel il se trouve.
  * Les tronçons sont toujours entièrement dans une zone (frontières auto-découpées).
  */
-function getSegAmbTemp(seg, levels, lineYs, globalParams) {
+export function getSegAmbTemp(seg, levels, lineYs, globalParams) {
+  if (seg.t_amb_override != null) return seg.t_amb_override
   const midY = seg.vertices.reduce((s, v) => s + v.y, 0) / seg.vertices.length
   for (let i = 0; i < levels.length; i++) {
     const yBot = lineYs[i]
