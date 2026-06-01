@@ -29,13 +29,16 @@ function segLevelName(seg, levels, lineYs) {
   return '—'
 }
 
-// Extrait le nom de colonne depuis le nom court du tronçon
-function extractColonne(shortName, segType, columns) {
+// Extrait le nom de colonne uniquement si les deux extrémités du nom sont des colonnes
+function extractColonne(shortName, columns) {
   const parts = shortName.split(' → ')
   if (parts.length < 2) return null
-  const locationStr = segType === 'aller' ? parts[parts.length - 1] : parts[0]
-  const name = locationStr.replace(/\s*\([^)]+\)$/, '').trim()
-  return columns?.some(c => !c.isGap && c.name === name) ? name : null
+  // Supprime le suffixe de désambiguïsation (ex. " - n°2") puis le suffixe de niveau (ex. " (SS-1)")
+  const clean = s => s.replace(/\s*-\s*n°\d+$/, '').replace(/\s*\([^)]+\)$/, '').trim()
+  const nameFirst = clean(parts[0])
+  const nameLast  = clean(parts[parts.length - 1])
+  const isCol = n => columns?.some(c => !c.isGap && c.name === n)
+  return (isCol(nameFirst) && nameFirst === nameLast) ? nameFirst : null
 }
 
 // Background T_aval : dégradé vert (T_depart) → rouge (50°C), blanc en dessous de 50°C
@@ -101,7 +104,7 @@ function SegRow({ row, segments, points, materials, insulations,
 
   const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points)
     .replace(/^(Aller|Retour) ECS\s*–\s*/, '')
-  const colonneName = extractColonne(shortName, seg.type, columns)
+  const colonneName = extractColonne(shortName, columns)
   const levelName   = segLevelName(seg, levels, lineYs)
   const indent      = depth * 13
 
