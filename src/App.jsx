@@ -7,6 +7,7 @@ import OnboardingWizard, { buildProjectFromConfig } from './components/Onboardin
 import { DEFAULT_MATERIALS } from './data/materials'
 import { DEFAULT_INSULATIONS } from './data/insulations'
 import { computeFlowDirections } from './utils/flowDirection'
+import { buildFlowRows } from './utils/tableOrder'
 import { computeNetworkFlows } from './utils/flowCalc'
 import { computeThermal } from './utils/thermalCalc'
 import ResultsTable from './components/ResultsTable'
@@ -300,6 +301,13 @@ export default function App() {
     ),
     [project.segments, project.points, project.materials, project.insulations,
      flowDirections, networkFlows, project.levels, project.lineYs, project.globalParams]
+  )
+
+  const { rows: flowRows, roleMap } = useMemo(
+    () => buildFlowRows(project.segments, project.points, flowDirections,
+      project.columns, project.columnXs, project.levels, project.lineYs),
+    [project.segments, project.points, flowDirections,
+     project.columns, project.columnXs, project.levels, project.lineYs]
   )
 
   const errorCount = useMemo(() => {
@@ -781,6 +789,8 @@ export default function App() {
         {showResultsTable && (
           <ResultsTable
             height={tableHeight}
+            rows={flowRows}
+            roleMap={roleMap}
             segments={project.segments}
             points={project.points}
             materials={project.materials}
@@ -827,6 +837,7 @@ export default function App() {
             networkFlows={networkFlows}
             globalParams={project.globalParams}
             thermalResults={thermalResults}
+            roleMap={roleMap}
           />
         </aside>
       </div>

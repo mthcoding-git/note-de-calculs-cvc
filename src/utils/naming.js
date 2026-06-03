@@ -117,7 +117,7 @@ export function buildECSDistances(allSegs, specialPts) {
 // allerDist : Map<ptId, px> depuis buildECSDistances ; retourDist : depuis buildRetourDistances.
 // Aller : l'extrémité la plus proche de l'ECS (allerDist min) en premier.
 // Retour : l'extrémité la plus loin de l'ECS (retourDist max) en premier (sens du fluide).
-export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null) {
+export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null, role = null) {
   const ecsDistances = allerDist
   if (!seg.vertices?.length) return ''
   const verts = seg.vertices
@@ -125,7 +125,10 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
   const endV = verts[verts.length - 1]
   const startHint = verts.length > 1 ? verts[1] : null
   const endHint = verts.length > 1 ? verts[verts.length - 2] : null
-  const prefix = seg.type === 'retour' ? 'Retour ECS' : 'Aller ECS'
+  const prefix = role === 'collecteur-aller'  ? 'Collecteur aller ECS'
+    : role === 'collecteur-retour' ? 'Collecteur retour ECS'
+    : seg.type === 'retour' ? 'Retour ECS'
+    : 'Aller ECS'
 
   const getLevelName = (v, hint) => {
     for (let i = 0; i < levels.length; i++) {
@@ -208,13 +211,14 @@ export function buildRetourDistances(allSegs, specialPts) {
 }
 
 // Nom d'affichage final (avec suffixe " - n°x" si doublons, triés par sens d'écoulement).
-export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts) {
+export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts, role = null) {
   if (seg.name) return seg.name
   const allerDist  = buildECSDistances(allSegs, specialPts)
   const retourDist = buildRetourDistances(allSegs, specialPts)
-  const base = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist)
+  const base      = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, role)
+  const baseRoute = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist)
   const dupes = allSegs.filter(s => !s.name &&
-    getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist) === base)
+    getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist) === baseRoute)
   if (dupes.length <= 1) return base
 
   let sorted

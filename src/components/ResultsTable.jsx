@@ -1,6 +1,5 @@
 import { useRef, useEffect, useMemo } from 'react'
 import { computeSegUI } from '../utils/thermalCalc'
-import { buildFlowRows } from '../utils/tableOrder'
 import { getDisplayName } from '../utils/naming'
 
 const fmt = (v, d) => v != null && !isNaN(v) ? Number(v).toFixed(d) : '—'
@@ -52,7 +51,7 @@ function tAvalStyle(T_aval, T_depart) {
 function SegRow({ row, segments, points, materials, insulations,
                   levels, lineYs, columns, columnXs, chaufferie,
                   globalParams, networkFlows, thermalResults,
-                  selectedIds, onSelectIds, rowRef }) {
+                  selectedIds, onSelectIds, rowRef, roleMap }) {
   const { seg, depth, segType } = row
 
   const sr = thermalResults?.segResults?.get(seg.id)
@@ -97,20 +96,22 @@ function SegRow({ row, segments, points, materials, insulations,
   const lenIsDefault  = seg.length_override == null
   const flowIsDefault = seg.flowRate == null && seg.velocity == null
 
-  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points)
-    .replace(/^(Aller|Retour) ECS\s*–\s*/, '')
+  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id))
+    .replace(/^(Collecteur (aller|retour)|Aller|Retour) ECS\s*–\s*/, '')
   const colonneName = extractColonne(shortName, columns)
   const levelName   = segLevelName(seg, levels, lineYs)
   const indent      = depth * 13
 
   const isAller = segType === 'aller'
+  const role = roleMap?.get(seg.id)
+  const badgeText = role === 'collecteur-aller' ? 'CA' : role === 'collecteur-retour' ? 'CR' : isAller ? 'A' : 'R'
 
   return (
     <tr ref={rowRef} className={`rt-row${isSelected ? ' rt-row-selected' : ''}`}
         onClick={() => onSelectIds([seg.id])} style={{ cursor: 'pointer' }}>
 
       <td className="rt-cell rt-cell-name" style={{ paddingLeft: 6 + indent }}>
-        <span className={isAller ? 'rt-badge-a' : 'rt-badge-r'}>{isAller ? 'A' : 'R'}</span>
+        <span className={isAller ? 'rt-badge-a' : 'rt-badge-r'}>{badgeText}</span>
         {depth > 0 && <span className="rt-depth">{'└─'}</span>}
         {shortName}
       </td>
@@ -178,27 +179,48 @@ function JunctionRow({ row, thermalResults, globalParams, selectedIds, onSelectI
 // ── Export principal ───────────────────────────────────────────────────────
 
 export default function ResultsTable({
+  rows, roleMap,
   segments, points, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie,
   flowDirections, networkFlows, thermalResults,
   globalParams, selectedIds, onSelectIds,
   height,
 }) {
-  const rows = useMemo(
-    () => buildFlowRows(segments, points, flowDirections, columns, columnXs, levels, lineYs, chaufferie),
-    [segments, points, flowDirections, columns, columnXs, levels, lineYs, chaufferie]
-  )
-
   const selectedRowRef = useRef(null)
   useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [selectedIds])
 
+  const displayRows = useMemo(() => {
+    const result = []
+    let lastCollecteurRole = null
+    let pastFlowEnd = false
+    let prevKind = null
+    for (const row of (rows ?? [])) {
+      if (row.kind === 'separation') continue
+      if (row.kind === 'flow-end') pastFlowEnd = true
+      if (row.kind === 'segment' && !pastFlowEnd) {
+        const r = roleMap?.get(row.seg.id)
+        const isCollecteur = r === 'collecteur-aller' || r === 'collecteur-retour'
+        const afterBanner = prevKind === 'flow-start' || prevKind === 'flow-end' || prevKind === 'col-header' || prevKind === 'junction'
+        if (isCollecteur && r !== lastCollecteurRole && !afterBanner) {
+          result.push({ kind: 'collecteur-header', role: r })
+        }
+        lastCollecteurRole = isCollecteur ? r : null
+      } else if (row.kind !== 'segment') {
+        lastCollecteurRole = null
+      }
+      prevKind = row.kind
+      result.push(row)
+    }
+    return result
+  }, [rows, roleMap])
+
   const shared = {
     segments, points, materials, insulations,
     levels, lineYs, columns, columnXs, chaufferie,
     globalParams, networkFlows, thermalResults,
-    selectedIds, onSelectIds,
+    selectedIds, onSelectIds, roleMap,
   }
 
   return (
@@ -239,10 +261,10 @@ export default function ResultsTable({
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {displayRows.length === 0 && (
               <tr><td colSpan={TOTAL_COLS} className="rt-empty">Aucun tronçon — ajoutez des tronçons et un nœud Production ECS</td></tr>
             )}
-            {rows.map((row, i) => {
+            {displayRows.map((row, i) => {
               if (row.kind === 'flow-start') return (
                 <tr key="flow-start" className="rt-flow-banner rt-flow-banner-start">
                   <td colSpan={TOTAL_COLS}>▶ Production ECS — Départ</td>
@@ -251,6 +273,11 @@ export default function ResultsTable({
               if (row.kind === 'flow-end') return (
                 <tr key="flow-end" className="rt-flow-banner rt-flow-banner-end">
                   <td colSpan={TOTAL_COLS}>◀ Production ECS — Retour</td>
+                </tr>
+              )
+              if (row.kind === 'collecteur-header') return (
+                <tr key={`coll-h-${row.role}-${i}`} className="rt-collecteur-header">
+                  <td colSpan={TOTAL_COLS} />
                 </tr>
               )
               if (row.kind === 'col-header') return (

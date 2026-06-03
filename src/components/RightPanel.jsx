@@ -33,7 +33,7 @@ function segSousSol(seg, levels, lineYs) {
   return false
 }
 
-function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData }) {
+function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap }) {
   const [tab, setTab] = useState('params')
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
 
@@ -44,7 +44,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
   const dnDef       = selMat?.dns.find(d => d.dn === seg.dn)
 
   const isDefault   = !seg.name
-  const displayName = getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, points)
+  const displayName = getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id))
 
   const he = globalParams?.he ?? 10
   const uiValue = computeSegUI(seg, materials, insulations, he)
@@ -765,7 +765,7 @@ function ChaufferiePanel({ chaufferie, onChange, levels }) {
 export default function RightPanel({
   selectedIds, segments, points, onUpdate, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie, onChaufferieChange,
-  editChaufferie, flowDirections, networkFlows, globalParams, thermalResults,
+  editChaufferie, flowDirections, networkFlows, globalParams, thermalResults, roleMap,
 }) {
   // In editChaufferie mode, chaufferie panel takes priority
   if (editChaufferie && chaufferie?.placed) {
@@ -809,6 +809,7 @@ export default function RightPanel({
       flowData={networkFlows?.get(seg.id)}
       globalParams={globalParams}
       thermalData={thermalResults?.segResults.get(seg.id)}
+      roleMap={roleMap}
     />
   )
   if (pt) {
@@ -816,7 +817,7 @@ export default function RightPanel({
       .filter(s => flowDirections?.get(s.id)?.toId === pt.id)
       .map(s => ({
         id: s.id,
-        name: getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points),
+        name: getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(s.id)),
         flowRate: networkFlows?.get(s.id)?.flowRate ?? null,
         T_to:     thermalResults?.segResults.get(s.id)?.T_to ?? null,
         type:     s.type,
