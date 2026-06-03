@@ -1,4 +1,3 @@
-import { getDisplayName } from './naming'
 
 /**
  * Construit l'ordre d'affichage des tronçons dans les tableaux de résultats.
@@ -62,29 +61,10 @@ export function buildTableRows(segments, points, flowDirections) {
   return { allerRows, retourRows }
 }
 
-// ── Helpers de classification par nom ─────────────────────────────────────
-
-function cleanPart(s) {
-  return s.replace(/\s*-\s*n°\d+$/, '').replace(/\s*\([^)]+\)$/, '').trim()
-}
-
 /**
- * Construit les lignes dans l'ordre de l'écoulement, groupées par colonne,
- * sur la base des NOMS affichés.
- *
- * Règles de placement (basées sur <gauche> → <droite> du nom court) :
- *   Aller :
- *     gauche = "Production ECS"                           → sous ▶ Production ECS — Départ
- *     gauche = droite = col (sans suffixe "- n°X")        → col-member de cette colonne
- *     droite = nom de colonne (≠ gauche)                  → into-col (avant les col-members)
- *   Retour :
- *     droite = "Production ECS"                           → sous ◀ Production ECS — Retour
- *     gauche = droite = col (sans suffixe "- n°X")        → col-member de cette colonne
- *     gauche = nom de colonne (≠ droite ou suffixe "n°X") → from-col (après les col-members)
- *
- * Post-traitement : les segments from-col dont le fromId d'un successeur correspond au toId
- * d'un connecteur inter-colonne sont chaînés à ce connecteur (Option A).
- * Une ligne de jonction avec la température de mélange est insérée au point de confluence.
+ * Construit les lignes dans l'ordre de l'écoulement, groupées par colonne.
+ * Classification basée sur la topologie (positions, flowDirections, connectivité)
+ * — indépendante des noms de tronçons.
  *
  * Retour kinds: 'flow-start' | 'flow-end' | 'col-header' | 'segment' (+segType) | 'junction'
  */
@@ -93,35 +73,45 @@ export function buildFlowRows(segments, points, flowDirections, columns, columnX
   const prodECS = points?.find(p => p.type === 'productionECS')
   if (!prodECS) return []
 
-  const nameCache = new Map()
-  const getShortName = (seg) => {
-    if (nameCache.has(seg.id)) return nameCache.get(seg.id)
-    const n = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points)
-      .replace(/^(Aller|Retour) ECS\s*–\s*/, '')
-    nameCache.set(seg.id, n)
-    return n
-  }
-
   const colNameSet = new Set(columns?.filter(c => !c.isGap).map(c => c.name) ?? [])
 
+  // Retourne le nom de la colonne contenant ce point, ou null.
+  const getColFor = (ptId) => {
+    const pt = points?.find(p => p.id === ptId)
+    if (!pt) return null
+    let levelId = null
+    for (let i = 0; i < (levels?.length ?? 0); i++) {
+      const yBot = lineYs?.[i], yTop = lineYs?.[i + 1]
+      if (yTop == null) continue
+      if (pt.y > yTop && pt.y <= yBot) { levelId = levels[i].id; break }
+    }
+    for (let i = 0; i < (columns?.length ?? 0); i++) {
+      const cx1 = columnXs?.[i], cx2 = columnXs?.[i + 1]
+      if (cx1 == null || cx2 == null) continue
+      const col = columns[i]
+      if (col.isGap) continue
+      if (pt.x < cx1 || pt.x > cx2) continue
+      const covers = col.levelIds === 'all' ||
+        (Array.isArray(col.levelIds) && levelId && col.levelIds.includes(levelId))
+      if (covers) return col.name
+    }
+    return null
+  }
+
   const classify = (seg) => {
-    const name     = getShortName(seg)
-    const parts    = name.split(' → ')
-    if (parts.length < 2) return { kind: 'other' }
-    const rightRaw = parts[parts.length - 1].trim()
-    const left     = cleanPart(parts[0])
-    const right    = cleanPart(rightRaw)
-    // col-member uniquement si la droite n'a PAS de suffixe "- n°X" (sinon c'est un segment
-    // de continuation après une jonction inter-colonne, géré par le post-traitement)
-    const isColMember = left === right && colNameSet.has(left) && !/\s*-\s*n°\d+$/.test(rightRaw)
+    const fd      = flowDirections?.get(seg.id)
+    const fromId  = fd?.fromId ?? seg.startPointId
+    const toId    = fd?.toId   ?? seg.endPointId
+    const fromCol = getColFor(fromId)
+    const toCol   = getColFor(toId)
     if (seg.type === 'aller') {
-      if (left === 'Production ECS')  return { kind: 'from-prod-ecs' }
-      if (isColMember)                return { kind: 'col-member', col: left }
-      if (colNameSet.has(right))      return { kind: 'into-col',   col: right }
+      if (fromId === prodECS.id)           return { kind: 'from-prod-ecs' }
+      if (fromCol && fromCol === toCol)    return { kind: 'col-member', col: fromCol }
+      if (toCol && !fromCol)               return { kind: 'into-col',   col: toCol }
     } else {
-      if (right === 'Production ECS') return { kind: 'to-prod-ecs' }
-      if (isColMember)                return { kind: 'col-member', col: left }
-      if (colNameSet.has(left))       return { kind: 'from-col',   col: left }
+      if (toId === prodECS.id)             return { kind: 'to-prod-ecs' }
+      if (fromCol && fromCol === toCol)    return { kind: 'col-member', col: fromCol }
+      if (fromCol && !toCol)               return { kind: 'from-col',   col: fromCol }
     }
     return { kind: 'other' }
   }

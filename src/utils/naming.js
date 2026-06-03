@@ -173,7 +173,7 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
 
 // Dijkstra depuis les nœuds Production ECS en ne traversant que les tronçons Retour ECS.
 // Symétrique à buildECSDistances. Retourne Map<ptId, distancePixels>.
-function buildRetourDistances(allSegs, specialPts) {
+export function buildRetourDistances(allSegs, specialPts) {
   const dist = new Map()
   const ecsNodes = (specialPts ?? []).filter(p => p.type === 'productionECS')
   if (!ecsNodes.length) return dist
