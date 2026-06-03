@@ -261,10 +261,22 @@ function useHistory(init) {
 export default function App() {
   const { project, setProject, undo, redo, canUndo, canRedo } = useHistory(initProject())
   const [onboardingDone, setOnboardingDone] = useState(false)
+  const [fitViewRequest, setFitViewRequest] = useState(1)
 
   const handleWizardComplete = useCallback((config) => {
     setProject(buildProjectFromConfig(config))
     setOnboardingDone(true)
+    setFitViewRequest(r => r + 1)
+  }, [setProject])
+
+  const handleWizardDismiss = useCallback(() => {
+    setProject(p => ({
+      ...p,
+      materials:   p.materials.map(m => ({ ...m, enabled: false })),
+      insulations: p.insulations.map(i => ({ ...i, enabled: false })),
+    }))
+    setOnboardingDone(true)
+    setFitViewRequest(r => r + 1)
   }, [setProject])
 
   // Sens d'écoulement par tronçon — recalculé à chaque modification du réseau
@@ -550,12 +562,22 @@ export default function App() {
 
 
   // Combined atomic update (single undo entry)
+  // After every network change, points with 0 segment connections are auto-removed
+  // (except productionECS, groupe and locked points which are always kept).
   const updateNetwork = useCallback((segsFnOrVal, ptsFnOrVal) => {
-    setProject(p => ({
-      ...p,
-      segments: typeof segsFnOrVal === 'function' ? segsFnOrVal(p.segments) : (segsFnOrVal ?? p.segments),
-      points:   typeof ptsFnOrVal  === 'function' ? ptsFnOrVal(p.points)   : (ptsFnOrVal  ?? p.points),
-    }))
+    setProject(p => {
+      const newSegs = typeof segsFnOrVal === 'function' ? segsFnOrVal(p.segments) : (segsFnOrVal ?? p.segments)
+      const newPts  = typeof ptsFnOrVal  === 'function' ? ptsFnOrVal(p.points)   : (ptsFnOrVal  ?? p.points)
+      const connected = new Set()
+      for (const seg of newSegs) {
+        if (seg.startPointId) connected.add(seg.startPointId)
+        if (seg.endPointId)   connected.add(seg.endPointId)
+      }
+      const prunedPts = newPts.filter(pt =>
+        connected.has(pt.id) || pt.type === 'productionECS' || pt.type === 'groupe' || pt.isLocked
+      )
+      return { ...p, segments: newSegs, points: prunedPts }
+    })
   }, [setProject])
 
   // Update a single segment or point by id
@@ -638,7 +660,7 @@ export default function App() {
 
   return (
     <div className="app">
-      {!onboardingDone && <OnboardingWizard onComplete={handleWizardComplete} onDismiss={() => setOnboardingDone(true)} />}
+      {!onboardingDone && <OnboardingWizard onComplete={handleWizardComplete} onDismiss={handleWizardDismiss} />}
       <header className="app-header">
         <div className="app-title">
           <span className="app-title-main">Bouclage ECS</span>
@@ -647,8 +669,7 @@ export default function App() {
         <div className="header-actions">
           <button onClick={handleSave} className="btn btn-secondary">💾 Sauvegarder</button>
           <button onClick={handleLoad} className="btn btn-secondary">📂 Charger</button>
-          <button className="btn btn-primary" disabled>🧮 Calculer</button>
-          <button className="btn btn-success" disabled>📊 Export Excel</button>
+<button className="btn btn-success" disabled>📊 Export Excel</button>
         </div>
       </header>
 
@@ -750,6 +771,7 @@ export default function App() {
             canvasDisplay={canvasDisplay}
             materials={project.materials}
             insulations={project.insulations}
+            fitViewRequest={fitViewRequest}
           />
         </main>
 
@@ -786,7 +808,7 @@ export default function App() {
 
         </div>{/* canvas-col */}
 
-        <aside className="sidebar-right">
+        <aside className={`sidebar-right${selectedIds.length === 0 && !editChaufferie ? ' sidebar-right-closed' : ''}`}>
           <RightPanel
             selectedIds={selectedIds}
             segments={project.segments}

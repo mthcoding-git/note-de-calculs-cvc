@@ -20,9 +20,10 @@ function buildLineYs(nLevels) {
   return Array.from({ length: nLevels + 1 }, (_, i) => TOP_Y + (nLevels - i) * SPACING)
 }
 
-function buildColumns(nCols) {
+function buildColumns(nCols, columnLevelIds) {
   return Array.from({ length: nCols }, (_, i) => ({
-    id: `col${i + 1}`, name: `Colonne ${i + 1}`, levelIds: 'all',
+    id: `col${i + 1}`, name: `Colonne ${i + 1}`,
+    levelIds: columnLevelIds?.[i] ?? 'all',
   }))
 }
 
@@ -76,12 +77,12 @@ function buildGroupesPoints(levels, lineYs, columns, columnXs, grid) {
 
 export function buildProjectFromConfig({
   globalParams, materials, insulations,
-  nSousSol, nFloors, nCols, groupesGrid,
+  nSousSol, nFloors, nCols, groupesGrid, columnLevelIds,
 }) {
   const levels  = buildLevels(nSousSol, nFloors)
   const nLevels = levels.length
   const lineYs  = buildLineYs(nLevels)
-  const columns = buildColumns(nCols)
+  const columns = buildColumns(nCols, columnLevelIds)
   const maxCols = maxGroupesParCol(nCols, nLevels, groupesGrid)
   const columnXs = buildColumnXs(nCols, maxCols)
   const points   = buildGroupesPoints(levels, lineYs, columns, columnXs, groupesGrid)
@@ -227,8 +228,17 @@ function Stepper({ value, onChange, min = 0, max = 30 }) {
   )
 }
 
-function StepConfig({ nSousSol, nFloors, nCols, onNSousSolChange, onNFloorsChange, onNColsChange }) {
+function StepConfig({ nSousSol, nFloors, nCols, onNSousSolChange, onNFloorsChange, onNColsChange,
+                      columnLevelIds, onColumnLevelIdsChange }) {
   const previewLevels = buildLevels(nSousSol, nFloors)
+  const [expandedCol, setExpandedCol] = useState(null)
+
+  const setLevelIds = (colIdx, ids) => {
+    const next = Array.from({ length: nCols }, (_, i) => columnLevelIds[i] ?? 'all')
+    next[colIdx] = ids
+    onColumnLevelIdsChange(next)
+  }
+
   return (
     <div>
       <h2 style={TITLE_S}>Configuration du bâtiment</h2>
@@ -250,8 +260,62 @@ function StepConfig({ nSousSol, nFloors, nCols, onNSousSolChange, onNFloorsChang
         ))}
       </div>
 
-      <div style={{ padding: '8px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11, color: '#64748b' }}>
+      <div style={{ padding: '8px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11, color: '#64748b', marginBottom: 16 }}>
         Niveaux : {previewLevels.map(l => l.name).join(' · ')}
+      </div>
+
+      {/* Per-column level assignment */}
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        Niveaux couverts par colonne
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {Array.from({ length: nCols }, (_, i) => {
+          const ids = columnLevelIds[i] ?? 'all'
+          const isAll = ids === 'all'
+          const isOpen = expandedCol === i
+          const coveredNames = isAll
+            ? 'Tous les niveaux'
+            : (Array.isArray(ids) && ids.length > 0
+                ? previewLevels.filter(l => ids.includes(l.id)).map(l => l.name).join(', ')
+                : 'Aucun niveau')
+          return (
+            <div key={i} style={{ border: '1px solid #e5e7eb', borderRadius: 7, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: isOpen ? '#f5f3ff' : '#fff', cursor: 'pointer', userSelect: 'none' }}
+                   onClick={() => setExpandedCol(isOpen ? null : i)}>
+                <div>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: '#1f2937' }}>Colonne {i + 1}</span>
+                  <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 8 }}>{coveredNames}</span>
+                </div>
+                <span style={{ fontSize: 10, color: '#9ca3af', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', display: 'inline-block' }}>▶</span>
+              </div>
+              {isOpen && (
+                <div style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9', background: '#fafafa', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={isAll}
+                      onChange={e => setLevelIds(i, e.target.checked ? 'all' : previewLevels.map(l => l.id))}
+                      style={{ accentColor: '#4f46e5' }} />
+                    <span style={{ fontWeight: 600, color: '#4f46e5' }}>Tous les niveaux</span>
+                  </label>
+                  {!isAll && previewLevels.map(level => {
+                    const checked = Array.isArray(ids) && ids.includes(level.id)
+                    return (
+                      <label key={level.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, paddingLeft: 16, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={checked}
+                          onChange={e => {
+                            const arr = Array.isArray(ids) ? [...ids] : previewLevels.map(l => l.id)
+                            const next = e.target.checked ? [...arr, level.id] : arr.filter(id => id !== level.id)
+                            setLevelIds(i, next.length === previewLevels.length ? 'all' : next)
+                          }}
+                          style={{ accentColor: '#4f46e5' }} />
+                        <span style={{ color: '#374151' }}>{level.name}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -333,18 +397,24 @@ export default function OnboardingWizard({ onComplete, onDismiss }) {
   const [globalParams, setGlobalParams]   = useState(DEFAULT_GLOBAL_PARAMS)
   const [materials,    setMaterials]      = useState(() => DEFAULT_MATERIALS.map(m => ({ ...m, enabled: false })))
   const [insulations,  setInsulations]    = useState(() => DEFAULT_INSULATIONS.map(i => ({ ...i, enabled: false })))
-  const [nSousSol,     setNSousSol]       = useState(1)
-  const [nFloors,      setNFloors]        = useState(4)
-  const [nCols,        setNCols]          = useState(5)
-  const [groupesGrid,   setLocauxGrid]     = useState({})
+  const [nSousSol,        setNSousSol]          = useState(1)
+  const [nFloors,         setNFloors]           = useState(4)
+  const [nCols,           setNCols]             = useState(5)
+  const [columnLevelIds,  setColumnLevelIds]    = useState(() => Array.from({ length: 5 }, () => 'all'))
+  const [groupesGrid,     setLocauxGrid]        = useState({})
 
   const levels     = buildLevels(nSousSol, nFloors)
   const totalSteps = 5
   const isLast     = step === totalSteps - 1
 
+  const handleNColsChange = (n) => {
+    setNCols(n)
+    setColumnLevelIds(prev => Array.from({ length: n }, (_, i) => prev[i] ?? 'all'))
+  }
+
   const handleNext = () => {
     if (isLast) {
-      onComplete({ globalParams, materials, insulations, nSousSol, nFloors, nCols, groupesGrid })
+      onComplete({ globalParams, materials, insulations, nSousSol, nFloors, nCols, groupesGrid, columnLevelIds })
     } else {
       setStep(s => s + 1)
     }
@@ -399,7 +469,9 @@ export default function OnboardingWizard({ onComplete, onDismiss }) {
             <StepConfig
               nSousSol={nSousSol} nFloors={nFloors} nCols={nCols}
               onNSousSolChange={setNSousSol} onNFloorsChange={setNFloors}
-              onNColsChange={setNCols} />
+              onNColsChange={handleNColsChange}
+              columnLevelIds={columnLevelIds}
+              onColumnLevelIdsChange={setColumnLevelIds} />
           )}
           {step === 4 && (
             <StepGroupes

@@ -55,6 +55,8 @@ function nearestOnSegments(pos, segs) {
 function getDragConstraint(ptId, segs) {
   const connected = segs.filter(s => s.startPointId === ptId || s.endPointId === ptId)
   if (!connected.length) return 'free'
+  // Endpoint nodes (single segment) can move freely in both directions
+  if (connected.length === 1) return 'free'
   const dirs = connected.map(seg => {
     const vs = seg.vertices
     if (vs.length < 2) return 'free'
@@ -70,50 +72,60 @@ function getDragConstraint(ptId, segs) {
   return 'free'
 }
 
-// Delete a junction node: pair collinear segments of same type and merge them.
-// Unpaired (orphan) segments get a new endpoint node placed at the original position.
+// Delete a pass-through node (exactly 2 incident segments of same type).
+// Handles all 3 orientation cases (1in+1out, 2in, 2out) by reversing as needed.
+// Returns null if deletion is not allowed (endpoint or junction with ≥3 segments).
 function deleteNodeFromNetwork(ptId, segs, pts) {
-  const pt = pts.find(p => p.id === ptId)
-  if (!pt) return { newSegs: segs, newPts: pts.filter(p => p.id !== ptId) }
-
   const ending   = segs.filter(s => s.endPointId   === ptId)
   const starting = segs.filter(s => s.startPointId === ptId)
+  const total    = ending.length + starting.length
 
-  const edgeDir = (a, b) => Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
+  if (total !== 2) return null
 
-  const resultSegs = []
-  const removeIds  = new Set()
-  const usedEnd    = new Set()
-  const usedStart  = new Set()
+  let sA, sB, vsA, vsB, startId, endId
 
-  for (const s1 of ending) {
-    if (usedEnd.has(s1.id)) continue
-    const vs1 = s1.vertices; if (vs1.length < 2) continue
-    const dir1 = edgeDir(vs1[vs1.length - 2], vs1[vs1.length - 1])
-    for (const s2 of starting) {
-      if (usedStart.has(s2.id) || s2.type !== s1.type) continue
-      const vs2 = s2.vertices; if (vs2.length < 2) continue
-      if (edgeDir(vs2[0], vs2[1]) !== dir1) continue
-      resultSegs.push({ ...s1, id: uid('T'), vertices: [...vs1, ...vs2.slice(1)], endPointId: s2.endPointId })
-      removeIds.add(s1.id); removeIds.add(s2.id)
-      usedEnd.add(s1.id);   usedStart.add(s2.id)
-      break
+  if (ending.length === 1 && starting.length === 1) {
+    // Normal case: sA ends at node, sB starts at node
+    sA = ending[0];   sB = starting[0]
+    if (sA.type !== sB.type) return null
+    vsA = sA.vertices; vsB = sB.vertices
+    if (vsA.length < 2 || vsB.length < 2) return null
+    startId = sA.startPointId; endId = sB.endPointId
+    // vertices: A→...→NODE→...→B
+    const verts = [...vsA, ...vsB.slice(1)]
+    return {
+      newSegs: segs.filter(s => s.id !== sA.id && s.id !== sB.id)
+                   .concat([{ ...sA, id: uid('T'), vertices: verts, startPointId: startId, endPointId: endId }]),
+      newPts: pts.filter(p => p.id !== ptId),
     }
   }
 
-  const orphanE = ending.filter(s => !usedEnd.has(s.id))
-  const orphanS = starting.filter(s => !usedStart.has(s.id))
-  const extraPts = []
-  if (orphanE.length || orphanS.length) {
-    const np = { id: uid('P'), name: pt.name ?? '', x: pt.x, y: pt.y }
-    extraPts.push(np)
-    orphanE.forEach(s => { resultSegs.push({ ...s, endPointId:   np.id }); removeIds.add(s.id) })
-    orphanS.forEach(s => { resultSegs.push({ ...s, startPointId: np.id }); removeIds.add(s.id) })
+  if (ending.length === 2) {
+    // Both end at node: sA ends at NODE, sB ends at NODE → reverse sB
+    sA = ending[0]; sB = ending[1]
+    if (sA.type !== sB.type) return null
+    vsA = sA.vertices; vsB = [...sB.vertices].reverse()
+    if (vsA.length < 2 || vsB.length < 2) return null
+    startId = sA.startPointId; endId = sB.startPointId
+    const verts = [...vsA, ...vsB.slice(1)]
+    return {
+      newSegs: segs.filter(s => s.id !== sA.id && s.id !== sB.id)
+                   .concat([{ ...sA, id: uid('T'), vertices: verts, startPointId: startId, endPointId: endId }]),
+      newPts: pts.filter(p => p.id !== ptId),
+    }
   }
 
+  // Both start at node: sA starts at NODE, sB starts at NODE → reverse sA
+  sA = starting[0]; sB = starting[1]
+  if (sA.type !== sB.type) return null
+  vsA = [...sA.vertices].reverse(); vsB = sB.vertices
+  if (vsA.length < 2 || vsB.length < 2) return null
+  startId = sA.endPointId; endId = sB.endPointId
+  const verts = [...vsA, ...vsB.slice(1)]
   return {
-    newSegs: segs.filter(s => !removeIds.has(s.id)).concat(resultSegs),
-    newPts:  pts.filter(p => p.id !== ptId).concat(extraPts),
+    newSegs: segs.filter(s => s.id !== sA.id && s.id !== sB.id)
+                 .concat([{ ...sA, id: uid('T'), vertices: verts, startPointId: startId, endPointId: endId }]),
+    newPts: pts.filter(p => p.id !== ptId),
   }
 }
 
@@ -176,6 +188,103 @@ function elbowVertices(vertices, isEnd, newPos) {
     const elbow = horiz ? { x: newPos.x, y: curr.y } : { x: curr.x, y: newPos.y }
     return collapseCollinear([newPos, elbow, ...vertices.slice(1)])
   }
+}
+
+// Returns { minDelta, maxDelta } clamping the perpendicular movement of a segment sub-edge
+// so no moving node can cross a directly-connected static neighbor.
+function computeSegDeltaLimits(segId, subIdx, segs, pts) {
+  const seg = segs.find(s => s.id === segId)
+  if (!seg) return { minDelta: -Infinity, maxDelta: Infinity }
+  const vs = seg.vertices
+  if (vs.length < 2 || subIdx >= vs.length - 1) return { minDelta: -Infinity, maxDelta: Infinity }
+  const a = vs[subIdx], b = vs[subIdx + 1]
+  const edgeDir = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
+  const isVert  = edgeDir === 'v'
+  const barCoord = isVert ? a.x : a.y
+  const onBar   = v => (isVert ? v.x : v.y) === barCoord
+
+  // BFS: find all node IDs that will move with this column/bar (mirrors computeSegMove)
+  const movingNodeIds = new Set()
+  const visitedSids   = new Set()
+  const queue = [segId]
+  while (queue.length > 0) {
+    const sid = queue.shift()
+    if (visitedSids.has(sid)) continue
+    visitedSids.add(sid)
+    const s = segs.find(x => x.id === sid)
+    if (!s) continue
+    const hasBarEdge = s.vertices.some((v, i) => {
+      if (i >= s.vertices.length - 1) return false
+      const w = s.vertices[i + 1]
+      const parallel = isVert
+        ? Math.abs(w.y - v.y) > Math.abs(w.x - v.x)
+        : Math.abs(w.x - v.x) >= Math.abs(w.y - v.y)
+      return parallel && onBar(v)
+    })
+    if (!hasBarEdge && sid !== segId) continue
+    const sFirst = s.vertices[0], sLast = s.vertices[s.vertices.length - 1]
+    if (onBar(sFirst)) {
+      movingNodeIds.add(s.startPointId)
+      segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.startPointId || x.endPointId === s.startPointId)) queue.push(x.id) })
+    }
+    if (onBar(sLast)) {
+      movingNodeIds.add(s.endPointId)
+      segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.endPointId || x.endPointId === s.endPointId)) queue.push(x.id) })
+    }
+  }
+
+  // For each moving node, find perpendicular connections to static neighbors
+  let minDelta = -Infinity, maxDelta = Infinity
+  for (const nodeId of movingNodeIds) {
+    const pt = pts.find(p => p.id === nodeId)
+    if (!pt) continue
+    for (const s of segs) {
+      const isStart = s.startPointId === nodeId, isEnd = s.endPointId === nodeId
+      if (!isStart && !isEnd) continue
+      if (s.vertices.length < 2) continue
+      const nodeV  = isStart ? s.vertices[0]              : s.vertices[s.vertices.length - 1]
+      const innerV = isStart ? s.vertices[1]              : s.vertices[s.vertices.length - 2]
+      const edH    = Math.abs(innerV.x - nodeV.x) >= Math.abs(innerV.y - nodeV.y)
+      if (isVert ? !edH : edH) continue  // skip non-perpendicular sub-edges
+      const neighborId = isStart ? s.endPointId : s.startPointId
+      if (movingNodeIds.has(neighborId)) continue
+      const neighbor = pts.find(p => p.id === neighborId)
+      if (!neighbor) continue
+      const nodeCoord     = isVert ? pt.x      : pt.y
+      const neighborCoord = isVert ? neighbor.x : neighbor.y
+      if (neighborCoord > nodeCoord) maxDelta = Math.min(maxDelta, neighborCoord - nodeCoord)
+      else                           minDelta = Math.max(minDelta, neighborCoord - nodeCoord)
+    }
+  }
+  return { minDelta, maxDelta }
+}
+
+// After a segment move that brought two nodes to the same position, merge coincident nodes.
+// A zero-length segment (vertices collapsed to < 2 by collapseSegs) signals the merger.
+function mergeCoincidentNodes(segs, pts) {
+  let workSegs = [...segs], workPts = [...pts]
+  let changed = true
+  while (changed) {
+    changed = false
+    const zeroSeg = workSegs.find(s => s.vertices.length < 2)
+    if (!zeroSeg) break
+    const { startPointId: winner, endPointId: loser } = zeroSeg
+    if (winner === loser) {
+      workSegs = workSegs.filter(s => s.id !== zeroSeg.id)
+    } else {
+      workSegs = workSegs
+        .filter(s => s.id !== zeroSeg.id)
+        .map(s => ({
+          ...s,
+          startPointId: s.startPointId === loser ? winner : s.startPointId,
+          endPointId:   s.endPointId   === loser ? winner : s.endPointId,
+        }))
+        .filter(s => s.startPointId !== s.endPointId)
+      workPts = workPts.filter(p => p.id !== loser)
+    }
+    changed = true
+  }
+  return { newSegs: workSegs, newPts: workPts }
 }
 
 // Move a segment sub-edge perpendicularly by delta.
@@ -315,7 +424,10 @@ function computeNodeMove(ptId, np, segs, pts, constraintOverride = null) {
   // The node can move freely; the perpendicular segment gets a 90° elbow while its
   // far end stays fixed; the parallel segment stretches.
   const segsAlongAxis = connected.filter(s => edgeAxisAt(s) === movAxis).length
-  const isLCorner = connected.length === 2 && segsAlongAxis === 1
+  // L-corner: 2 segments, one perpendicular + one parallel (classic corner)
+  // Endpoint: 1 segment moving perpendicular to it → same elbow logic, far end stays fixed
+  const isLCorner = (connected.length === 2 && segsAlongAxis === 1) ||
+                    (connected.length === 1 && segsAlongAxis === 0)
 
   // Returns true if every sub-edge of seg is perpendicular to movAxis.
   const isFullyPerp = seg => {
@@ -602,6 +714,7 @@ export default function DrawingCanvas({
   canvasDisplay,
   materials,
   insulations,
+  fitViewRequest,
 }) {
   const svgRef    = useRef(null)
   const spaceRef  = useRef(false)
@@ -610,6 +723,25 @@ export default function DrawingCanvas({
   const blockDragRef = useRef(null)   // {startScreenX, startScreenY, moved}
 
   const [tf,        setTf]        = useState({ x: 80, y: 40, k: 1 })
+
+  useEffect(() => {
+    if (!fitViewRequest) return
+    const raf = requestAnimationFrame(() => {
+      if (!svgRef.current) return
+      const rect = svgRef.current.getBoundingClientRect()
+      const W = rect.width, H = rect.height
+      if (!W || !H || !lineYs.length || !columnXs.length) return
+      const pad = 50
+      const x1 = columnXs[0], x2 = columnXs[columnXs.length - 1]
+      const y1 = lineYs[lineYs.length - 1], y2 = lineYs[0]
+      const cW = x2 - x1, cH = y2 - y1
+      if (cW <= 0 || cH <= 0) return
+      const k = Math.min((W - pad * 2) / cW, (H - pad * 2) / cH)
+      setTf({ k, x: (W - cW * k) / 2 - x1 * k, y: (H - cH * k) / 2 - y1 * k })
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [fitViewRequest]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const [panSt,     setPanSt]     = useState(null)
   const [dragLine,  setDragLine]  = useState(null)
   const [dragCol,   setDragCol]   = useState(null)   // {idx, screenX, origX}
@@ -723,8 +855,9 @@ export default function DrawingCanvas({
 
   // ── Delete a point with smart segment merging ─────────
   const deletePoint = useCallback((ptId) => {
-    const { newSegs, newPts } = deleteNodeFromNetwork(ptId, segments, points)
-    onNetworkChange(newSegs, newPts)
+    const result = deleteNodeFromNetwork(ptId, segments, points)
+    if (!result) return
+    onNetworkChange(result.newSegs, result.newPts)
     onSelectIds([])
   }, [segments, points, onNetworkChange, onSelectIds])
 
@@ -773,8 +906,7 @@ export default function DrawingCanvas({
         let newPts  = [...points]
         for (const ptId of delPtIds) {
           const result = deleteNodeFromNetwork(ptId, newSegs, newPts)
-          newSegs = result.newSegs
-          newPts  = result.newPts
+          if (result) { newSegs = result.newSegs; newPts = result.newPts }
         }
         onNetworkChange(newSegs, newPts)
         onSelectIds([])
@@ -892,9 +1024,9 @@ export default function DrawingCanvas({
         }
       }
       if (ptDragRef.current.moved) {
-        const { constraint, lockedAxis, origX, origY, levelId } = ptDragRef.current
+        const { constraint, lockedAxis, origX, origY, levelId, ptId: dragPtId, connectedCount } = ptDragRef.current
         const effectiveConstraint = lockedAxis ?? constraint
-        const x = effectiveConstraint === 'v' ? origX : snap(pos.x)
+        let x = effectiveConstraint === 'v' ? origX : snap(pos.x)
         let y = effectiveConstraint === 'h' ? origY : snap(pos.y)
         if (levelId) {
           const levelIdx = levels.findIndex(l => l.id === levelId)
@@ -908,7 +1040,51 @@ export default function DrawingCanvas({
             }
           }
         }
-        setPtDragPos({ ptId: ptDragRef.current.ptId, x, y, effectiveConstraint })
+
+        // Clamp to adjacent inner vertices so node cannot cross segment angles
+        let minX = -Infinity, maxX = Infinity, minY = -Infinity, maxY = Infinity
+        for (const seg of segments.filter(s => s.startPointId === dragPtId || s.endPointId === dragPtId)) {
+          const vs = seg.vertices
+          if (vs.length < 2) continue
+          const isEnd = seg.endPointId === dragPtId
+          const nodeV  = isEnd ? vs[vs.length - 1] : vs[0]
+          const innerV = isEnd ? vs[vs.length - 2] : vs[1]
+          const edgeH  = Math.abs(innerV.x - nodeV.x) >= Math.abs(innerV.y - nodeV.y)
+          if (edgeH && effectiveConstraint !== 'v') {
+            if (innerV.x <= origX) minX = Math.max(minX, innerV.x)
+            else                   maxX = Math.min(maxX, innerV.x)
+          } else if (!edgeH && effectiveConstraint !== 'h') {
+            if (innerV.y <= origY) minY = Math.max(minY, innerV.y)
+            else                   maxY = Math.min(maxY, innerV.y)
+          }
+        }
+        // Back-wall for corner nodes: 'free' drag with exactly 2 perpendicular segments.
+        // Prevents the node from sliding "into the void" past its current position along
+        // the locked axis, which would take it off both segments simultaneously.
+        if (constraint === 'free' && connectedCount === 2 && lockedAxis != null) {
+          for (const seg of segments.filter(s => s.startPointId === dragPtId || s.endPointId === dragPtId)) {
+            const vs = seg.vertices
+            if (vs.length < 2) continue
+            const isEnd = seg.endPointId === dragPtId
+            const nodeV  = isEnd ? vs[vs.length - 1] : vs[0]
+            const innerV = isEnd ? vs[vs.length - 2] : vs[1]
+            const edgeH  = Math.abs(innerV.x - nodeV.x) >= Math.abs(innerV.y - nodeV.y)
+            if (edgeH && lockedAxis === 'h') {
+              // H-segment parallel to locked axis: clamp x to stay within the segment's extent
+              if (innerV.x > origX) minX = Math.max(minX, origX)
+              else                  maxX = Math.min(maxX, origX)
+            } else if (!edgeH && lockedAxis === 'v') {
+              // V-segment parallel to locked axis: clamp y to stay within the segment's extent
+              if (innerV.y < origY) maxY = Math.min(maxY, origY)
+              else                  minY = Math.max(minY, origY)
+            }
+          }
+        }
+
+        x = Math.max(minX, Math.min(maxX, x))
+        y = Math.max(minY, Math.min(maxY, y))
+
+        setPtDragPos({ ptId: dragPtId, x, y, effectiveConstraint })
       }
       return
     }
@@ -919,7 +1095,8 @@ export default function DrawingCanvas({
         : (e.clientX - startScreenX) / tf.k
       if (!segDragRef.current.moved && Math.abs(rawDelta) > 4 / tf.k) segDragRef.current.moved = true
       if (segDragRef.current.moved) {
-        const delta = snap(origPerp + rawDelta) - origPerp
+        const { minDelta = -Infinity, maxDelta = Infinity } = segDragRef.current
+        const delta = Math.max(minDelta, Math.min(maxDelta, snap(origPerp + rawDelta) - origPerp))
         setSegDragState({ segId: segDragRef.current.segId, subIdx: segDragRef.current.subIdx, delta })
       }
       return
@@ -1085,6 +1262,7 @@ export default function DrawingCanvas({
           origX: np.x, origY: np.y, moved: false,
           constraint: np.type === 'groupe' ? 'v' : getDragConstraint(np.id, segments),
           lockedAxis: null,
+          connectedCount: connectedSegs.length,
           ...(np.type === 'groupe' ? { levelId: np.levelId } : {}),
         }
       }
@@ -1100,7 +1278,8 @@ export default function DrawingCanvas({
       const a = ns.vertices[subIdx], b = ns.vertices[subIdx + 1]
       const edgeDir = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
       const origPerp = edgeDir === 'h' ? a.y : a.x
-      segDragRef.current = { segId: ns.id, subIdx, dir: edgeDir, startScreenX: e.clientX, startScreenY: e.clientY, origPerp, moved: false }
+      const { minDelta, maxDelta } = computeSegDeltaLimits(ns.id, subIdx, segments, points)
+      segDragRef.current = { segId: ns.id, subIdx, dir: edgeDir, startScreenX: e.clientX, startScreenY: e.clientY, origPerp, moved: false, minDelta, maxDelta }
       return
     }
 
@@ -1166,8 +1345,8 @@ export default function DrawingCanvas({
             s => {
               let r = s.filter(x => x.id !== seg.id)
               r = r.map(x => {
-                if (x.startPointId === ptId) { const v = [...x.vertices]; v[0] = np; return { ...x, vertices: v } }
-                if (x.endPointId   === ptId) { const v = [...x.vertices]; v[v.length - 1] = np; return { ...x, vertices: v } }
+                if (x.startPointId === ptId) return { ...x, vertices: elbowVertices(x.vertices, false, np) }
+                if (x.endPointId   === ptId) return { ...x, vertices: elbowVertices(x.vertices, true,  np) }
                 return x
               })
               return r.concat([seg1, seg2])
@@ -1187,7 +1366,8 @@ export default function DrawingCanvas({
     // Commit segment drag
     if (segDragRef.current) {
       if (segDragState && segDragState.delta !== 0) {
-        const { newSegs, newPts } = computeSegMove(segDragState.segId, segDragState.subIdx, segDragState.delta, segments, points)
+        const moved = computeSegMove(segDragState.segId, segDragState.subIdx, segDragState.delta, segments, points)
+        const { newSegs, newPts } = mergeCoincidentNodes(moved.newSegs, moved.newPts)
         onNetworkChange(newSegs, newPts)
       }
       setSegDragState(null)
@@ -1498,19 +1678,15 @@ export default function DrawingCanvas({
                 editStyle = seg.length_override != null ? 'match' : 'missing'
               }
             } else if (paramType === 'flowVelocity') {
-              const hasAny   = seg.flowRate != null || seg.velocity != null
-              const computed = networkFlows?.get(seg.id)
+              const hasAny = seg.flowRate != null || seg.velocity != null
               if (flowVelocityValue != null) {
                 const storedMatch = flowVelocityMode === 'flowRate'
                   ? seg.flowRate === flowVelocityValue
                   : seg.velocity === flowVelocityValue
-                const computedMatch = flowVelocityMode === 'flowRate'
-                  ? computed?.flowRate != null && Math.abs(computed.flowRate - flowVelocityValue) < 1e-6
-                  : computed?.velocity != null && Math.abs(computed.velocity - flowVelocityValue) < 1e-6
-                editStyle = (storedMatch || computedMatch) ? 'match'
+                editStyle = storedMatch ? 'match'
                   : hasAny ? 'other' : 'missing'
               } else {
-                editStyle = (hasAny || computed?.flowRate != null) ? 'match' : 'missing'
+                editStyle = hasAny ? 'match' : 'missing'
               }
             }
           }

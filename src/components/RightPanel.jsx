@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { getDisplayName } from '../utils/naming'
-import { computeSegUI } from '../utils/thermalCalc'
+import { computeSegUI, getSegAmbTemp } from '../utils/thermalCalc'
 
 function Field({ label, unit, children }) {
   return (
@@ -490,6 +490,35 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
         </>
       )}
 
+      <hr className="rp-divider" />
+
+      {/* Thermique */}
+      <SectionLabel>Thermique</SectionLabel>
+      {(() => {
+        const tAmbDefault = getSegAmbTemp(
+          { ...seg, t_amb_override: null }, levels, lineYs, globalParams
+        )
+        const hasOverride = seg.t_amb_override != null
+        return (
+          <Field label="T° ambiante" unit="°C">
+            <input
+              type="number" step="0.5"
+              value={seg.t_amb_override ?? ''}
+              placeholder={tAmbDefault != null ? `${tAmbDefault} (défaut)` : 'défaut'}
+              onChange={e => set('t_amb_override', e.target.value === '' ? null : +e.target.value)}
+            />
+            {hasOverride && (
+              <button
+                onClick={() => set('t_amb_override', null)}
+                style={{ marginTop: 4, fontSize: 10, color: '#6b7280', background: 'none',
+                  border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+                Rétablir la valeur par défaut ({tAmbDefault} °C)
+              </button>
+            )}
+          </Field>
+        )
+      })()}
+
       </>}
 
     </div>
@@ -717,6 +746,18 @@ function ChaufferiePanel({ chaufferie, onChange, levels }) {
           value={height}
           onChange={e => set('height', Math.max(20, +e.target.value))} />
       </Field>
+
+      <div style={{ marginTop: 16, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+        <button
+          onClick={() => onChange({ ...chaufferie, placed: false, enabled: false })}
+          style={{
+            width: '100%', padding: '6px 0', fontSize: 12, fontWeight: 600,
+            background: '#fef2f2', color: '#dc2626',
+            border: '1px solid #fecaca', borderRadius: 5, cursor: 'pointer',
+          }}>
+          Supprimer la chaufferie
+        </button>
+      </div>
     </div>
   )
 }

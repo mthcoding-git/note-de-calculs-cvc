@@ -18,6 +18,10 @@ export function getNodeLocation(pt, levels, lineYs, columns, columnXs, chaufferi
       break
     }
   }
+  if (!levelName) {
+    const topLine = lineYs[levels.length]
+    if (topLine !== undefined && pt.y <= topLine) levelName = 'Toiture'
+  }
 
   // Équipements spéciaux (priorité sur toute zone)
   if (specialPts?.length) {
@@ -130,6 +134,8 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
       const goingIn = v.y === yTop && hint && hint.y > v.y
       if ((v.y > yTop && v.y <= yBot) || goingIn) return levels[i].name
     }
+    const topLine = lineYs[levels.length]
+    if (topLine !== undefined && v.y <= topLine) return 'Toiture'
     return '?'
   }
 
