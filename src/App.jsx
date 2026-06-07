@@ -3,13 +3,16 @@ import DrawingCanvas from './components/DrawingCanvas'
 import LeftPanel from './components/LeftPanel'
 import RightPanel from './components/RightPanel'
 import Toolbar from './components/Toolbar'
-import OnboardingWizard, { buildProjectFromConfig } from './components/OnboardingWizard'
+import VariantBar from './components/VariantBar'
+import { CalcFluidTabs, CalcModePills, getAutoCalcId, getCalcLabel, getFluidLabel } from './components/CalcSelector'
+import NetworkSetupCard from './components/NetworkSetupCard'
 import { DEFAULT_MATERIALS } from './data/materials'
 import { DEFAULT_INSULATIONS } from './data/insulations'
-import { computeFlowDirections } from './utils/flowDirection'
-import { buildFlowRows } from './utils/tableOrder'
+import { computeFlowDirections, computeFlowDirectionsEF } from './utils/flowDirection'
+import { buildFlowRows, buildFlowRowsEF } from './utils/tableOrder'
 import { computeNetworkFlows } from './utils/flowCalc'
 import { computeThermal } from './utils/thermalCalc'
+import { computeAlimentationResults } from './utils/alimentationCalc'
 import ResultsTable from './components/ResultsTable'
 import './App.css'
 
@@ -17,7 +20,7 @@ let _uid = 0
 const uid = (p = 'x') => `${p}-${Date.now()}-${++_uid}`
 
 const COL_LOCAL_OFFSET = 333
-const LOCAL_W = 50, LOCAL_GAP = 10
+const LOCAL_W = 60, LOCAL_GAP = 10
 const COL_PIPE_W = 320
 const COL_SEP_DEFAULT = 160
 const snapG = v => Math.round(v / 10) * 10
@@ -183,6 +186,46 @@ const DEFAULT_GLOBAL_PARAMS = {
   T_amb_ss: 10, T_amb_other: 20, he: 10,
 }
 
+const DEFAULT_ALIMENTATION_PARAMS = {
+  buildingType: 'habitation',
+  appareils: [
+    { id: 'evier',         name: 'Évier',                          qBase: 0.20, k: 2.5,  enabled: false },
+    { id: 'lavabo',        name: 'Lavabo',                         qBase: 0.20, k: 1.5,  enabled: false },
+    { id: 'bidet',         name: 'Bidet',                          qBase: 0.20, k: 1.0,  enabled: false },
+    { id: 'baignoire',     name: 'Baignoire ≤ 150 L',            qBase: 0.33, k: 3.0,  enabled: false },
+    { id: 'douche',        name: 'Douche',                         qBase: 0.20, k: 2.0,  enabled: false },
+    { id: 'poste_12',      name: "Poste d'eau robinet ½",          qBase: 0.33, k: 2.0,  enabled: false },
+    { id: 'poste_34',      name: "Poste d'eau robinet ¾",          qBase: 0.42, k: 2.0,  enabled: false },
+    { id: 'wc_reservoir',  name: 'WC réservoir de chasse',         qBase: 0.12, k: 0.5,  enabled: false },
+    { id: 'wc_robinet',    name: 'WC robinet de chasse',           qBase: 1.50, k: null, enabled: false },
+    { id: 'urinoir_ind',   name: 'Urinoir robinet individuel',     qBase: 0.15, k: 0.5,  enabled: false },
+    { id: 'urinoir_siph',  name: 'Urinoir action siphonique',      qBase: 0.50, k: 0.5,  enabled: false },
+    { id: 'lave_mains',    name: 'Lave-mains',                     qBase: 0.10, k: 0.5,  enabled: false },
+    { id: 'bac_laver',     name: 'Bac à laver',                    qBase: 0.33, k: null, enabled: false },
+    { id: 'machine_linge', name: 'Machine à laver le linge',       qBase: 0.20, k: 1.0,  enabled: false },
+    { id: 'machine_vaiss', name: 'Machine à laver la vaisselle',   qBase: 0.10, k: 1.0,  enabled: false },
+  ],
+}
+
+// Migration : remplit k et qBase manquants si les données stockées sont dans l'ancien format
+const _defMap = Object.fromEntries(DEFAULT_ALIMENTATION_PARAMS.appareils.map(a => [a.id, a]))
+function resolveAlimentationParams(raw) {
+  if (!raw?.appareils) return DEFAULT_ALIMENTATION_PARAMS
+  const needsMigration = raw.appareils.some(a => a.k === undefined || a.qBase === undefined)
+  if (!needsMigration) return raw
+  return {
+    ...raw,
+    appareils: raw.appareils.map(a => {
+      const def = _defMap[a.id]
+      return {
+        ...a,
+        k:     a.k     !== undefined ? a.k     : (def?.k     ?? null),
+        qBase: a.qBase !== undefined ? a.qBase : (def?.qBase ?? 0),
+      }
+    }),
+  }
+}
+
 // 5 niveaux SS-1…R+3, du bas vers le haut
 const DEFAULT_LEVELS = [
   { id: 'ss1', name: 'SS-1', isSousSol: true  },
@@ -215,9 +258,25 @@ const DEFAULT_CHAUFFERIE = {
 
 const DEFAULT_POINTS = []
 
+function buildFluidSetupProject(nSousSol, nFloors, nCols) {
+  const levels = []
+  for (let i = nSousSol; i >= 1; i--)
+    levels.push({ id: `ss${i}`, name: `SS-${i}`, isSousSol: true })
+  for (let i = 0; i < nFloors; i++)
+    levels.push({ id: i === 0 ? 'rdc' : `r${i}`, name: i === 0 ? 'RDC' : `R+${i}`, isSousSol: false })
+  const nLevels = levels.length
+  const lineYs  = Array.from({ length: nLevels + 1 }, (_, i) => 80 + (nLevels - i) * 210)
+  const columns = Array.from({ length: nCols }, (_, i) => ({
+    id: `col${i + 1}`, name: `Colonne ${i + 1}`, levelIds: 'all',
+  }))
+  const columnXs = Array.from({ length: nCols + 1 }, (_, i) => 200 + i * 320)
+  return { ...initProject(), levels, lineYs, columns, columnXs }
+}
+
 function initProject() {
   return {
     globalParams: DEFAULT_GLOBAL_PARAMS,
+    alimentationParams: DEFAULT_ALIMENTATION_PARAMS,
     materials: DEFAULT_MATERIALS,
     insulations: DEFAULT_INSULATIONS,
     levels: DEFAULT_LEVELS,
@@ -227,63 +286,205 @@ function initProject() {
     chaufferie: DEFAULT_CHAUFFERIE,
     segments: [],
     points: DEFAULT_POINTS,
+    valves: [],
   }
 }
 
-// ── Undo/redo store ────────────────────────────────────
-function useHistory(init) {
-  const histRef  = useRef([init])
-  const idxRef   = useRef(0)
+// ── Undo/redo + variants store ─────────────────────────
+function useVariantHistory() {
+  const INIT_ID = 'v0'
+  // Per-variant undo stacks — never serialized, reset on load
+  const histRef = useRef({ [INIT_ID]: { stack: [initProject()], idx: 0 } })
+
+  const [meta,        setMeta]        = useState([{ id: INIT_ID, name: '', isBase: true }])
+  const [activeId,    setActiveId]    = useState(INIT_ID)
+  const [projectName, setProjectName] = useState('')
   const [, bump] = useState(0)
 
-  const project = histRef.current[idxRef.current]
+  // Refs so save callbacks never capture stale state
+  const metaRef        = useRef(meta)
+  const activeIdRef    = useRef(activeId)
+  const projectNameRef = useRef(projectName)
+  useEffect(() => { metaRef.current = meta },        [meta])
+  useEffect(() => { activeIdRef.current = activeId },    [activeId])
+  useEffect(() => { projectNameRef.current = projectName }, [projectName])
+
+  const activeHist = () => histRef.current[activeId]
+  const project = activeHist()?.stack[activeHist().idx] ?? initProject()
 
   const setProject = useCallback((updater) => {
-    const cur  = histRef.current[idxRef.current]
-    const next = typeof updater === 'function' ? updater(cur) : updater
-    const newHist = [...histRef.current.slice(0, idxRef.current + 1), next]
-    histRef.current = newHist.length > 60 ? newHist.slice(-60) : newHist
-    idxRef.current  = histRef.current.length - 1
+    const h = histRef.current[activeId]
+    if (!h) return
+    const next = typeof updater === 'function' ? updater(h.stack[h.idx]) : updater
+    const stack = [...h.stack.slice(0, h.idx + 1), next]
+    h.stack = stack.length > 60 ? stack.slice(-60) : stack
+    h.idx   = h.stack.length - 1
     bump(n => n + 1)
-  }, [])
+  }, [activeId])
+
+  // Patches current history entry in-place — does NOT push a new undo step.
+  // Used by auto-corrections (frontier splits, productionECS snap) so they
+  // don't pollute the undo stack and don't fight with Ctrl+Z.
+  const patchProject = useCallback((updater) => {
+    const h = histRef.current[activeId]
+    if (!h) return
+    const next = typeof updater === 'function' ? updater(h.stack[h.idx]) : updater
+    h.stack[h.idx] = next
+    bump(n => n + 1)
+  }, [activeId])
+
+  // Replaces active variant data entirely and clears its undo stack
+  const resetProject = useCallback((data) => {
+    const h = histRef.current[activeId]
+    if (!h) return
+    h.stack = [data]; h.idx = 0
+    bump(n => n + 1)
+  }, [activeId])
 
   const undo = useCallback(() => {
-    if (idxRef.current > 0) { idxRef.current--; bump(n => n + 1) }
-  }, [])
-  const redo = useCallback(() => {
-    if (idxRef.current < histRef.current.length - 1) { idxRef.current++; bump(n => n + 1) }
-  }, [])
-  const canUndo = idxRef.current > 0
-  const canRedo = idxRef.current < histRef.current.length - 1
+    const h = histRef.current[activeId]
+    if (h && h.idx > 0) { h.idx--; bump(n => n + 1) }
+  }, [activeId])
 
-  return { project, setProject, undo, redo, canUndo, canRedo }
+  const redo = useCallback(() => {
+    const h = histRef.current[activeId]
+    if (h && h.idx < h.stack.length - 1) { h.idx++; bump(n => n + 1) }
+  }, [activeId])
+
+  const canUndo = (activeHist()?.idx ?? 0) > 0
+  const canRedo = (activeHist()?.idx ?? 0) < (activeHist()?.stack.length ?? 1) - 1
+
+  const switchVariant = useCallback((id) => { setActiveId(id) }, [])
+
+  const duplicateVariant = useCallback((sourceId) => {
+    const sourceH = histRef.current[sourceId]
+    if (!sourceH) return
+    const copy  = JSON.parse(JSON.stringify(sourceH.stack[sourceH.idx]))
+    const newId = uid('v')
+    histRef.current[newId] = { stack: [copy], idx: 0 }
+    setMeta(prev => {
+      const n = prev.filter(v => !v.isBase).length
+      setActiveId(newId)
+      bump(b => b + 1)
+      return [...prev, { id: newId, name: '', isBase: false }]
+    })
+  }, [])
+
+  const deleteVariant = useCallback((id) => {
+    setMeta(prev => {
+      if (prev.length <= 1) return prev
+      const v = prev.find(m => m.id === id)
+      if (!v || v.isBase) return prev
+      delete histRef.current[id]
+      const remaining = prev.filter(m => m.id !== id)
+      setActiveId(cur => {
+        if (cur !== id) return cur
+        return remaining.find(m => m.isBase)?.id ?? remaining[0]?.id ?? cur
+      })
+      bump(b => b + 1)
+      return remaining
+    })
+  }, [])
+
+  const renameVariant  = useCallback((id, name) => setMeta(prev => prev.map(m => m.id === id ? { ...m, name } : m)), [])
+  const setBaseVariant = useCallback((id) => {
+    setMeta(prev => {
+      const v = prev.find(m => m.id === id)
+      if (!v) return prev
+      const others = prev.filter(m => m.id !== id).map(m => ({ ...m, isBase: false }))
+      return [{ ...v, isBase: true }, ...others]
+    })
+  }, [])
+  const reorderVariant = useCallback((fromIdx, toIdx) => {
+    if (fromIdx === toIdx || fromIdx === 0 || toIdx === 0) return
+    setMeta(prev => {
+      const next = [...prev]
+      const [item] = next.splice(fromIdx, 1)
+      next.splice(toIdx, 0, item)
+      return next
+    })
+  }, [])
+
+  const getFullState = useCallback(() => ({
+    version: 2,
+    projectName:     projectNameRef.current,
+    activeVariantId: activeIdRef.current,
+    variants: metaRef.current.map(m => ({
+      id: m.id, name: m.name, isBase: m.isBase,
+      data: histRef.current[m.id]?.stack[histRef.current[m.id].idx] ?? initProject()
+    }))
+  }), [])
+
+  const loadState = useCallback((state) => {
+    let variants = state.version === 2 && Array.isArray(state.variants)
+      ? state.variants
+      : [{ id: 'v0', name: '', isBase: true, data: state }]
+    if (!variants.some(v => v.isBase)) variants[0] = { ...variants[0], isBase: true }
+    // Migrate old projects: convert ppZoneWidth columns to the PP zone gap column architecture
+    variants = variants.map(v => {
+      const data = v.data
+      if (!data?.columns) return v
+      const hasPPZone = data.columns.some(c => c.isPPZone)
+      if (hasPPZone) return v  // already migrated
+      let newColumns = []
+      let newColumnXs = [...(data.columnXs ?? [])]
+      let insertOffset = 0
+      ;(data.columns ?? []).forEach((col, origIdx) => {
+        const adjIdx = origIdx + insertOffset
+        const ppW = col.ppZoneWidth ?? 0
+        newColumns.push({ ...col, ppZoneWidth: undefined })
+        if (!col.isGap && ppW > 0) {
+          const hasGroupe = (data.points ?? []).some(p => p.type === 'groupe' && p.colId === col.id)
+          if (hasGroupe) {
+            const x2 = newColumnXs[adjIdx + 1]
+            const ppLeft = x2 - ppW
+            newColumnXs.splice(adjIdx + 1, 0, ppLeft)
+            newColumns.push({ id: uid('ppz'), isGap: true, isPPZone: true, colId: col.id, levelIds: 'all' })
+            insertOffset++
+          }
+        }
+      })
+      return { ...v, data: { ...data, columns: newColumns, columnXs: newColumnXs } }
+    })
+    histRef.current = Object.fromEntries(variants.map(v => [v.id, { stack: [v.data], idx: 0 }]))
+    setMeta(variants.map(({ id, name, isBase }) => ({ id, name, isBase: !!isBase })))
+    setActiveId(state.activeVariantId ?? variants[0].id)
+    setProjectName(state.projectName ?? 'Projet ECS')
+    bump(b => b + 1)
+  }, [])
+
+  return {
+    project, setProject, patchProject, resetProject, undo, redo, canUndo, canRedo,
+    meta, activeId, projectName, setProjectName,
+    switchVariant, duplicateVariant, deleteVariant, renameVariant, setBaseVariant, reorderVariant,
+    getFullState, loadState,
+  }
 }
 
 export default function App() {
-  const { project, setProject, undo, redo, canUndo, canRedo } = useHistory(initProject())
-  const [onboardingDone, setOnboardingDone] = useState(false)
+  const {
+    project, setProject, patchProject, resetProject, undo, redo, canUndo, canRedo,
+    meta, activeId, projectName, setProjectName,
+    switchVariant, duplicateVariant, deleteVariant, renameVariant, setBaseVariant, reorderVariant,
+    getFullState, loadState,
+  } = useVariantHistory()
+
+  const [editingProjName,   setEditingProjName]   = useState(false)
+  const [activeFluidId,     setActiveFluidId]     = useState(null)
+  const [activeCalcId,      setActiveCalcId]      = useState(null)
   const [fitViewRequest, setFitViewRequest] = useState(1)
 
-  const handleWizardComplete = useCallback((config) => {
-    setProject(buildProjectFromConfig(config))
-    setOnboardingDone(true)
-    setFitViewRequest(r => r + 1)
-  }, [setProject])
+  // Sauvegarde d'état par type de réseau : fluidId → { state, calcId }
+  const fluidStashRef = useRef(new Map())
 
-  const handleWizardDismiss = useCallback(() => {
-    setProject(p => ({
-      ...p,
-      materials:   p.materials.map(m => ({ ...m, enabled: false })),
-      insulations: p.insulations.map(i => ({ ...i, enabled: false })),
-    }))
-    setOnboardingDone(true)
-    setFitViewRequest(r => r + 1)
-  }, [setProject])
+  const [pendingSetup, setPendingSetup] = useState(false)
 
   // Sens d'écoulement par tronçon — recalculé à chaque modification du réseau
   const flowDirections = useMemo(
-    () => computeFlowDirections(project.segments, project.points),
-    [project.segments, project.points]
+    () => activeCalcId === 'alimentation-ef'
+      ? computeFlowDirectionsEF(project.segments, project.points)
+      : computeFlowDirections(project.segments, project.points),
+    [project.segments, project.points, activeCalcId]
   )
 
   // Débits/vitesses résolus par loi des nœuds
@@ -303,12 +504,40 @@ export default function App() {
      flowDirections, networkFlows, project.levels, project.lineYs, project.globalParams]
   )
 
+  const alimentationResults = useMemo(
+    () => computeAlimentationResults(
+      project.segments, project.points,
+      resolveAlimentationParams(project.alimentationParams),
+      flowDirections
+    ),
+    [project.segments, project.points, project.alimentationParams, flowDirections]
+  )
+
   const { rows: flowRows, roleMap } = useMemo(
     () => buildFlowRows(project.segments, project.points, flowDirections,
-      project.columns, project.columnXs, project.levels, project.lineYs),
+      project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId),
     [project.segments, project.points, flowDirections,
+     project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId]
+  )
+
+  const efFlowRowsArr = useMemo(
+    () => activeCalcId !== 'alimentation-ef' ? null : buildFlowRowsEF(
+      project.segments, project.points, flowDirections,
+      project.columns, project.columnXs, project.levels, project.lineYs
+    ),
+    [activeCalcId, project.segments, project.points, flowDirections,
      project.columns, project.columnXs, project.levels, project.lineYs]
   )
+
+  // RoleMap fusionné pour EF (plusieurs sources)
+  const effectiveRoleMap = useMemo(() => {
+    if (activeCalcId !== 'alimentation-ef' || !efFlowRowsArr) return roleMap
+    const merged = new Map()
+    for (const { roleMap: rm } of efFlowRowsArr) {
+      for (const [id, role] of rm) merged.set(id, role)
+    }
+    return merged
+  }, [activeCalcId, efFlowRowsArr, roleMap])
 
   const errorCount = useMemo(() => {
     const ptCount = new Map()
@@ -320,31 +549,37 @@ export default function App() {
       const sc = (ptCount.get(s.startPointId) ?? 0) >= 2
       const ec = (ptCount.get(s.endPointId)   ?? 0) >= 2
       if ((sc ? 1 : 0) + (ec ? 1 : 0) > 1) return false
-      // Les tronçons connectés à un groupe de puisage sont des bouts fermés — pas une erreur
       const startPt = project.points.find(p => p.id === s.startPointId)
       const endPt   = project.points.find(p => p.id === s.endPointId)
-      return startPt?.type !== 'groupe' && endPt?.type !== 'groupe'
+      // Groupes de puisage et arrivées EF sont des bouts fermés — pas une erreur
+      const isSpecial = t => t === 'groupe' || t === 'arriveeEF'
+      return !isSpecial(startPt?.type) && !isSpecial(endPt?.type)
     }).length
     let flow = 0
     for (const [, v] of networkFlows) { if (v.hasError) flow++ }
+    const hasAllerSegs   = project.segments.some(s => s.type === 'aller')
     const hasAllerRetour = project.segments.some(s => s.type === 'aller' || s.type === 'retour')
     const hasProdECS     = project.points.some(p => p.type === 'productionECS')
-    const missingProd    = hasAllerRetour && !hasProdECS ? 1 : 0
+    const hasArriveeEF   = project.points.some(p => p.type === 'arriveeEF')
+    const missingProd    = activeCalcId === 'alimentation-ef'
+      ? (hasAllerSegs && !hasArriveeEF ? 1 : 0)
+      : (hasAllerRetour && !hasProdECS ? 1 : 0)
     return conn + flow + missingProd
-  }, [project.segments, project.points, networkFlows])
+  }, [project.segments, project.points, networkFlows, activeCalcId])
 
   const [drawMode,           setDrawMode]           = useState('select')
   const [connHighlightIds,   setConnHighlightIds]   = useState([])
   const [groupesEditMode,    setGroupesEditMode]    = useState(false)
   const [showGroupeNames,    setShowGroupeNames]    = useState(false)
-  const [canvasDisplay, setCanvasDisplay] = useState({ material: false, length: false, flowVelocity: false, insulation: false })
+  const [canvasDisplay, setCanvasDisplay] = useState({ nomTroncon: false, length: false, material: false, dn: false, insulation: false, debit: false, vitesse: false, temperatureNoeud: false, deltaT: false })
   const [showResultsTable, setShowResultsTable] = useState(false)
   const [tableHeight, setTableHeight] = useState(300)
   const tableHeightRef = useRef(0)
   tableHeightRef.current = tableHeight
   const [pipeType,           setPipeType]           = useState('aller')
   const [selectedIds,        setSelectedIds]        = useState([])
-  const [panelOpen,          setPanelOpen]          = useState(true)
+  const [selectedValveId,    setSelectedValveId]    = useState(null)
+  const [panelOpen,          setPanelOpen]          = useState(false)
   const [editLevelsEnabled,    setEditLevelsEnabled]    = useState(false)
   const [editColumnsEnabled,   setEditColumnsEnabled]   = useState(false)
   const [editChaufferie,       setEditChaufferie]       = useState(false)
@@ -364,9 +599,9 @@ export default function App() {
     setProject(p => ({ ...p, [key]: typeof valOrFn === 'function' ? valOrFn(p[key]) : valOrFn }))
   }, [setProject])
 
-  const onAssignParam = useCallback((segId) => {
+  const onAssignParam = useCallback((id) => {
     update('segments', segs => segs.map(s => {
-      if (s.id !== segId) return s
+      if (s.id !== id) return s
       if (editParam.paramType === 'type')
         return { ...s, type: editParam.segType }
       if (editParam.paramType === 'material') {
@@ -402,6 +637,77 @@ export default function App() {
     update('segments', segs => segs.map(s => s.id === segId ? { ...s, ...fields } : s))
   }, [update])
 
+  const handleValveUpdate = useCallback((valveId, fields) => {
+    update('valves', vs => (vs ?? []).map(v => v.id === valveId ? { ...v, ...fields } : v))
+  }, [update])
+
+  const handleSelectIds = useCallback((ids) => {
+    setSelectedIds(ids)
+    setSelectedValveId(null)
+  }, [])
+
+  const handleFluidChange = useCallback((fluidId, calcId) => {
+    if (fluidId === activeFluidId) return
+
+    // Sauvegarder l'état du fluide actuel uniquement s'il a été configuré
+    if (activeFluidId && !pendingSetup) {
+      fluidStashRef.current.set(activeFluidId, {
+        state:  getFullState(),
+        calcId: activeCalcId,
+      })
+    }
+
+    const stashed = fluidStashRef.current.get(fluidId)
+    const resolvedCalcId = calcId ?? getAutoCalcId(fluidId)
+
+    if (stashed) {
+      loadState({ ...stashed.state, projectName })
+      setActiveCalcId(resolvedCalcId ?? stashed.calcId)
+      setPendingSetup(false)
+    } else {
+      // Première visite → initialiser avec la grille par défaut et afficher le setup
+      loadState({
+        version: 2,
+        projectName,
+        activeVariantId: 'v0',
+        variants: [{ id: 'v0', name: '', isBase: true, data: buildFluidSetupProject(1, 3, 3) }],
+      })
+      setActiveCalcId(resolvedCalcId)
+      setPendingSetup(true)
+      setPanelOpen(false)
+    }
+
+    setActiveFluidId(fluidId)
+    setSelectedIds([])
+    setDrawMode('select')
+  }, [activeFluidId, activeCalcId, pendingSetup, getFullState, loadState, projectName])
+
+  // Déclenche le fit uniquement quand le canvas devient visible pendant le setup
+  const setupCanvasVisible = !!(pendingSetup && activeCalcId)
+  const prevSetupCanvasVisibleRef = useRef(false)
+  useEffect(() => {
+    if (setupCanvasVisible && !prevSetupCanvasVisibleRef.current) {
+      setTimeout(() => setFitViewRequest(r => r + 1), 0)
+    }
+    prevSetupCanvasVisibleRef.current = setupCanvasVisible
+  }, [setupCanvasVisible])
+
+  const handlePreviewUpdate = useCallback((nSousSol, nFloors, nCols) => {
+    patchProject(buildFluidSetupProject(nSousSol, nFloors, nCols))
+    setFitViewRequest(r => r + 1)
+  }, [patchProject])
+
+  const handleSetupComplete = useCallback(() => {
+    setPendingSetup(false)
+    setPanelOpen(true)
+    setFitViewRequest(r => r + 1)
+  }, [])
+
+  const handleCalcChange = useCallback((id) => {
+    if (!activeCalcId && !pendingSetup) setPanelOpen(true)
+    setActiveCalcId(id)
+  }, [activeCalcId, pendingSetup])
+
   const startTableResize = useCallback((e) => {
     e.preventDefault()
     const startY = e.clientY
@@ -421,48 +727,48 @@ export default function App() {
     })
   }, [setProject])
 
-  // Updates columnXs (preview only during drag — no content changes for gaine boundaries).
+  // Updates columnXs during column boundary drag (no content changes — PP zones have their own handler).
   const handleColumnXsChange = useCallback((updater) => {
     setProject(p => {
-      const oldXs = p.columnXs
-      const newXs = typeof updater === 'function' ? updater(oldXs) : updater
-      if (newXs === oldXs) return p
+      const newXs = typeof updater === 'function' ? updater(p.columnXs) : updater
+      if (newXs === p.columnXs) return p
+      return { ...p, columnXs: newXs }
+    })
+  }, [setProject])
 
-      // Identify the single changed index
-      let changedIdx = -1
-      for (let i = 0; i < Math.max(oldXs.length, newXs.length); i++) {
-        if ((newXs[i] ?? 0) !== (oldXs[i] ?? 0)) {
-          if (changedIdx >= 0) { changedIdx = -2; break }
-          changedIdx = i
-        }
-      }
-
-      // Column boundary drag: groupes in the adjacent column follow their left boundary.
-      const groupeMoves = new Map()
+  // Slides the PP zone gap column left/right, keeping its width fixed, and moves its groups.
+  const handlePPZoneDrag = useCallback((ppZoneId, ppWidth, newXLeft) => {
+    setProject(p => {
+      const ppIdx = p.columns.findIndex(c => c.id === ppZoneId)
+      if (ppIdx < 0) return p
+      const minXLeft = p.columnXs[ppIdx - 1] !== undefined ? p.columnXs[ppIdx - 1] + 80 : -Infinity
+      const maxXLeft = p.columnXs[ppIdx + 2] !== undefined ? p.columnXs[ppIdx + 2] - ppWidth - 80 : Infinity
+      const clampedXLeft = Math.max(minXLeft, Math.min(maxXLeft, newXLeft))
+      const delta = clampedXLeft - p.columnXs[ppIdx]
+      if (Math.abs(delta) < 0.5) return p
+      const newColumnXs = p.columnXs.map((x, i) =>
+        (i === ppIdx || i === ppIdx + 1) ? x + delta : x
+      )
+      const ppColId = p.columns[ppIdx].colId
+      const groupMoves = new Map()
       const newPoints = p.points.map(pt => {
-        if (pt.type !== 'groupe') return pt
-        const colIdx = p.columns.findIndex(c => c.id === pt.colId)
-        if (colIdx < 0 || oldXs[colIdx] === undefined || newXs[colIdx] === undefined) return pt
-        const leftDelta = newXs[colIdx] - oldXs[colIdx]
-        if (leftDelta === 0) return pt
-        const prevCol = colIdx > 0 ? p.columns[colIdx - 1] : null
-        if (prevCol?.isGap) return pt
-        const newPt = { ...pt, x: snapG(pt.x + leftDelta) }
-        groupeMoves.set(pt.id, newPt.x - pt.x)
+        if (pt.type !== 'groupe' || pt.colId !== ppColId) return pt
+        const newPt = { ...pt, x: pt.x + delta }
+        groupMoves.set(pt.id, delta)
         return newPt
       })
-      const newSegments = groupeMoves.size > 0
+      const newSegments = groupMoves.size > 0
         ? p.segments.map(seg => {
-            const sd = groupeMoves.get(seg.startPointId)
-            const ed = groupeMoves.get(seg.endPointId)
-            if (sd === undefined && ed === undefined) return seg
+            const sd = groupMoves.has(seg.startPointId) ? delta : 0
+            const ed = groupMoves.has(seg.endPointId) ? delta : 0
+            if (!sd && !ed) return seg
             const verts = [...seg.vertices]
-            if (sd !== undefined) verts[0] = { x: verts[0].x + sd, y: verts[0].y }
-            if (ed !== undefined) verts[verts.length - 1] = { x: verts[verts.length - 1].x + ed, y: verts[verts.length - 1].y }
+            if (sd) verts[0] = { x: verts[0].x + sd, y: verts[0].y }
+            if (ed) verts[verts.length - 1] = { x: verts[verts.length - 1].x + ed, y: verts[verts.length - 1].y }
             return { ...seg, vertices: verts }
           })
         : p.segments
-      return { ...p, columnXs: newXs, points: newPoints, segments: newSegments }
+      return { ...p, columnXs: newColumnXs, points: newPoints, segments: newSegments }
     })
   }, [setProject])
 
@@ -521,14 +827,37 @@ export default function App() {
       const existing = p.points.filter(pt => pt.type === 'groupe' && pt.colId === colId && pt.levelId === levelId)
       const k = existing.length
       const minSep = 23 + (k + 1) * (LOCAL_W + LOCAL_GAP)
-      const currentSep = (p.columnXs[colIdx + 1] ?? p.columnXs[colIdx] + COL_PIPE_W) - p.columnXs[colIdx] - COL_PIPE_W
+
+      // Find existing PP zone gap column for this column (immediately after colIdx)
+      const ppIdx = p.columns.findIndex(c => c.isPPZone && c.colId === colId)
       let base = p
-      if (currentSep < minSep) {
-        const delta = minSep - currentSep
-        base = expandZone(p, p.columnXs[colIdx + 1], delta)
+
+      if (ppIdx < 0) {
+        // First group: create a PP zone gap column right after the column
+        const xInsert = p.columnXs[colIdx + 1]
+        base = expandZone(p, xInsert, minSep)
+        const newPPZone = { id: uid('ppz'), isGap: true, isPPZone: true, colId, levelIds: 'all' }
+        // Re-insert xInsert as the left edge of PP zone (right edge of pipe column stays at xInsert)
+        const insertAt = colIdx + 1
+        base = {
+          ...base,
+          columns:   [...base.columns.slice(0, insertAt),  newPPZone, ...base.columns.slice(insertAt)],
+          columnXs:  [...base.columnXs.slice(0, insertAt), xInsert,   ...base.columnXs.slice(insertAt)],
+        }
+      } else {
+        // PP zone exists: expand to the right if needed
+        const ppLeft  = p.columnXs[ppIdx]
+        const ppRight = p.columnXs[ppIdx + 1]
+        const currentPP = ppRight - ppLeft
+        if (currentPP < minSep) {
+          base = expandZone(p, ppRight, minSep - currentPP)
+        }
       }
-      const x1 = base.columnXs[colIdx]
-      const newX = snapG(x1 + COL_LOCAL_OFFSET + k * (LOCAL_W + LOCAL_GAP) + LOCAL_W / 2)
+
+      // Place new group inside the PP zone
+      const finalPPIdx = base.columns.findIndex(c => c.isPPZone && c.colId === colId)
+      const ppLeft = base.columnXs[finalPPIdx]
+      const newX = snapG(ppLeft + 13 + k * (LOCAL_W + LOCAL_GAP) + LOCAL_W / 2)
       const yBot = p.lineYs[levelIdx]
       const yTop = p.lineYs[levelIdx + 1] ?? (p.lineYs[levelIdx] - 210)
       const newY = snapG((yBot + yTop) / 2)
@@ -542,36 +871,51 @@ export default function App() {
       const existing = p.points.filter(pt => pt.type === 'groupe' && pt.colId === colId && pt.levelId === levelId)
       if (existing.length === 0) return p
       const toRemove = [...existing].sort((a, b) => a.x - b.x).at(-1)
-      const colIdx = p.columns.findIndex(c => c.id === colId)
+      const { points: newPoints, segments: newSegments } = removeGroupeBranch(p.points, p.segments, toRemove.id)
 
-      // Remove the groupe point, its branch segment, and the first node if no type change
-      const { points: newPoints, segments: newSegments } = removeGroupeBranch(
-        p.points, p.segments, toRemove.id
-      )
-
-      if (colIdx < 0) return { ...p, points: newPoints, segments: newSegments }
-
-      // Shrink the column sep zone if fewer groupes remain
-      const maxCount = p.levels.reduce((mx, lvl) => {
-        const cnt = newPoints.filter(pt => pt.type === 'groupe' && pt.colId === colId && pt.levelId === lvl.id).length
-        return Math.max(mx, cnt)
-      }, 0)
-      const newRequiredSep = maxCount === 0 ? 0 : 23 + maxCount * (LOCAL_W + LOCAL_GAP)
-      const currentSep = (p.columnXs[colIdx + 1] ?? p.columnXs[colIdx] + COL_PIPE_W) - p.columnXs[colIdx] - COL_PIPE_W
-      if (currentSep <= newRequiredSep) return { ...p, points: newPoints, segments: newSegments }
-      const xLeft  = p.columnXs[colIdx] + COL_PIPE_W + newRequiredSep
-      const xRight = p.columnXs[colIdx + 1]
-      const { newXs, newPoints: shrunkPts, newSegments: shrunkSegs } = processZoneRemoval(
-        p.columnXs, newPoints, newSegments, xLeft, xRight
-      )
-      return { ...p, columnXs: newXs, points: shrunkPts, segments: shrunkSegs }
+      // If no groups remain for this column at all, remove the PP zone gap column
+      const remainingGroups = newPoints.filter(pt => pt.type === 'groupe' && pt.colId === colId)
+      const ppIdx = p.columns.findIndex(c => c.isPPZone && c.colId === colId)
+      if (remainingGroups.length === 0) {
+        if (ppIdx >= 0) {
+          const xLeft  = p.columnXs[ppIdx]
+          const xRight = p.columnXs[ppIdx + 1]
+          const { newXs, newPoints: pts2, newSegments: segs2 } = processZoneRemoval(
+            p.columnXs, newPoints, newSegments, xLeft, xRight
+          )
+          const newColumns = p.columns.filter(c => c.id !== p.columns[ppIdx].id)
+          const dedupXs = newXs.filter((x, i) => i === 0 || x !== newXs[i - 1])
+          return { ...p, columns: newColumns, columnXs: dedupXs, points: pts2, segments: segs2 }
+        }
+      } else if (ppIdx >= 0) {
+        // Shrink PP zone to exactly fit the remaining groups (max groups in any level)
+        const groupsPerLevel = new Map()
+        for (const pt of remainingGroups) {
+          groupsPerLevel.set(pt.levelId, (groupsPerLevel.get(pt.levelId) ?? 0) + 1)
+        }
+        const maxGroups = Math.max(...groupsPerLevel.values())
+        const newPPWidth = 23 + maxGroups * (LOCAL_W + LOCAL_GAP)
+        const ppRight = p.columnXs[ppIdx + 1]
+        const currentPPWidth = ppRight - p.columnXs[ppIdx]
+        const shrinkAmount = currentPPWidth - newPPWidth
+        if (shrinkAmount > 0) {
+          const { newXs, newPoints: pts2, newSegments: segs2 } = processZoneRemoval(
+            p.columnXs, newPoints, newSegments, ppRight - shrinkAmount, ppRight
+          )
+          return { ...p, columnXs: newXs, points: pts2, segments: segs2 }
+        }
+      }
+      return { ...p, points: newPoints, segments: newSegments }
     })
   }, [setProject])
 
 
+  const isSpecialPt = (pt) =>
+    pt.type === 'productionECS' || pt.type === 'arriveeEF' || pt.type === 'groupe' || pt.isLocked
+
   // Combined atomic update (single undo entry)
   // After every network change, points with 0 segment connections are auto-removed
-  // (except productionECS, groupe and locked points which are always kept).
+  // (except productionECS, arriveeEF, groupe and locked points which are always kept).
   const updateNetwork = useCallback((segsFnOrVal, ptsFnOrVal) => {
     setProject(p => {
       const newSegs = typeof segsFnOrVal === 'function' ? segsFnOrVal(p.segments) : (segsFnOrVal ?? p.segments)
@@ -581,12 +925,29 @@ export default function App() {
         if (seg.startPointId) connected.add(seg.startPointId)
         if (seg.endPointId)   connected.add(seg.endPointId)
       }
-      const prunedPts = newPts.filter(pt =>
-        connected.has(pt.id) || pt.type === 'productionECS' || pt.type === 'groupe' || pt.isLocked
-      )
-      return { ...p, segments: newSegs, points: prunedPts }
+      const prunedPts = newPts.filter(pt => connected.has(pt.id) || isSpecialPt(pt))
+      const segIds = new Set(newSegs.map(s => s.id))
+      const prunedValves = (p.valves ?? []).filter(v => segIds.has(v.segmentId))
+      return { ...p, segments: newSegs, points: prunedPts, valves: prunedValves }
     })
   }, [setProject])
+
+  // Patches the current undo entry for auto-corrections — does NOT create a new undo step
+  const patchNetwork = useCallback((segsFnOrVal, ptsFnOrVal) => {
+    patchProject(p => {
+      const newSegs = typeof segsFnOrVal === 'function' ? segsFnOrVal(p.segments) : (segsFnOrVal ?? p.segments)
+      const newPts  = typeof ptsFnOrVal  === 'function' ? ptsFnOrVal(p.points)   : (ptsFnOrVal  ?? p.points)
+      const connected = new Set()
+      for (const seg of newSegs) {
+        if (seg.startPointId) connected.add(seg.startPointId)
+        if (seg.endPointId)   connected.add(seg.endPointId)
+      }
+      const prunedPts = newPts.filter(pt => connected.has(pt.id) || isSpecialPt(pt))
+      const segIds = new Set(newSegs.map(s => s.id))
+      const prunedValves = (p.valves ?? []).filter(v => segIds.has(v.segmentId))
+      return { ...p, segments: newSegs, points: prunedPts, valves: prunedValves }
+    })
+  }, [patchProject])
 
   // Update a single segment or point by id
   const updateElement = useCallback((id, type, newData) => {
@@ -643,13 +1004,21 @@ export default function App() {
     setPlacingEquipment({ type: 'productionECS', name: 'Production ECS', size: { w: 44, h: 28 } })
   }
 
+  const handleAddArriveeEF = () => {
+    const existing = project.points.filter(p => p.type === 'arriveeEF')
+    const name = existing.length === 0 ? 'Arrivée EF' : `Arrivée EF n°${existing.length + 1}`
+    setPlacingEquipment({ type: 'arriveeEF', name, size: { w: 44, h: 28 } })
+  }
+
   const handleAddChaufferie = () => {
     setPlacingChaufferie(true)
   }
 
   const handleSave = () => {
-    const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' })
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: 'projet-ecs.json' })
+    const state = getFullState()
+    const slug  = (state.projectName || 'projet-ecs').replace(/[^a-z0-9]/gi, '_').toLowerCase()
+    const blob  = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' })
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `${slug}.json` })
     a.click()
   }
 
@@ -658,7 +1027,7 @@ export default function App() {
     input.onchange = e => {
       const reader = new FileReader()
       reader.onload = ev => {
-        try { setProject(JSON.parse(ev.target.result)); setSelectedIds([]); setOnboardingDone(true) }
+        try { loadState(JSON.parse(ev.target.result)); setSelectedIds([]) }
         catch { alert('Fichier invalide.') }
       }
       reader.readAsText(e.target.files[0])
@@ -668,24 +1037,74 @@ export default function App() {
 
   return (
     <div className="app">
-      {!onboardingDone && <OnboardingWizard onComplete={handleWizardComplete} onDismiss={handleWizardDismiss} />}
       <header className="app-header">
-        <div className="app-title">
-          <span className="app-title-main">Bouclage ECS</span>
-          <span className="app-title-sub">Note de calcul thermique</span>
+        <div className="app-hd-left">
+          <div className="app-title">
+            {editingProjName ? (
+              <input
+                className="app-title-edit"
+                value={projectName}
+                placeholder="Nouveau projet"
+                onChange={e => setProjectName(e.target.value)}
+                onBlur={() => setEditingProjName(false)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingProjName(false) }}
+                autoFocus
+              />
+            ) : (
+              <span
+                className={`app-title-main${!projectName ? ' app-title-placeholder' : ''}`}
+                title="Cliquer pour renommer"
+                onClick={() => setEditingProjName(true)}>
+                {projectName || 'Nouveau projet'}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="header-actions">
+        <div className="app-hd-center" style={activeCalcId ? { justifyContent: 'flex-start' } : {}}>
+          {!activeFluidId && (
+            <span className="hd-hint">Choisissez un type de réseau :</span>
+          )}
+          <CalcFluidTabs activeFluidId={activeFluidId} onFluidChange={handleFluidChange} />
+          {activeFluidId && (
+            <>
+              <div className="app-hd-sep" />
+              {activeCalcId && (
+                <>
+                  <VariantBar
+                    variants={meta}
+                    activeVariantId={activeId}
+                    onActivate={id => { switchVariant(id); setSelectedIds([]) }}
+                    onDuplicate={duplicateVariant}
+                    onDelete={deleteVariant}
+                    onRename={renameVariant}
+                    onSetBase={setBaseVariant}
+                    onReorder={reorderVariant}
+                  />
+                  <div className="app-hd-sep" />
+                </>
+              )}
+              {!activeCalcId && (
+                <span className="hd-mode-hint">Choisissez un mode de calcul :</span>
+              )}
+              <CalcModePills activeFluidId={activeFluidId} activeCalcId={activeCalcId} onChange={handleCalcChange} />
+            </>
+          )}
+        </div>
+        <div className="app-hd-right">
           <button onClick={handleSave} className="btn btn-secondary">💾 Sauvegarder</button>
           <button onClick={handleLoad} className="btn btn-secondary">📂 Charger</button>
-<button className="btn btn-success" disabled>📊 Export Excel</button>
+          <button className="btn btn-success" disabled>📊 Export Excel</button>
         </div>
       </header>
 
       <Toolbar
         drawMode={drawMode} setDrawMode={setDrawMode}
         pipeType={pipeType} setPipeType={setPipeType}
-        panelOpen={panelOpen || drawMode === 'editParams'}
-        onTogglePanel={() => { if (drawMode !== 'editParams') setPanelOpen(o => !o) }}
+        panelOpen={!pendingSetup && (panelOpen || drawMode === 'editParams')}
+        onTogglePanel={() => {
+          if (drawMode === 'editParams') { setDrawMode('select'); setPanelOpen(true) }
+          else setPanelOpen(o => !o)
+        }}
         errorCount={errorCount}
         onShowErrors={() => { setDrawMode('errors'); setPanelOpen(true) }}
         chaufferie={project.chaufferie}
@@ -694,15 +1113,32 @@ export default function App() {
         placingChaufferie={placingChaufferie}
         placingEquipment={placingEquipment}
         onAddProductionECS={handleAddProductionECS}
+        hasProductionECS={project.points.some(p => p.type === 'productionECS')}
+        onAddArriveeEF={handleAddArriveeEF}
         onAddPump={handleAddPump}
+        canvasDisplay={canvasDisplay}
+        onCanvasDisplayToggle={key => setCanvasDisplay(d => ({ ...d, [key]: !d[key] }))}
+        activeFluidId={activeFluidId}
+        activeCalcId={pendingSetup ? null : activeCalcId}
       />
 
       <div className="app-body">
-        <aside className={`sidebar-left ${(panelOpen || drawMode === 'editParams') ? '' : 'sidebar-closed'}`}>
-          {(panelOpen || drawMode === 'editParams') && (
+        <aside className={`sidebar-left${(pendingSetup && activeCalcId) || (!pendingSetup && (panelOpen || drawMode === 'editParams')) ? '' : ' sidebar-closed'}${pendingSetup ? ' sidebar-no-transition' : ''}`}>
+          {pendingSetup && activeCalcId ? (
+            <NetworkSetupCard
+              fluidLabel={getFluidLabel(activeFluidId)}
+              calcLabel={getCalcLabel(activeCalcId)}
+              onPreview={handlePreviewUpdate}
+              onComplete={handleSetupComplete}
+            />
+          ) : (!pendingSetup && (panelOpen || drawMode === 'editParams')) && (
             <LeftPanel
+              activeCalcId={activeCalcId}
               globalParams={project.globalParams}
               onGlobalParamsChange={v => update('globalParams', v)}
+              alimentationParams={resolveAlimentationParams(project.alimentationParams)}
+              onAlimentationParamsChange={v => update('alimentationParams', v)}
+              activeCalcId={activeCalcId}
               levels={project.levels}
               lineYs={project.lineYs}
               onLevelsChange={v => update('levels', v)}
@@ -731,8 +1167,6 @@ export default function App() {
               drawMode={drawMode}
               editParam={editParam}
               onEditParamChange={setEditParam}
-              canvasDisplay={canvasDisplay}
-              onCanvasDisplayToggle={key => setCanvasDisplay(d => ({ ...d, [key]: !d[key] }))}
               onSelectIds={setSelectedIds}
               onConnHighlight={setConnHighlightIds}
               groupesEditMode={groupesEditMode} onGroupesEditModeChange={setGroupesEditMode}
@@ -742,8 +1176,8 @@ export default function App() {
           )}
         </aside>
 
-        <div className="canvas-col">
-        <main className="canvas-area">
+        <div className="canvas-col" style={{ position: 'relative' }}>
+        <main className="canvas-area" style={(!activeFluidId || (pendingSetup && !activeCalcId)) ? { display: 'none' } : {}}>
           <DrawingCanvas
             levels={project.levels}
             lineYs={project.lineYs}
@@ -753,15 +1187,17 @@ export default function App() {
             points={project.points}
             onPointsChange={v => update('points', typeof v === 'function' ? v(project.points) : v)}
             onNetworkChange={updateNetwork}
+            onNetworkPatch={patchNetwork}
             drawMode={drawMode}
             pipeType={pipeType}
             selectedIds={selectedIds}
-            onSelectIds={setSelectedIds}
+            onSelectIds={handleSelectIds}
             editLevelsEnabled={editLevelsEnabled}
             editColumnsEnabled={editColumnsEnabled}
             columns={project.columns}
             columnXs={project.columnXs}
             onColumnXsChange={handleColumnXsChange}
+            onPPZoneDrag={handlePPZoneDrag}
             chaufferie={project.chaufferie}
             onChaufferieChange={v => update('chaufferie', v)}
             editChaufferie={editChaufferie}
@@ -774,23 +1210,34 @@ export default function App() {
             connHighlightIds={connHighlightIds}
             onConnHighlight={setConnHighlightIds}
             networkFlows={networkFlows}
+            flowDirections={flowDirections}
             groupesEditMode={groupesEditMode}
             showGroupeNames={showGroupeNames}
             canvasDisplay={canvasDisplay}
+            roleMap={effectiveRoleMap}
             materials={project.materials}
             insulations={project.insulations}
+            alimentationParams={resolveAlimentationParams(project.alimentationParams)}
+            activeCalcId={activeCalcId}
+            thermalResults={thermalResults}
             fitViewRequest={fitViewRequest}
+            valves={project.valves ?? []}
+            onValvesChange={v => update('valves', typeof v === 'function' ? v(project.valves ?? []) : v)}
+            selectedValveId={selectedValveId}
+            onSelectedValveChange={id => { setSelectedValveId(id); if (id) setSelectedIds([]) }}
           />
         </main>
 
-        {showResultsTable && (
+        {!pendingSetup && showResultsTable && (
           <div className="rt-resizer" onMouseDown={startTableResize} />
         )}
-        {showResultsTable && (
+        {!pendingSetup && showResultsTable && (
           <ResultsTable
             height={tableHeight}
             rows={flowRows}
             roleMap={roleMap}
+            efFlowRowsArr={efFlowRowsArr}
+            activeCalcId={activeCalcId}
             segments={project.segments}
             points={project.points}
             materials={project.materials}
@@ -803,6 +1250,7 @@ export default function App() {
             flowDirections={flowDirections}
             networkFlows={networkFlows}
             thermalResults={thermalResults}
+            alimentationResults={alimentationResults}
             globalParams={project.globalParams}
             selectedIds={selectedIds}
             onSelectIds={setSelectedIds}
@@ -810,15 +1258,17 @@ export default function App() {
           />
         )}
 
-        <div className="rt-toggle-bar">
-          <button className="rt-toggle-btn" onClick={() => setShowResultsTable(v => !v)}>
-            {showResultsTable ? '▼ Masquer les résultats' : '▲ Afficher les résultats'}
-          </button>
-        </div>
+        {!pendingSetup && activeCalcId && (
+          <div className="rt-toggle-bar">
+            <button className="rt-toggle-btn" onClick={() => setShowResultsTable(v => !v)}>
+              {showResultsTable ? '▼ Masquer les résultats' : '▲ Afficher les résultats'}
+            </button>
+          </div>
+        )}
 
         </div>{/* canvas-col */}
 
-        <aside className={`sidebar-right${selectedIds.length === 0 && !editChaufferie ? ' sidebar-right-closed' : ''}`}>
+        <aside className={`sidebar-right${(pendingSetup || (selectedIds.length === 0 && !editChaufferie && !selectedValveId)) ? ' sidebar-right-closed' : ''}`}>
           <RightPanel
             selectedIds={selectedIds}
             segments={project.segments}
@@ -826,6 +1276,8 @@ export default function App() {
             onUpdate={updateElement}
             materials={project.materials}
             insulations={project.insulations}
+            activeCalcId={activeCalcId}
+            alimentationParams={resolveAlimentationParams(project.alimentationParams)}
             levels={project.levels}
             lineYs={project.lineYs}
             columns={project.columns}
@@ -837,7 +1289,13 @@ export default function App() {
             networkFlows={networkFlows}
             globalParams={project.globalParams}
             thermalResults={thermalResults}
+            alimentationResults={alimentationResults}
             roleMap={roleMap}
+            drawMode={drawMode}
+            onExitEditParams={() => setDrawMode('select')}
+            selectedValveId={selectedValveId}
+            valves={project.valves ?? []}
+            onValveUpdate={handleValveUpdate}
           />
         </aside>
       </div>

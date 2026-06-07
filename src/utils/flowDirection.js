@@ -87,3 +87,59 @@ export function computeFlowDirections(segments, points) {
 
   return result
 }
+
+/**
+ * Calcule le sens d'écoulement pour un réseau Alimentation EF avec plusieurs arrivées.
+ * Multi-source Dijkstra depuis tous les points de type 'arriveeEF'.
+ * Seuls les tronçons 'aller' sont supportés (pas de retour en EF).
+ *
+ * Retourne Map<segId, { fromId, toId } | null>.
+ *   null = tronçon non aller ou non connecté à une arrivée EF.
+ */
+export function computeFlowDirectionsEF(segments, points) {
+  const sources = points.filter(p => p.type === 'arriveeEF')
+  if (!sources.length) return new Map()
+
+  const allerSegs = segments.filter(s => s.type === 'aller')
+  const dist = new Map(sources.map(p => [p.id, 0]))
+  const queue = sources.map(p => [0, p.id])
+
+  while (queue.length > 0) {
+    queue.sort((a, b) => a[0] - b[0])
+    const [d, id] = queue.shift()
+    if (d > (dist.get(id) ?? Infinity)) continue
+
+    for (const seg of allerSegs) {
+      if (seg.startPointId !== id && seg.endPointId !== id) continue
+      const neighborId = seg.startPointId === id ? seg.endPointId : seg.startPointId
+      const newDist = d + getSegmentLength(seg)
+      if (newDist < (dist.get(neighborId) ?? Infinity)) {
+        dist.set(neighborId, newDist)
+        queue.push([newDist, neighborId])
+      }
+    }
+  }
+
+  const result = new Map()
+  for (const seg of segments) {
+    if (seg.type !== 'aller') {
+      result.set(seg.id, null)
+      continue
+    }
+    const dStart = dist.get(seg.startPointId) ?? Infinity
+    const dEnd   = dist.get(seg.endPointId)   ?? Infinity
+
+    if (!isFinite(dStart) && !isFinite(dEnd)) {
+      result.set(seg.id, null)
+      continue
+    }
+
+    if (dStart <= dEnd) {
+      result.set(seg.id, { fromId: seg.startPointId, toId: seg.endPointId })
+    } else {
+      result.set(seg.id, { fromId: seg.endPointId, toId: seg.startPointId })
+    }
+  }
+
+  return result
+}

@@ -40,7 +40,7 @@ export function getNodeLocation(pt, levels, lineYs, columns, columnXs, chaufferi
       const yBot = lineYs[lvlIdx]
       const yTop = yBot - chaufferie.height
       if (pt.x >= chaufferie.x1 && pt.x <= chaufferie.x2 && pt.y >= yTop && pt.y <= yBot) {
-        return `Chaufferie (${levelName || '?'})`
+        return `Local ECS (${levelName || '?'})`
       }
     }
   }

@@ -11,6 +11,13 @@ const ZOOM_F     = 1.08
 const snap = v => Math.round(v / SNAP) * SNAP
 const dist = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
 
+const EQUIP_ABBR = {
+  evier: 'EV', lavabo: 'LB', bidet: 'BD', baignoire: 'BG', douche: 'DU',
+  poste_12: 'R½', poste_34: 'R¾', wc_reservoir: 'WC', wc_robinet: 'WCR',
+  urinoir_ind: 'UR', urinoir_siph: 'US', lave_mains: 'LM', bac_laver: 'BL',
+  machine_linge: 'LL', machine_vaiss: 'LV',
+}
+
 function ortho(last, mouse) {
   return Math.abs(mouse.x - last.x) >= Math.abs(mouse.y - last.y)
     ? { x: snap(mouse.x), y: last.y }
@@ -29,6 +36,84 @@ function ptInRect(pt, r) {
 
 function segInRect(seg, r) {
   return seg.vertices.some(v => ptInRect(v, r))
+}
+
+// Parametric position (t ∈ [0,1]) of the closest point on a polyline to pos.
+// Always returns { t, x, y, angle, dist } — callers decide on the distance threshold.
+function closestTOnPolyline(pos, vertices) {
+  if (!vertices || vertices.length < 2) return null
+  let subLens = [], totalLen = 0
+  for (let i = 0; i < vertices.length - 1; i++) {
+    const l = Math.hypot(vertices[i+1].x - vertices[i].x, vertices[i+1].y - vertices[i].y)
+    subLens.push(l); totalLen += l
+  }
+  if (totalLen === 0) return null
+  let bestT = 0, bestX = vertices[0].x, bestY = vertices[0].y, bestAngle = 0, bestDist = Infinity
+  let acc = 0
+  for (let i = 0; i < vertices.length - 1; i++) {
+    const a = vertices[i], b = vertices[i+1]
+    const dx = b.x - a.x, dy = b.y - a.y
+    const l2 = dx*dx + dy*dy
+    if (!l2) { acc += subLens[i]; continue }
+    const t_sub = Math.max(0, Math.min(1, ((pos.x-a.x)*dx + (pos.y-a.y)*dy) / l2))
+    const px = a.x + t_sub*dx, py = a.y + t_sub*dy
+    const d = Math.hypot(pos.x - px, pos.y - py)
+    if (d < bestDist) {
+      bestDist = d; bestX = px; bestY = py
+      bestT = (acc + t_sub * subLens[i]) / totalLen
+      bestAngle = Math.atan2(dy, dx) * 180 / Math.PI
+    }
+    acc += subLens[i]
+  }
+  return { t: bestT, x: bestX, y: bestY, angle: bestAngle, dist: bestDist }
+}
+
+// Given t ∈ [0,1] on a polyline, return the real x,y,angle.
+function positionFromT(vertices, t) {
+  if (!vertices || vertices.length < 2) return { x: 0, y: 0, angle: 0 }
+  let subLens = [], totalLen = 0
+  for (let i = 0; i < vertices.length - 1; i++) {
+    const l = Math.hypot(vertices[i+1].x - vertices[i].x, vertices[i+1].y - vertices[i].y)
+    subLens.push(l); totalLen += l
+  }
+  if (totalLen === 0) return { x: vertices[0].x, y: vertices[0].y, angle: 0 }
+  const target = Math.max(0, Math.min(1, t)) * totalLen
+  let acc = 0
+  for (let i = 0; i < vertices.length - 1; i++) {
+    const a = vertices[i], b = vertices[i+1]
+    const dx = b.x - a.x, dy = b.y - a.y
+    if (acc + subLens[i] >= target || i === vertices.length - 2) {
+      const localT = subLens[i] > 0 ? Math.min(1, (target - acc) / subLens[i]) : 0
+      return { x: a.x + dx*localT, y: a.y + dy*localT, angle: Math.atan2(dy, dx) * 180 / Math.PI }
+    }
+    acc += subLens[i]
+  }
+  return { x: vertices[vertices.length-1].x, y: vertices[vertices.length-1].y, angle: 0 }
+}
+
+// Auto-name a valve from its canvas position — VE [colName] – [levelName]
+function nameValve(x, y, columns, columnXs, levels, lineYs, existingValves) {
+  let colName = null
+  for (let i = 0; i < (columns ?? []).length; i++) {
+    const xL = (columnXs ?? [])[i], xR = (columnXs ?? [])[i + 1] ?? Infinity
+    if (x >= xL && x < xR && !(columns[i]?.isGap)) { colName = columns[i]?.name ?? `C${i+1}`; break }
+  }
+  if (!colName) colName = '?'
+
+  let levelName = null
+  for (let i = 0; i < (levels ?? []).length; i++) {
+    const yBot = (lineYs ?? [])[i], yTop = (lineYs ?? [])[i + 1]
+    if (yTop !== undefined && y <= yBot && y >= yTop) { levelName = levels[i]?.name ?? `N${i+1}`; break }
+  }
+  if (!levelName) {
+    let ni = 0, nd = Infinity
+    ;(lineYs ?? []).forEach((ly, i) => { const d = Math.abs(ly - y); if (d < nd) { nd = d; ni = i } })
+    levelName = (levels ?? [])[ni]?.name ?? `N${ni+1}`
+  }
+
+  const base = `VE ${colName} – ${levelName}`
+  const count = (existingValves ?? []).filter(v => v.name === base || v.name.startsWith(`${base} (`)).length
+  return count === 0 ? base : `${base} (${count + 1})`
 }
 
 // Nearest point on any polyline segment, within HIT
@@ -627,7 +712,7 @@ function applyFrontierSplits(segs, pts, levels, lineYs) {
 function applySpecialPtSnap(segs, pts) {
   let workSegs = segs, workPts = pts, anyChanged = false
 
-  for (const ecsOrig of pts.filter(p => p.type === 'productionECS')) {
+  for (const ecsOrig of pts.filter(p => p.type === 'productionECS' || p.type === 'arriveeEF')) {
     const ecs = workPts.find(p => p.id === ecsOrig.id)
     if (!ecs) continue
     const w = ecs.size?.w ?? 44, h = ecs.size?.h ?? 28
@@ -638,7 +723,7 @@ function applySpecialPtSnap(segs, pts) {
     while (changed) {
       changed = false
       const inside = workPts.find(p =>
-        p.id !== ecs.id && !p.isLocked && p.type !== 'pump' && p.type !== 'productionECS' && p.type !== 'groupe' &&
+        p.id !== ecs.id && !p.isLocked && p.type !== 'pump' && p.type !== 'productionECS' && p.type !== 'arriveeEF' && p.type !== 'groupe' &&
         Math.abs(p.x - ecs.x) <= hw && Math.abs(p.y - ecs.y) <= hh
       )
       if (inside) {
@@ -699,28 +784,39 @@ export default function DrawingCanvas({
   segments, onSegmentsChange,
   points, onPointsChange,
   onNetworkChange,
+  onNetworkPatch,
   drawMode, pipeType,
   selectedIds, onSelectIds,
   editLevelsEnabled, editColumnsEnabled,
-  columns, columnXs, onColumnXsChange,
+  columns, columnXs, onColumnXsChange, onPPZoneDrag,
   chaufferie, onChaufferieChange, editChaufferie,
   placingEquipment, onPlacingDone,
   placingChaufferie, onPlacingChaufferieDone,
   editParam, onAssignParam,
   connHighlightIds, onConnHighlight,
   networkFlows,
+  flowDirections,
   groupesEditMode,
   showGroupeNames,
   canvasDisplay,
+  roleMap,
   materials,
   insulations,
+  alimentationParams,
+  activeCalcId,
+  thermalResults,
   fitViewRequest,
+  valves,
+  onValvesChange,
+  selectedValveId,
+  onSelectedValveChange,
 }) {
   const svgRef    = useRef(null)
   const spaceRef  = useRef(false)
   const ptDragRef    = useRef(null)   // {ptId, startX, startY, origX, origY, moved, constraint}
   const segDragRef   = useRef(null)   // {segId, dir, startScreenX, startScreenY, origPerp, moved}
   const blockDragRef = useRef(null)   // {startScreenX, startScreenY, moved}
+  const valveDragRef = useRef(null)   // {valveId, segmentId, origT}
 
   const [tf,        setTf]        = useState({ x: 80, y: 40, k: 1 })
 
@@ -753,21 +849,24 @@ export default function DrawingCanvas({
   const [ptDragPos,    setPtDragPos]    = useState(null)  // live drag {ptId,x,y}
   const [segDragState, setSegDragState] = useState(null)  // live drag {segId, delta}
   const [blockDragState, setBlockDragState] = useState(null)  // live drag {dx, dy}
+  const [previewVanne,  setPreviewVanne]  = useState(null)  // { x, y, angle, t, segId }
+  const [valveDragT, setValveDragT] = useState(null)  // { valveId, t } live drag
 
   // ── Clear drawing on mode/type change ────────────────
   useEffect(() => { if (drawMode !== 'draw') setDrawing(null) }, [drawMode])
   useEffect(() => { if (pipeType === 'point') setDrawing(null) }, [pipeType])
 
   // ── Auto-split segments at frontier Ys ───────────────
+  // Uses onNetworkPatch (not onNetworkChange) to avoid polluting the undo stack.
   useEffect(() => {
     const result = applyFrontierSplits(segments, points, levels, lineYs)
-    if (result) onNetworkChange(result.segs, result.pts)
+    if (result) onNetworkPatch(result.segs, result.pts)
   }, [segments, points, levels, lineYs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-connect Production ECS to network ───────────
   useEffect(() => {
     const result = applySpecialPtSnap(segments, points)
-    if (result) onNetworkChange(result.segs, result.pts)
+    if (result) onNetworkPatch(result.segs, result.pts)
   }, [segments, points]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Split segment at position (atomic) ───────────────
@@ -884,7 +983,7 @@ export default function DrawingCanvas({
         if (placingEquipment !== null) { onPlacingDone(); return }
         if (placingChaufferie) { onPlacingChaufferieDone(); return }
         if (drawing) commitDrawing()
-        else onSelectIds([])
+        else { onSelectIds([]); onSelectedValveChange?.(null) }
         return
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
@@ -899,12 +998,27 @@ export default function DrawingCanvas({
         }
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedValveId) {
+          onValvesChange(vs => vs.filter(v => v.id !== selectedValveId))
+          onSelectedValveChange?.(null)
+          return
+        }
         const delPtIds  = selectedIds.filter(id => points.some(p => p.id === id && !p.isLocked && (p.type !== 'groupe' || groupesEditMode)))
         const delSegIds = new Set(selectedIds.filter(id => segments.some(s => s.id === id)))
 
         let newSegs = segments.filter(s => !delSegIds.has(s.id))
         let newPts  = [...points]
         for (const ptId of delPtIds) {
+          const pt = newPts.find(p => p.id === ptId)
+          if (pt?.type === 'productionECS' || pt?.type === 'arriveeEF') {
+            // Keep the node to maintain segment connections — just strip the special type
+            newPts = newPts.map(p => p.id === ptId ? { id: p.id, name: p.name ?? '', x: p.x, y: p.y } : p)
+            continue
+          }
+          if (pt?.type === 'pump') {
+            newPts = newPts.filter(p => p.id !== ptId)
+            continue
+          }
           const result = deleteNodeFromNetwork(ptId, newSegs, newPts)
           if (result) { newSegs = result.newSegs; newPts = result.newPts }
         }
@@ -916,7 +1030,7 @@ export default function DrawingCanvas({
     window.addEventListener('keydown', kd)
     window.addEventListener('keyup',   ku)
     return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku) }
-  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone, groupesEditMode])
+  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone, groupesEditMode, selectedValveId, onSelectedValveChange, onValvesChange])
 
   // ── zoom ─────────────────────────────────────────────
   const onWheel = useCallback(e => {
@@ -942,10 +1056,10 @@ export default function DrawingCanvas({
       const d = dist(p, pos)
       const r = p.type === 'pump'
         ? Math.max(PT_HIT, p.size ?? 15)
-        : p.type === 'productionECS'
+        : p.type === 'productionECS' || p.type === 'arriveeEF'
         ? Math.max(PT_HIT, Math.max((p.size?.w ?? 44) / 2, (p.size?.h ?? 28) / 2))
         : p.type === 'groupe'
-        ? Math.max(PT_HIT, 26)
+        ? Math.max(PT_HIT, 30)
         : PT_HIT
       if (d < r && d < bestD) { bestD = d; best = p }
     }
@@ -975,15 +1089,20 @@ export default function DrawingCanvas({
       return
     }
     if (dragCol !== null) {
-      const newX = dragCol.origX + (e.clientX - dragCol.screenX) / tf.k
-      onColumnXsChange(xs => {
-        const next = [...xs]
-        const MIN_GAP = 80
-        const maxX = dragCol.idx < xs.length - 1 ? xs[dragCol.idx + 1] - MIN_GAP : Infinity
-        const minX = dragCol.idx > 0             ? xs[dragCol.idx - 1] + MIN_GAP : -Infinity
-        next[dragCol.idx] = Math.max(minX, Math.min(maxX, newX))
-        return next
-      })
+      const delta = (e.clientX - dragCol.screenX) / tf.k
+      if (dragCol.isPPZone) {
+        onPPZoneDrag?.(dragCol.ppZoneId, dragCol.ppWidth, dragCol.origX + delta)
+      } else {
+        const newX = dragCol.origX + delta
+        onColumnXsChange(xs => {
+          const next = [...xs]
+          const MIN_GAP = 80
+          const maxX = dragCol.idx < xs.length - 1 ? xs[dragCol.idx + 1] - MIN_GAP : Infinity
+          const minX = dragCol.idx > 0             ? xs[dragCol.idx - 1] + MIN_GAP : -Infinity
+          next[dragCol.idx] = Math.max(minX, Math.min(maxX, newX))
+          return next
+        })
+      }
       return
     }
     if (dragCh !== null && chaufferie) {
@@ -1109,8 +1228,32 @@ export default function DrawingCanvas({
       if (blockDragRef.current.moved) setBlockDragState({ dx, dy })
       return
     }
+    if (valveDragRef.current) {
+      let best = null, bestDist = Infinity
+      for (const seg of segments) {
+        const r = closestTOnPolyline(pos, seg.vertices)
+        if (r && r.dist < bestDist) { bestDist = r.dist; best = { ...r, segId: seg.id } }
+      }
+      if (best) {
+        valveDragRef.current.moved = true
+        setValveDragT({ valveId: valveDragRef.current.valveId, t: best.t, segmentId: best.segId })
+      }
+      return
+    }
     if (rectSt) setSelRect({ x1: rectSt.x, y1: rectSt.y, x2: pos.x, y2: pos.y })
-  }, [tf, panSt, dragLine, dragCol, dragCh, rectSt, onLineYsChange, onColumnXsChange, chaufferie, onChaufferieChange, levels, lineYs])
+
+    // Valve placement preview
+    if (drawMode === 'draw' && pipeType === 'vanne') {
+      let best = null, bestDist = Infinity
+      for (const seg of segments) {
+        const r = closestTOnPolyline(pos, seg.vertices)
+        if (r && r.dist < bestDist) { bestDist = r.dist; best = { ...r, segId: seg.id } }
+      }
+      setPreviewVanne(bestDist < 40 ? best : null)
+    } else if (previewVanne) {
+      setPreviewVanne(null)
+    }
+  }, [tf, panSt, dragLine, dragCol, dragCh, rectSt, onLineYsChange, onColumnXsChange, onPPZoneDrag, chaufferie, onChaufferieChange, levels, lineYs, drawMode, pipeType, segments, previewVanne])
 
   // ── mouse down ───────────────────────────────────────
   const onMouseDown = useCallback(e => {
@@ -1131,6 +1274,23 @@ export default function DrawingCanvas({
     // ── Equipment placement mode ──
     if (placingEquipment !== null) {
       const snapped = { x: snap(pos.x), y: snap(pos.y) }
+
+      // productionECS : si un nœud existant est à portée, le convertir directement
+      // (évite les doublons après suppression d'une productionECS)
+      if (placingEquipment.type === 'productionECS') {
+        const existingPt = points.find(p => dist(p, snapped) < PT_HIT)
+        if (existingPt) {
+          onNetworkChange(
+            s => s,
+            p => p.map(x => x.id === existingPt.id
+              ? { ...x, type: 'productionECS', name: placingEquipment.name ?? x.name, size: placingEquipment.size ?? x.size }
+              : x)
+          )
+          onPlacingDone()
+          return
+        }
+      }
+
       const onSeg = nearestOnSegments(snapped, hitSegs)
       const sp = (onSeg && onSeg.d < HIT) ? onSeg.pt : snapped
       const newPt = {
@@ -1174,6 +1334,20 @@ export default function DrawingCanvas({
       const newX1 = snap(pos.x - w / 2)
       onChaufferieChange({ ...chaufferie, placed: true, enabled: true, levelId: levels[li]?.id ?? chaufferie.levelId, x1: newX1, x2: newX1 + w })
       onPlacingChaufferieDone()
+      return
+    }
+
+    // ── Valve placement mode ──
+    if (drawMode === 'draw' && pipeType === 'vanne') {
+      let best = null, bestDist = Infinity
+      for (const seg of segments) {
+        const r = closestTOnPolyline(pos, seg.vertices)
+        if (r && r.dist < bestDist) { bestDist = r.dist; best = { ...r, segId: seg.id } }
+      }
+      if (best && bestDist < 18) {
+        const name = nameValve(best.x, best.y, columns, columnXs, levels, lineYs, valves ?? [])
+        onValvesChange(vs => [...vs, { id: uid('vv'), segmentId: best.segId, t: best.t, name }])
+      }
       return
     }
 
@@ -1231,6 +1405,20 @@ export default function DrawingCanvas({
       return
     }
 
+    // ── Valve click/drag (select mode) ──
+    if (!editParam && drawMode === 'select') {
+      for (const valve of (valves ?? [])) {
+        const seg = segments.find(s => s.id === valve.segmentId)
+        if (!seg) continue
+        const vpos = positionFromT(seg.vertices, valve.t)
+        if (Math.hypot(pos.x - vpos.x, pos.y - vpos.y) < 12) {
+          onSelectedValveChange(valve.id)
+          valveDragRef.current = { valveId: valve.id, segmentId: valve.segmentId, origT: valve.t, moved: false }
+          return
+        }
+      }
+    }
+
     // ── Attribution mode: segment assignment handled by onClick, block all other interactions ──
     if (editParam) return
 
@@ -1252,6 +1440,7 @@ export default function DrawingCanvas({
 
     const np = nearPt(pos)
     if (np) {
+      onSelectedValveChange(null)
       onSelectIds(ids => e.shiftKey
         ? ids.includes(np.id) ? ids.filter(i => i !== np.id) : [...ids, np.id]
         : [np.id])
@@ -1270,6 +1459,7 @@ export default function DrawingCanvas({
     }
     const nsInfo = nearestOnSegments(pos, hitSegs)
     if (nsInfo) {
+      onSelectedValveChange?.(null)
       const ns = nsInfo.seg
       const { subIdx } = nsInfo
       onSelectIds(ids => e.shiftKey
@@ -1284,13 +1474,15 @@ export default function DrawingCanvas({
     }
 
     // Empty space → rectangle de sélection (glisser) ou désélection (clic)
+    onSelectedValveChange?.(null)
     setRectSt(pos)
     setSelRect({ x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y })
   }, [tf, lineYs, drawMode, drawing, pipeType, nearPt,
       finalize, splitSegment, resolveSnap, deletePoint,
       segments, points, selectedIds, onNetworkChange, onSelectIds,
       placingEquipment, onPlacingDone,
-      placingChaufferie, onPlacingChaufferieDone, levels, chaufferie, onChaufferieChange,
+      placingChaufferie, onPlacingChaufferieDone, levels, lineYs, chaufferie, onChaufferieChange,
+      columns, columnXs, valves, onValvesChange, selectedValveId, onSelectedValveChange,
       connHighlightIds, onConnHighlight, groupesEditMode])
 
   // ── mouse up ──────────────────────────────────────────
@@ -1299,6 +1491,19 @@ export default function DrawingCanvas({
     setDragLine(null)
     setDragCol(null)
     setDragCh(null)
+
+    // Commit valve drag
+    if (valveDragRef.current) {
+      const { valveId, moved } = valveDragRef.current
+      if (moved && valveDragT?.valveId === valveId) {
+        onValvesChange(vs => vs.map(v => v.id === valveId
+          ? { ...v, t: valveDragT.t, segmentId: valveDragT.segmentId ?? v.segmentId }
+          : v))
+      }
+      valveDragRef.current = null
+      setValveDragT(null)
+      return
+    }
 
     // Commit point drag
     if (ptDragRef.current && ptDragRef.current.moved && ptDragPos) {
@@ -1404,7 +1609,7 @@ export default function DrawingCanvas({
       }
       setRectSt(null); setSelRect(null)
     }
-  }, [rectSt, selRect, segments, points, selectedIds, onSelectIds, ptDragPos, segDragState, blockDragState, onNetworkChange, lineYs, groupesEditMode])
+  }, [rectSt, selRect, segments, points, selectedIds, onSelectIds, ptDragPos, segDragState, blockDragState, onNetworkChange, lineYs, groupesEditMode, onValvesChange, valveDragT])
 
   // ── double-click → end segment ────────────────────────
   const onDblClick = useCallback(e => {
@@ -1544,13 +1749,26 @@ export default function DrawingCanvas({
             yBot = lineYs[Math.min(...idxs)]
             yTop = lineYs[Math.max(...idxs) + 1]
           }
+          // PP zone gap column: render its left separator border
+          if (col.isPPZone) {
+            const hasGroupe = (points ?? []).some(p => p.type === 'groupe' && p.colId === col.colId)
+            if (!hasGroupe) return <g key={col.id} />
+            return (
+              <g key={col.id} style={{ pointerEvents: 'none' }}>
+                <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
+              </g>
+            )
+          }
           if (col.isGap) return <g key={col.id} />
-          const pipeRight = Math.min(x1 + 320, x2)
+          // Regular pipe column: left border + name; also draw right border if next col won't
+          const nextCol = (columns ?? [])[i + 1]
+          // Draw right border only if next entity won't draw its own left border (i.e. regular gap or no next col)
+          const drawRightBorder = !nextCol || (nextCol.isGap && !nextCol.isPPZone)
           return (
             <g key={col.id} style={{ pointerEvents: 'none' }}>
               <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
-              <line x1={pipeRight} y1={yTop} x2={pipeRight} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
-              <text x={(x1 + pipeRight) / 2} y={yTop + 16} fontSize={12} fill="#b8c0cc" fontWeight="600"
+              {drawRightBorder && <line x1={x2} y1={yTop} x2={x2} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />}
+              <text x={(x1 + x2) / 2} y={yTop + 16} fontSize={12} fill="#b8c0cc" fontWeight="600"
                 textAnchor="middle" style={{ userSelect: 'none' }}>
                 {col.name}
               </text>
@@ -1558,32 +1776,44 @@ export default function DrawingCanvas({
           )
         })}
 
-        {editColumnsEnabled && (columnXs ?? []).map((x, i) => (
-          <rect key={`cdrag${i}`}
-            x={x - 5} y={lineYs[lineYs.length - 1]}
-            width={10} height={Math.max(0, lineYs[0] - lineYs[lineYs.length - 1])}
-            fill="transparent" style={{ cursor: 'ew-resize' }}
-            onMouseDown={ev => {
-              ev.stopPropagation()
-              setDragCol({ idx: i, screenX: ev.clientX, origX: x })
-            }} />
-        ))}
-        {editColumnsEnabled && (columns ?? []).map((col, i) => {
-          const x1 = (columnXs ?? [])[i], x2 = (columnXs ?? [])[i + 1]
-          if (x1 === undefined || x2 === undefined) return null
-          const pipeRight = Math.min(x1 + 320, x2)
-          const sepWidth = x2 - pipeRight
-          if (sepWidth <= 4) return null
+        {/* Regular column boundary drag handles — skip PP zone boundaries */}
+        {editColumnsEnabled && (columnXs ?? []).map((x, i) => {
+          const colAtIdx  = (columns ?? [])[i]
+          const colBefore = (columns ?? [])[i - 1]
+          if (colAtIdx?.isPPZone || colBefore?.isPPZone) return null
           return (
-            <rect key={`sepdrag${i}`}
-              x={pipeRight - 5} y={lineYs[lineYs.length - 1]}
+            <rect key={`cdrag${i}`}
+              x={x - 5} y={lineYs[lineYs.length - 1]}
               width={10} height={Math.max(0, lineYs[0] - lineYs[lineYs.length - 1])}
-              fill="rgba(203,213,225,0.15)" style={{ cursor: 'ew-resize' }}
-              onMouseDown={ev => { ev.stopPropagation(); setDragCol({ idx: i + 1, screenX: ev.clientX, origX: (columnXs ?? [])[i + 1] }) }} />
+              fill="transparent" style={{ cursor: 'ew-resize' }}
+              onMouseDown={ev => {
+                ev.stopPropagation()
+                setDragCol({ idx: i, screenX: ev.clientX, origX: x, isPPZone: false })
+              }} />
           )
         })}
 
-        {/* Chaufferie */}
+        {/* PP zone slide handles — both left and right borders slide the whole PP zone */}
+        {editColumnsEnabled && (columns ?? []).map((col, i) => {
+          if (!col.isPPZone) return null
+          const x1 = (columnXs ?? [])[i], x2 = (columnXs ?? [])[i + 1]
+          if (x1 === undefined || x2 === undefined) return null
+          const ppWidth = x2 - x1
+          const h = Math.max(0, lineYs[0] - lineYs[lineYs.length - 1])
+          const yBase = lineYs[lineYs.length - 1]
+          const startDrag = ev => {
+            ev.stopPropagation()
+            setDragCol({ idx: i, screenX: ev.clientX, origX: x1, isPPZone: true, ppZoneId: col.id, ppWidth })
+          }
+          return (
+            <g key={`ppdrag${col.id}`}>
+              <rect x={x1 - 5} y={yBase} width={10} height={h} fill="transparent" style={{ cursor: 'ew-resize' }} onMouseDown={startDrag} />
+              <rect x={x2 - 5} y={yBase} width={10} height={h} fill="transparent" style={{ cursor: 'ew-resize' }} onMouseDown={startDrag} />
+            </g>
+          )
+        })}
+
+        {/* Chaufferie / Local EF */}
         {chaufferie?.enabled && (() => {
           const levelIdx = levels.findIndex(l => l.id === chaufferie.levelId)
           if (levelIdx < 0 || levelIdx >= lineYs.length) return null
@@ -1591,14 +1821,18 @@ export default function DrawingCanvas({
           const yTop = yBot - chaufferie.height
           const { x1, x2 } = chaufferie
           const H = 6
+          const isEFLocal = activeCalcId === 'alimentation-ef'
+          const localStroke = isEFLocal ? '#3b82f6' : '#818cf8'
+          const localFill   = isEFLocal ? 'rgba(219,234,254,0.5)' : 'rgba(238,242,255,0.5)'
+          const localLabel  = isEFLocal ? 'Local EF' : 'Local ECS'
           return (
             <g key="chaufferie">
               <rect x={x1} y={yTop} width={x2 - x1} height={chaufferie.height}
-                fill="rgba(238,242,255,0.5)" stroke="#818cf8" strokeWidth={1.5}
+                fill={localFill} stroke={localStroke} strokeWidth={1.5}
                 style={{ pointerEvents: 'none' }} />
               <text x={(x1 + x2) / 2} y={yTop + 13}
-                fontSize={10} fill="#818cf8" fontWeight="600" textAnchor="middle"
-                style={{ userSelect: 'none', pointerEvents: 'none' }}>Chaufferie</text>
+                fontSize={10} fill={localStroke} fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none', pointerEvents: 'none' }}>{localLabel}</text>
               {editChaufferie && (
                 <>
                   <rect x={x1 + H} y={yTop + H} width={x2 - x1 - H * 2} height={chaufferie.height - H * 2}
@@ -1649,8 +1883,9 @@ export default function DrawingCanvas({
         {/* Segments */}
         {visRenderSegs.map(seg => {
           const sel  = selectedIds.includes(seg.id)
-          const col  = seg.type === 'retour' ? '#f97316' : '#dc2626'
-          const dash = seg.type === 'retour' ? '10,6' : 'none'
+          const isEF = activeCalcId === 'alimentation-ef'
+          const col  = isEF ? '#2563eb' : (seg.type === 'retour' ? '#f97316' : '#dc2626')
+          const dash = (!isEF && seg.type === 'retour') ? '10,6' : 'none'
           const path = seg.vertices.map((v, i) => `${i ? 'L' : 'M'}${v.x},${v.y}`).join(' ')
 
           // Edit-params coloring
@@ -1809,26 +2044,47 @@ export default function DrawingCanvas({
                 )
               })()}
               {(() => {
+                // lines: [{text, red?}]
                 const lines = []
-                if (canvasDisplay?.material && seg.dn) {
-                  const mat = materials?.find(m => m.id === seg.materialId)
-                  lines.push(mat ? `${mat.name} ${seg.dn}` : seg.dn)
+                if (canvasDisplay?.nomTroncon) {
+                  const name = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, roleMap?.get(seg.id))
+                  if (name) lines.push({ text: name })
                 }
                 if (canvasDisplay?.length && seg.length_override != null) {
-                  lines.push(`${seg.length_override} m`)
+                  lines.push({ text: `${seg.length_override} m` })
                 }
-                if (canvasDisplay?.flowVelocity) {
-                  const flow = networkFlows?.get(seg.id)
-                  if (flow) {
-                    if (flow.flowRate != null) lines.push(`${flow.flowRate.toFixed(3)} m³/h`)
-                    if (flow.velocity != null) lines.push(`${flow.velocity.toFixed(2)} m/s`)
+                if (canvasDisplay?.material || canvasDisplay?.dn) {
+                  const mat = materials?.find(m => m.id === seg.materialId)
+                  if (canvasDisplay?.material && canvasDisplay?.dn && seg.dn) {
+                    lines.push({ text: mat ? `${mat.name} DN${seg.dn}` : `DN${seg.dn}` })
+                  } else if (canvasDisplay?.material && mat) {
+                    lines.push({ text: mat.name })
+                  } else if (canvasDisplay?.dn && seg.dn) {
+                    lines.push({ text: `DN${seg.dn}` })
                   }
                 }
                 if (canvasDisplay?.insulation && seg.insulationId) {
                   const ins = insulations?.find(i => i.id === seg.insulationId)
-                  if (ins) {
-                    lines.push(seg.thickness != null ? `${ins.name} ${seg.thickness}mm` : ins.name)
+                  if (ins) lines.push({ text: seg.thickness != null ? `${ins.name} ${seg.thickness}mm` : ins.name })
+                }
+                if (canvasDisplay?.debit) {
+                  const flow = networkFlows?.get(seg.id)
+                  if (flow?.flowRate != null) lines.push({ text: `${flow.flowRate.toFixed(3)} m³/h` })
+                }
+                if (canvasDisplay?.vitesse) {
+                  const flow = networkFlows?.get(seg.id)
+                  if (flow?.velocity != null) {
+                    const v = flow.velocity
+                    const segRole = roleMap?.get(seg.id)
+                    const vMax = segRole === 'collecteur-retour' ? 1.0 : 0.5
+                    const isRedMin    = seg.type === 'retour' && v < 0.2
+                    const isOrangeMax = seg.type === 'retour' && v > vMax
+                    lines.push({ text: `${v.toFixed(2)} m/s`, red: isRedMin, orange: isOrangeMax && !isRedMin })
                   }
+                }
+                if (canvasDisplay?.deltaT) {
+                  const sr = thermalResults?.segResults?.get(seg.id)
+                  if (sr?.deltaT != null) lines.push({ text: `ΔT ${sr.deltaT.toFixed(2)} °C` })
                 }
                 if (!lines.length) return null
                 const vs = seg.vertices
@@ -1848,7 +2104,7 @@ export default function DrawingCanvas({
                   cumLen += sl
                 }
                 const CW = 5.1, LH = 10, PAD = 3
-                const bgW = Math.max(...lines.map(l => l.length)) * CW + PAD * 2
+                const bgW = Math.max(...lines.map(l => l.text.length)) * CW + PAD * 2
                 const bgH = lines.length * LH + PAD * 2
                 const OFF = 8
                 const bx = edgeDir === 'h' ? mid.x - bgW / 2 : mid.x + OFF - 1
@@ -1859,7 +2115,9 @@ export default function DrawingCanvas({
                       fill="rgba(255,255,255,0.9)" stroke={col} strokeWidth={0.4} rx={2} />
                     {lines.map((line, i) => (
                       <text key={i} x={bx + PAD} y={by + PAD + (i + 1) * LH - 1}
-                        fontSize={8.5} fill={col} fontWeight="600">{line}</text>
+                        fontSize={8.5}
+                        fill={line.red ? '#dc2626' : line.orange ? '#f97316' : col}
+                        fontWeight="600">{line.text}</text>
                     ))}
                   </g>
                 )
@@ -1891,10 +2149,112 @@ export default function DrawingCanvas({
           )
         })}
 
+        {/* Vannes d'équilibrage */}
+        {(valves ?? []).map(valve => {
+          const liveDrag = valveDragT?.valveId === valve.id
+          const liveSeg = liveDrag && valveDragT.segmentId
+            ? visRenderSegs.find(s => s.id === valveDragT.segmentId)
+            : visRenderSegs.find(s => s.id === valve.segmentId)
+          if (!liveSeg) return null
+          const liveT = liveDrag ? valveDragT.t : valve.t
+          const { x, y, angle } = positionFromT(liveSeg.vertices, liveT)
+          const sel = selectedValveId === valve.id
+          const S = 6
+          const color = sel ? '#2563eb' : '#1e3a5f'
+          // T always points world-up on horizontal segs, world-right on vertical segs
+          const ar = angle * Math.PI / 180
+          const isHoriz = Math.abs(Math.cos(ar)) >= Math.abs(Math.sin(ar))
+          const tDir = isHoriz
+            ? (Math.cos(ar) >= 0 ? -1 : 1)
+            : (Math.sin(ar) >= 0 ? -1 : 1)
+          const TH = S + 1  // T stem length
+          return (
+            <g key={valve.id}
+              transform={`translate(${x},${y}) rotate(${angle})`}
+              style={{ cursor: liveDrag ? 'grabbing' : 'grab' }}>
+              <circle r={14} fill="transparent" />
+              <polygon points={`${-S},${-S*0.85} ${-S},${S*0.85} 0,0`}
+                fill={color} style={{ pointerEvents: 'none' }} />
+              <polygon points={`${S},${-S*0.85} ${S},${S*0.85} 0,0`}
+                fill={color} style={{ pointerEvents: 'none' }} />
+              {/* T mark — always points world-up (horiz) or world-right (vert) */}
+              <line x1="0" y1="0" x2="0" y2={tDir * TH}
+                stroke={color} strokeWidth="1.5" strokeLinecap="round" style={{ pointerEvents: 'none' }} />
+              <line x1={-(S * 0.6)} y1={tDir * TH} x2={S * 0.6} y2={tDir * TH}
+                stroke={color} strokeWidth="1.5" strokeLinecap="round" style={{ pointerEvents: 'none' }} />
+              {sel && (
+                <circle r={9} fill="none" stroke="#2563eb" strokeWidth={1.5}
+                  style={{ pointerEvents: 'none' }} />
+              )}
+            </g>
+          )
+        })}
+
+        {/* Prévisualisation vanne */}
+        {previewVanne && (
+          <g transform={`translate(${previewVanne.x},${previewVanne.y}) rotate(${previewVanne.angle})`}
+            style={{ pointerEvents: 'none', opacity: 0.5 }}>
+            {(() => {
+              const S = 6, TH = S + 1
+              const ar = previewVanne.angle * Math.PI / 180
+              const isHoriz = Math.abs(Math.cos(ar)) >= Math.abs(Math.sin(ar))
+              const tDir = isHoriz ? (Math.cos(ar) >= 0 ? -1 : 1) : (Math.sin(ar) >= 0 ? -1 : 1)
+              return (
+                <>
+                  <polygon points={`${-S},${-S*0.85} ${-S},${S*0.85} 0,0`} fill="#4f46e5" />
+                  <polygon points={`${S},${-S*0.85} ${S},${S*0.85} 0,0`} fill="#4f46e5" />
+                  <line x1="0" y1="0" x2="0" y2={tDir * TH}
+                    stroke="#4f46e5" strokeWidth="1.5" strokeLinecap="round" />
+                  <line x1={-(S * 0.6)} y1={tDir * TH} x2={S * 0.6} y2={tDir * TH}
+                    stroke="#4f46e5" strokeWidth="1.5" strokeLinecap="round" />
+                </>
+              )
+            })()}
+          </g>
+        )}
+
         {/* Nœuds */}
         {visRenderPts.map(pt => {
           const sel     = selectedIds.includes(pt.id)
           const dragged = ptDragPos?.ptId === pt.id
+
+          // Temperature helpers
+          const resolveNodeTemp = (ptId) => {
+            if (!canvasDisplay?.temperatureNoeud) return null
+            const mix = thermalResults?.nodeTemps?.get(ptId)
+            if (mix != null) return mix
+            if (!flowDirections) return null
+            for (const [sid, dir] of flowDirections) {
+              if (dir.toId === ptId) {
+                const T = thermalResults?.segResults?.get(sid)?.T_to
+                if (T != null) return T
+              }
+            }
+            for (const [sid, dir] of flowDirections) {
+              if (dir.fromId === ptId) {
+                const T = thermalResults?.segResults?.get(sid)?.T_from
+                if (T != null) return T
+              }
+            }
+            return null
+          }
+
+          const TempBadge = ({ x, y, T }) => {
+            if (T == null) return null
+            const red = T < 50
+            const lbl = `${T.toFixed(1)}°C`
+            const W = lbl.length * 5 + 4
+            return (
+              <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                <rect x={x} y={y - 6} width={W} height={11}
+                  fill={red ? '#fef2f2' : 'rgba(255,255,255,0.92)'}
+                  stroke={red ? '#dc2626' : '#6b7280'} strokeWidth={0.4} rx={2} />
+                <text x={x + 2} y={y + 3.5}
+                  fontSize={7.5} fill={red ? '#dc2626' : '#374151'} fontWeight="600">{lbl}</text>
+              </g>
+            )
+          }
+
           if (pt.isLocked) {
             const lockedClick = ev => {
               ev.stopPropagation()
@@ -1902,6 +2262,7 @@ export default function DrawingCanvas({
                 ? ids.includes(pt.id) ? ids.filter(i => i !== pt.id) : [...ids, pt.id]
                 : [pt.id])
             }
+            const lockedTemp = resolveNodeTemp(pt.id)
             return (
               <g key={pt.id} onClick={lockedClick} style={{ cursor: 'pointer' }}>
                 <circle cx={pt.x} cy={pt.y} r={10} fill="transparent" />
@@ -1911,6 +2272,7 @@ export default function DrawingCanvas({
                   stroke={sel ? '#f59e0b' : '#94a3b8'}
                   strokeWidth={1.5}
                   style={{ pointerEvents: 'none' }} />
+                <TempBadge x={pt.x + 8} y={pt.y} T={lockedTemp} />
               </g>
             )
           }
@@ -1922,6 +2284,7 @@ export default function DrawingCanvas({
           }
           if (pt.type === 'pump') {
             const r = pt.size ?? 15, ts = r / 15
+            const pumpTemp = resolveNodeTemp(pt.id)
             return (
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
                 <circle cx={pt.x} cy={pt.y} r={r + 4} fill="transparent" />
@@ -1929,33 +2292,108 @@ export default function DrawingCanvas({
                   <circle r={r} fill={sel || dragged ? '#dbeafe' : 'rgba(238,242,255,0.97)'} stroke={sel || dragged ? '#2563eb' : '#4f46e5'} strokeWidth={1.5} />
                   <polygon points={`${-6*ts},${-7*ts} ${-6*ts},${7*ts} ${8*ts},0`} fill={sel || dragged ? '#2563eb' : '#4f46e5'} />
                 </g>
+                <TempBadge x={pt.x + r + 2} y={pt.y} T={pumpTemp} />
               </g>
             )
           }
           if (pt.type === 'groupe') {
-            const w = 50, h = 26
-            const col = sel || dragged ? '#2563eb' : '#4b5563'
-            const bg  = sel || dragged ? '#dbeafe' : '#f3f4f6'
+            const w = 60
+            const col = sel || dragged ? '#2563eb' : '#0369a1'
+            const bg  = sel || dragged ? '#dbeafe' : '#f0f9ff'
+            const showName = pt.name
+            const label = showName ? pt.name : 'PP'
+            const labelCol = sel || dragged ? '#2563eb' : showName ? '#0c4a6e' : '#7dd3fc'
+            const equipLines = []
+            if (canvasDisplay?.equipment && pt.equipements) {
+              const items = (alimentationParams?.appareils ?? [])
+                .filter(a => (pt.equipements[a.id] ?? 0) > 0)
+                .map(a => `${EQUIP_ABBR[a.id] ?? a.id}×${pt.equipements[a.id]}`)
+              if (items.length > 0) {
+                const CHAR_W = 3.9, SEP = ' · ', SEP_W = SEP.length * CHAR_W
+                const maxW = w - 8
+                let cur = [], curW = 0
+                for (const item of items) {
+                  const iw = item.length * CHAR_W
+                  const addW = cur.length > 0 ? SEP_W + iw : iw
+                  if (cur.length > 0 && curW + addW > maxW) {
+                    equipLines.push(cur.join(SEP))
+                    cur = [item]; curW = iw
+                  } else {
+                    cur.push(item); curW += addW
+                  }
+                }
+                if (cur.length > 0) equipLines.push(cur.join(SEP))
+              }
+            }
+            const hasEquip = equipLines.length > 0
+            // h: fixed 30 when no equip; expands to fit name + equip lines when shown
+            const h = hasEquip ? Math.max(30, 20 + equipLines.length * 9) : 30
+            const nameFontSize = hasEquip ? 7 : 9
+            // Center the [name + equip] block vertically inside the rect
+            const contentH = hasEquip ? 8 + 2 + equipLines.length * 9 : 0
+            const contentTop = hasEquip ? pt.y - h / 2 + (h - contentH) / 2 : pt.y
+            const equipStartY = contentTop + 10
             return (
-              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={ev => { ev.stopPropagation(); selClick(ev) }}>
                 <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
                 <g style={{ pointerEvents: 'none' }}>
                   <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
                     fill={bg} stroke={col} strokeWidth={1.2} rx={3} />
-                  {(showGroupeNames || pt.showName) && pt.name && (
-                    <text x={pt.x} y={pt.y + 1} fontSize={8} fill={col} fontWeight="600"
-                      textAnchor="middle" dominantBaseline="central" style={{ userSelect: 'none' }}>
-                      {pt.name}
+                  <text x={pt.x} y={hasEquip ? contentTop : pt.y}
+                    fontSize={nameFontSize} fill={labelCol}
+                    fontWeight={showName ? '600' : '700'}
+                    textAnchor="middle"
+                    dominantBaseline={hasEquip ? 'hanging' : 'central'}
+                    style={{ userSelect: 'none' }}>
+                    {label}
+                  </text>
+                  {equipLines.map((line, i) => (
+                    <text key={i} x={pt.x} y={equipStartY + i * 9}
+                      fontSize={6.5} fill={sel || dragged ? '#1d4ed8' : '#0369a1'}
+                      fontWeight="600" textAnchor="middle" dominantBaseline="hanging"
+                      style={{ userSelect: 'none' }}>
+                      {line}
                     </text>
-                  )}
+                  ))}
                 </g>
               </g>
             )
           }
+          if (pt.type === 'arriveeEF') {
+            const w = pt.size?.w ?? 44, h = pt.size?.h ?? 28
+            const fs = Math.max(6, Math.min(9, h * 0.28))
+            const col = sel || dragged ? '#1d4ed8' : '#2563eb'
+            const bg  = sel || dragged ? '#bfdbfe' : '#dbeafe'
+            return (
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+                <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
+                <g style={{ pointerEvents: 'none' }}>
+                  <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h} fill={bg} stroke={col} strokeWidth={1.5} rx={3} />
+                  <text x={pt.x} y={pt.y - h * 0.15} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Arrivée</text>
+                  <text x={pt.x} y={pt.y + h * 0.28} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>EF</text>
+                </g>
+              </g>
+            )
+          }
+
           if (pt.type === 'productionECS') {
             const w = pt.size?.w ?? 44, h = pt.size?.h ?? 28
             const fs = Math.max(6, Math.min(9, h * 0.28))
             const col = sel || dragged ? '#2563eb' : '#4f46e5'
+
+            // Départ = T_from du tronçon aller sortant, Retour = T_to du tronçon retour entrant
+            let T_dep = null, T_ret = null
+            if (canvasDisplay?.temperatureNoeud && flowDirections) {
+              for (const [sid, dir] of flowDirections) {
+                const seg = renderSegs.find(s => s.id === sid)
+                if (!seg) continue
+                if (dir.fromId === pt.id && seg.type === 'aller' && T_dep == null)
+                  T_dep = thermalResults?.segResults?.get(sid)?.T_from ?? null
+                if (dir.toId === pt.id && seg.type === 'retour' && T_ret == null)
+                  T_ret = thermalResults?.segResults?.get(sid)?.T_to ?? null
+              }
+            }
+
             return (
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
                 <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
@@ -1964,17 +2402,75 @@ export default function DrawingCanvas({
                   <text x={pt.x} y={pt.y - h * 0.15} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Production</text>
                   <text x={pt.x} y={pt.y + h * 0.28} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>ECS</text>
                 </g>
+                {(T_dep != null || T_ret != null) && (() => {
+                  const items = [
+                    T_dep != null && { label: 'Dép.', T: T_dep },
+                    T_ret != null && { label: 'Ret.', T: T_ret },
+                  ].filter(Boolean)
+                  const LH = 12, PAD = 3
+                  const maxW = Math.max(...items.map(it => (`${it.label} ${it.T.toFixed(1)}°C`).length)) * 5 + PAD * 2
+                  const totalH = items.length * LH + PAD * 2
+                  const bx = pt.x + w / 2 + 4
+                  const by = pt.y - totalH / 2
+                  return (
+                    <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                      <rect x={bx} y={by} width={maxW} height={totalH}
+                        fill="rgba(255,255,255,0.92)" stroke="#6b7280" strokeWidth={0.4} rx={2} />
+                      {items.map(({ label, T }, i) => (
+                        <text key={i} x={bx + PAD} y={by + PAD + (i + 1) * LH - 2}
+                          fontSize={7.5} fill={T < 50 ? '#dc2626' : '#374151'} fontWeight="600">
+                          {label} {T.toFixed(1)}°C
+                        </text>
+                      ))}
+                    </g>
+                  )
+                })()}
               </g>
             )
           }
+
+          // Regular node — handle junction incoming temps
+          const incomingTemps = (() => {
+            if (!canvasDisplay?.temperatureNoeud || !flowDirections) return []
+            const res = []
+            for (const [sid, dir] of flowDirections) {
+              if (dir.toId !== pt.id) continue
+              const T = thermalResults?.segResults?.get(sid)?.T_to
+              if (T == null) continue
+              const seg = renderSegs.find(s => s.id === sid)
+              if (!seg) continue
+              const vs = seg.vertices
+              if (vs.length < 2) continue
+              // direction away from junction along segment
+              let dx, dy
+              if (seg.endPointId === pt.id) {
+                dx = vs[vs.length - 2].x - vs[vs.length - 1].x
+                dy = vs[vs.length - 2].y - vs[vs.length - 1].y
+              } else {
+                dx = vs[1].x - vs[0].x
+                dy = vs[1].y - vs[0].y
+              }
+              const len = Math.hypot(dx, dy) || 1
+              res.push({ T, dx: dx / len, dy: dy / len })
+            }
+            return res
+          })()
+
+          const isJunction = incomingTemps.length > 1
+          const singleTemp = incomingTemps.length === 1
+            ? incomingTemps[0].T
+            : resolveNodeTemp(pt.id)
+
           return (
-            <g key={pt.id}
-              style={{ cursor: 'pointer' }}
-              onClick={selClick}>
+            <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
               <rect x={pt.x - PT_R - 6} y={pt.y - PT_R - 6} width={(PT_R + 6) * 2} height={(PT_R + 6) * 2} fill="transparent" />
               <rect x={pt.x - PT_R} y={pt.y - PT_R} width={PT_R * 2} height={PT_R * 2}
                 fill={sel || dragged ? '#dbeafe' : '#fff'}
                 stroke={sel || dragged ? '#2563eb' : '#374151'} strokeWidth={1.5} />
+              {!isJunction && <TempBadge x={pt.x + PT_R + 2} y={pt.y} T={singleTemp} />}
+              {isJunction && incomingTemps.map(({ T, dx, dy }, i) => (
+                <TempBadge key={i} x={pt.x + dx * 16} y={pt.y + dy * 16} T={T} />
+              ))}
             </g>
           )
         })}
@@ -1983,12 +2479,12 @@ export default function DrawingCanvas({
         {previewPath && (
           <>
             <path d={previewPath}
-              stroke={pipeType === 'retour' ? '#f97316' : '#dc2626'} strokeWidth={1.5}
-              strokeDasharray={pipeType === 'retour' ? '10,6' : '5,3'}
+              stroke={activeCalcId === 'alimentation-ef' ? '#2563eb' : pipeType === 'retour' ? '#f97316' : '#dc2626'} strokeWidth={1.5}
+              strokeDasharray={activeCalcId !== 'alimentation-ef' && pipeType === 'retour' ? '10,6' : '5,3'}
               fill="none" opacity={0.6} style={{ pointerEvents: 'none' }} />
             {drawing.vertices.map((v, i) =>
               <rect key={i} x={v.x - 2.5} y={v.y - 2.5} width={5} height={5}
-                fill={pipeType === 'retour' ? '#f97316' : '#dc2626'}
+                fill={activeCalcId === 'alimentation-ef' ? '#2563eb' : pipeType === 'retour' ? '#f97316' : '#dc2626'}
                 style={{ pointerEvents: 'none' }} />
             )}
           </>
@@ -2005,6 +2501,18 @@ export default function DrawingCanvas({
                   <circle r={r} fill="rgba(238,242,255,0.6)" stroke="#818cf8" strokeWidth={1.5} strokeDasharray="4,3" />
                   <polygon points={`${-6*ts},${-7*ts} ${-6*ts},${7*ts} ${8*ts},0`} fill="rgba(79,70,229,0.5)" />
                 </g>
+              </g>
+            )
+          }
+          if (placingEquipment.type === 'arriveeEF') {
+            const w = placingEquipment.size?.w ?? 44, h = placingEquipment.size?.h ?? 28
+            const fs = Math.max(6, Math.min(9, h * 0.28))
+            return (
+              <g style={{ pointerEvents: 'none' }}>
+                <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
+                  fill="rgba(219,234,254,0.6)" stroke="#60a5fa" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
+                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(37,99,235,0.7)" fontWeight="700" textAnchor="middle">Arrivée</text>
+                <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(37,99,235,0.7)" fontWeight="700" textAnchor="middle">EF</text>
               </g>
             )
           }
@@ -2037,10 +2545,11 @@ export default function DrawingCanvas({
           return (
             <g style={{ pointerEvents: 'none' }}>
               <rect x={gx1} y={yBot - chaufferie.height} width={w} height={chaufferie.height}
-                fill="rgba(238,242,255,0.5)" stroke="#818cf8" strokeWidth={1.5} strokeDasharray="6,4" />
+                fill={activeCalcId === 'alimentation-ef' ? 'rgba(219,234,254,0.5)' : 'rgba(238,242,255,0.5)'}
+                stroke={activeCalcId === 'alimentation-ef' ? '#60a5fa' : '#818cf8'} strokeWidth={1.5} strokeDasharray="6,4" />
               <text x={gx1 + w / 2} y={yBot - chaufferie.height + 13}
-                fontSize={10} fill="rgba(129,140,248,0.8)" fontWeight="600" textAnchor="middle"
-                style={{ userSelect: 'none' }}>Chaufferie</text>
+                fontSize={10} fill={activeCalcId === 'alimentation-ef' ? 'rgba(37,99,235,0.8)' : 'rgba(129,140,248,0.8)'} fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none' }}>{activeCalcId === 'alimentation-ef' ? 'Local EF' : 'Local ECS'}</text>
             </g>
           )
         })()}
@@ -2062,8 +2571,8 @@ export default function DrawingCanvas({
         </text>
       )}
       {placingChaufferie && (
-        <text x={8} y={18} fontSize={10} fill="#818cf8">
-          Cliquez pour placer la chaufferie · Échap pour annuler
+        <text x={8} y={18} fontSize={10} fill={activeCalcId === 'alimentation-ef' ? '#2563eb' : '#818cf8'}>
+          {activeCalcId === 'alimentation-ef' ? 'Cliquez pour placer le local EF · Échap pour annuler' : 'Cliquez pour placer le local ECS · Échap pour annuler'}
         </text>
       )}
     </svg>

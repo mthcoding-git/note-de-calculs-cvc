@@ -100,7 +100,7 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLev
         <label className="lp-checkbox-label">
           <input type="checkbox" checked={editLevelsEnabled}
             onChange={e => onEditLevelsChange(e.target.checked)} />
-          <span>Autoriser le déplacement des lignes</span>
+          <span>Déplacer les lignes de niveaux</span>
         </label>
       </div>
       {editLevelsEnabled && (
@@ -186,7 +186,7 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
         <label className="lp-checkbox-label">
           <input type="checkbox" checked={editColumnsEnabled}
             onChange={e => onEditColumnsChange(e.target.checked)} />
-          <span>Autoriser le déplacement des colonnes</span>
+          <span>Déplacer les colonnes</span>
         </label>
       </div>
       {editColumnsEnabled && (
@@ -266,8 +266,83 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
 }
 
 
+// ── Alimentation ECS : débits de base par appareil ─────
+function AlimentationParamsSection({ params, onChange }) {
+  const [editMode, setEditMode] = useState(false)
+  if (!params?.appareils) return null
+
+  const setEnabled = (id, v) => onChange({
+    ...params,
+    appareils: params.appareils.map(a => a.id === id ? { ...a, enabled: v } : a),
+  })
+  const setQBase = (id, v) => onChange({
+    ...params,
+    appareils: params.appareils.map(a => a.id === id ? { ...a, qBase: parseFloat(v) || 0 } : a),
+  })
+
+  return (
+    <Section title="Débits de base par équipement" defaultOpen={false}>
+      <div className="lp-field" style={{ marginBottom: 8 }}>
+        <label className="lp-label">Type de bâtiment</label>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[
+            { value: 'habitation',   label: 'Standard' },
+            { value: 'enseignement', label: 'Enseignement' },
+          ].map(opt => {
+            const active = (params.buildingType === opt.value) ||
+              (opt.value === 'habitation' && !['enseignement'].includes(params.buildingType))
+            return (
+              <button key={opt.value}
+                onClick={() => onChange({ ...params, buildingType: opt.value })}
+                style={{
+                  flex: 1, padding: '4px 0', fontSize: 11, fontWeight: active ? 700 : 500,
+                  border: `1px solid ${active ? '#6366f1' : '#e5e7eb'}`,
+                  borderRadius: 5, cursor: 'pointer',
+                  background: active ? '#eef2ff' : '#f9fafb',
+                  color: active ? '#4338ca' : '#6b7280',
+                }}>
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {params.appareils.map(a => (
+        <div key={a.id} className="lp-mat-block" style={{ marginBottom: 2, paddingBottom: 2 }}>
+          <div className="lp-mat-header">
+            <label className="lp-checkbox-label" style={{ flex: 1, minWidth: 0 }}>
+              <input type="checkbox" checked={a.enabled}
+                onChange={e => setEnabled(a.id, e.target.checked)} />
+              <span style={{ color: a.enabled ? '#111827' : '#6b7280' }}>{a.name}</span>
+            </label>
+            {editMode ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+                <input type="number" step="0.01" min="0"
+                  value={a.qBase}
+                  onChange={e => setQBase(a.id, e.target.value)}
+                  style={{ width: 60, fontSize: 11 }} />
+                <span style={{ fontSize: 10, color: '#374151' }}>l/s</span>
+              </div>
+            ) : (
+              <span style={{ fontSize: 11, color: a.enabled ? '#111827' : '#6b7280',
+                flexShrink: 0, marginLeft: 6, minWidth: 72, textAlign: 'right' }}>
+                {a.qBase} l/s
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
+      <label className="lp-checkbox-label" style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #e5e7eb' }}>
+        <input type="checkbox" checked={editMode} onChange={e => setEditMode(e.target.checked)} />
+        <span>Modifier les valeurs</span>
+      </label>
+    </Section>
+  )
+}
+
 // ── Materials ──────────────────────────────────────────
-function MaterialsSection({ materials, onChange }) {
+function MaterialsSection({ materials, onChange, showLambda = true }) {
   const [expanded, setExpanded] = useState(null)
 
   const toggle      = id      => onChange(m => m.map(x => x.id === id ? { ...x, enabled: !x.enabled } : x))
@@ -307,7 +382,7 @@ function MaterialsSection({ materials, onChange }) {
               )}
             </div>
           </div>
-          {mat.enabled && (
+          {mat.enabled && showLambda && (
             <div className="lp-mat-lambda">
               <span>λ =</span>
               <input type="number" step="0.001" value={mat.lambda}
@@ -499,11 +574,19 @@ function EditParamsPanel({
   segments, points, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie,
   editParam, onEditParamChange,
-  canvasDisplay, onCanvasDisplayToggle,
+  activeCalcId, alimentationParams,
 }) {
+  const isAlim = activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef'
+  const isEF   = activeCalcId === 'alimentation-ef'
   const set = patch => onEditParamChange({ ...editParam, ...patch })
   const { paramType, segType, materialId, dn, insulationId, thickness,
           length, flowVelocityMode, flowVelocityValue } = editParam
+
+  // Réinitialise paramType si la valeur courante n'est pas disponible dans ce mode
+  const validTypes = isEF ? ['material'] : isAlim ? ['type', 'material'] : ['type', 'material', 'insulation', 'length', 'flowVelocity']
+  useEffect(() => {
+    if (!validTypes.includes(paramType)) set({ paramType: 'material' })
+  }, [isAlim, paramType])
 
   const enabledMats = materials.filter(m => m.enabled)
   const enabledIns  = insulations.filter(i => i.enabled)
@@ -525,40 +608,15 @@ function EditParamsPanel({
   return (
     <div style={{ padding: '6px 2px' }}>
 
-      {/* Affichage sur le schéma */}
-      <div style={{ marginBottom: 10 }}>
-        <div className="lp-label" style={{ marginBottom: 5 }}>Afficher sur le schéma</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {[
-            { key: 'material',     label: 'Matériau & DN' },
-            { key: 'insulation',   label: 'Isolant & épaisseur' },
-            { key: 'length',       label: 'Longueur' },
-            { key: 'flowVelocity', label: 'Débit / Vitesse' },
-          ].map(({ key, label }) => (
-            <button key={key}
-              onClick={() => onCanvasDisplayToggle(key)}
-              className="lp-icon-btn"
-              style={{
-                fontSize: 10, padding: '3px 7px', fontWeight: 600,
-                background: canvasDisplay?.[key] ? '#2563eb' : undefined,
-                color:      canvasDisplay?.[key] ? '#fff'    : undefined,
-                border: `1.5px solid ${canvasDisplay?.[key] ? '#2563eb' : '#d1d5db'}`,
-              }}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* Param type */}
       <div className="lp-field">
         <label className="lp-label">Paramètre</label>
         <select value={paramType} onChange={e => set({ paramType: e.target.value, materialId: null, dn: null, insulationId: null, thickness: null, length: null, flowVelocityValue: null })}>
-          <option value="type">Réseau (Aller / Retour ECS)</option>
+          {!isEF && <option value="type">Réseau (Aller / Retour ECS)</option>}
           <option value="material">Matériau & DN</option>
-          <option value="insulation">Isolant & épaisseur</option>
-          <option value="length">Longueur</option>
-          <option value="flowVelocity">Débit / Vitesse</option>
+          {!isAlim && <option value="insulation">Isolant & épaisseur</option>}
+          {!isAlim && <option value="length">Longueur</option>}
+          {!isAlim && <option value="flowVelocity">Débit / Vitesse</option>}
         </select>
       </div>
 
@@ -658,7 +716,8 @@ function EditParamsPanel({
         </div>
       )}
 
-      {/* Groups */}
+      {/* Groups (segments) */}
+      {(
       <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 6, marginTop: 4 }}>
         <div className="lp-label" style={{ marginBottom: 4 }}>Tronçons existants</div>
         {groups.length === 0 && <p className="lp-hint">Aucun tronçon avec cette valeur.</p>}
@@ -705,7 +764,9 @@ function EditParamsPanel({
           </div>
         )}
       </div>
+      )}
 
+      {paramType !== 'equipment' && (
       <div style={{ marginTop: 8, borderTop: '1px solid #e5e7eb', paddingTop: 8 }}>
         {currentKey ? (<>
           <p className="lp-hint" style={{ marginBottom: 6 }}>Cliquez sur un tronçon du schéma pour lui attribuer la valeur sélectionnée.</p>
@@ -730,6 +791,7 @@ function EditParamsPanel({
           <p className="lp-hint">Sélectionnez une valeur ci-dessus, puis cliquez sur un tronçon.</p>
         )}
       </div>
+      )}
 
     </div>
   )
@@ -799,12 +861,13 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
       {missingProdECS && (
         <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb', background: '#fef2f2' }}>
           <div style={{ fontWeight: 600, fontSize: 11, color: '#991b1b', marginBottom: 4 }}>
-            Production ECS manquante
+            Production ECS non placée
           </div>
           <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.5 }}>
-            Le réseau contient des tronçons Aller / Retour ECS mais aucun nœud
-            « Production ECS » n'est placé sur le synoptique. Les calculs
-            thermiques et hydrauliques ne peuvent pas s'effectuer.
+            Des tronçons Aller/Retour ECS sont tracés, mais aucune
+            Production ECS n'est placée sur le synoptique.
+            Utilisez le bouton <strong style={{ color: '#374151' }}>Prod. ECS</strong> dans
+            la barre d'outils pour la positionner.
           </div>
         </div>
       )}
@@ -893,14 +956,7 @@ function GroupesSection({
             <label className="lp-checkbox-label">
               <input type="checkbox" checked={!!groupesEditMode}
                 onChange={e => onGroupesEditModeChange(e.target.checked)} />
-              <span>Modifier les groupes</span>
-            </label>
-          </div>
-          <div className="lp-field">
-            <label className="lp-checkbox-label">
-              <input type="checkbox" checked={!!showGroupeNames}
-                onChange={e => onShowGroupeNamesChange(e.target.checked)} />
-              <span>Afficher les noms</span>
+              <span>Déplacer les groupes</span>
             </label>
           </div>
       </>
@@ -909,7 +965,9 @@ function GroupesSection({
 }
 
 export default function LeftPanel({
+  activeCalcId,
   globalParams, onGlobalParamsChange,
+  alimentationParams, onAlimentationParamsChange,
   levels, lineYs, onLevelsChange, onLineYsChange,
   editLevelsEnabled, onEditLevelsChange,
   materials, onMaterialsChange,
@@ -922,7 +980,6 @@ export default function LeftPanel({
   onSelectIds, onConnHighlight,
   groupesEditMode, onGroupesEditModeChange, showGroupeNames, onShowGroupeNamesChange,
   onAddGroupe, onRemoveGroupe,
-  canvasDisplay, onCanvasDisplayToggle,
 }) {
   if (drawMode === 'editParams') {
     return (
@@ -947,7 +1004,8 @@ export default function LeftPanel({
               columns={columns} columnXs={columnXs}
               chaufferie={chaufferie}
               editParam={editParam} onEditParamChange={onEditParamChange}
-              canvasDisplay={canvasDisplay} onCanvasDisplayToggle={onCanvasDisplayToggle}
+              activeCalcId={activeCalcId}
+              alimentationParams={alimentationParams}
             />
           </div>
         </div>
@@ -966,6 +1024,33 @@ export default function LeftPanel({
         onSelectIds={onSelectIds}
         onConnHighlight={onConnHighlight}
       />
+    )
+  }
+
+  if (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') {
+    return (
+      <div className="left-panel">
+        <MaterialsSection materials={materials} onChange={onMaterialsChange} showLambda={false} />
+        <AlimentationParamsSection params={alimentationParams} onChange={onAlimentationParamsChange} />
+        <LevelsSection
+          levels={levels} lineYs={lineYs}
+          onLevelsChange={onLevelsChange} onLineYsChange={onLineYsChange}
+          editLevelsEnabled={editLevelsEnabled} onEditLevelsChange={onEditLevelsChange}
+        />
+        <ColumnsSection
+          columns={columns} columnXs={columnXs}
+          onColumnsChange={onColumnsChange} onColumnXsChange={onColumnXsChange}
+          onRemoveColumn={onRemoveColumn} onAddColumn={onAddColumn} onAddGap={onAddGap} onMoveGaine={onMoveGaine}
+          levels={levels}
+          editColumnsEnabled={editColumnsEnabled} onEditColumnsChange={onEditColumnsChange}
+        />
+        <GroupesSection
+          groupesEditMode={groupesEditMode} onGroupesEditModeChange={onGroupesEditModeChange}
+          showGroupeNames={showGroupeNames} onShowGroupeNamesChange={onShowGroupeNamesChange}
+          onAddGroupe={onAddGroupe} onRemoveGroupe={onRemoveGroupe}
+          columns={columns} levels={levels} points={points}
+        />
+      </div>
     )
   }
 

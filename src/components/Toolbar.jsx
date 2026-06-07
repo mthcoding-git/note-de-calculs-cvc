@@ -1,3 +1,5 @@
+import { useState, useRef, useEffect } from 'react'
+
 // Cursor SVG icon for "select" mode
 function CursorIcon() {
   return (
@@ -29,6 +31,19 @@ function NodeSquareIcon() {
   )
 }
 
+// Balancing valve symbol: two triangles tip-to-tip (bowtie) + T mark perpendicular
+function VanneIcon({ active = false }) {
+  const col = active ? '#1d4ed8' : '#4f46e5'
+  return (
+    <svg width={14} height={18} viewBox="-7 -12 14 18" style={{ display: 'block', flexShrink: 0 }}>
+      <polygon points="-6,-5 -6,5 0,0" fill={col} />
+      <polygon points="6,-5 6,5 0,0" fill={col} />
+      <line x1="0" y1="0" x2="0" y2="-9" stroke={col} strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="-3.6" y1="-9" x2="3.6" y2="-9" stroke={col} strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 // Pump symbol: circle + directional triangle, same geometry as on canvas
 function PumpSymbol({ rotation = 0, size = 14, color = '#4f46e5', bg = 'rgba(238,242,255,0.97)' }) {
   const r  = size / 2
@@ -46,6 +61,19 @@ function PumpSymbol({ rotation = 0, size = 14, color = '#4f46e5', bg = 'rgba(238
   )
 }
 
+const DISPLAY_OPTIONS = [
+  { key: 'nomTroncon',       label: 'Nom du tronçon',          calcIds: null },
+  { key: 'material',         label: 'Matériau',                calcIds: null },
+  { key: 'dn',               label: 'DN',                      calcIds: null },
+  { key: 'length',           label: 'Longueur (m)',            calcIds: ['bouclage-ecs'] },
+  { key: 'insulation',       label: 'Isolant & épaisseur',     calcIds: ['bouclage-ecs'] },
+  { key: 'debit',            label: 'Débit (m³/h)',            calcIds: ['bouclage-ecs'] },
+  { key: 'vitesse',          label: 'Vitesse (m/s)',           calcIds: ['bouclage-ecs'] },
+  { key: 'temperatureNoeud', label: 'T° nœuds (°C)',           calcIds: ['bouclage-ecs'] },
+  { key: 'deltaT',           label: 'ΔT tronçon (°C)',         calcIds: ['bouclage-ecs'] },
+  { key: 'equipment',        label: 'Équipements (groupes PP)', calcIds: ['alimentation-ecs', 'alimentation-ef'] },
+]
+
 export default function Toolbar({
   drawMode, setDrawMode,
   pipeType, setPipeType,
@@ -53,8 +81,21 @@ export default function Toolbar({
   errorCount, onShowErrors,
   chaufferie, editChaufferie, onEditChaufferieChange, onAddChaufferie,
   placingChaufferie, placingEquipment,
-  onAddProductionECS, onAddPump,
+  onAddProductionECS, onAddPump, hasProductionECS,
+  onAddArriveeEF,
+  canvasDisplay, onCanvasDisplayToggle,
+  activeFluidId, activeCalcId,
 }) {
+  const [displayOpen, setDisplayOpen] = useState(false)
+  const displayRef = useRef(null)
+
+  useEffect(() => {
+    if (!displayOpen) return
+    const handle = (e) => { if (!displayRef.current?.contains(e.target)) setDisplayOpen(false) }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [displayOpen])
+
   const activateDraw = (type) => {
     if (drawMode === 'draw' && pipeType === type) {
       setDrawMode('select')
@@ -68,15 +109,25 @@ export default function Toolbar({
 
   const isEditParams = drawMode === 'editParams'
 
+  // ── État 1 : aucun fluide sélectionné ───────────────
+  if (!activeFluidId) {
+    return <div className="toolbar" />
+  }
+
+  // ── État 2 : fluide choisi, sous-mode non encore sélectionné ─
+  if (!activeCalcId) {
+    return <div className="toolbar" />
+  }
+
+  // ── État 3 : sous-mode sélectionné — toolbar complète ────────
   return (
     <div className="toolbar">
 
-      {/* Panel toggle — disabled in Attribuer mode (panel is forced open) */}
+      {/* Panel toggle */}
       <button
         className="tb-btn tb-panel-toggle"
         onClick={onTogglePanel}
-        disabled={isEditParams}
-        title={isEditParams ? 'Panneau forcé ouvert en mode Attribuer' : panelOpen ? 'Masquer le panneau' : 'Afficher le panneau'}>
+        title={isEditParams ? 'Quitter Attribuer et ouvrir le panneau Paramètres' : panelOpen ? 'Masquer le panneau' : 'Afficher le panneau'}>
         {panelOpen ? '◀ Paramètres' : '▶ Paramètres'}
       </button>
 
@@ -98,23 +149,60 @@ export default function Toolbar({
         <PropsIcon /> Attribuer
       </button>
 
+      {/* Afficher — options d'étiquettes sur le schéma */}
+      <div ref={displayRef} style={{ position: 'relative' }}>
+        <button
+          className={`tb-btn ${displayOpen ? 'active' : ''}`}
+          onClick={() => setDisplayOpen(o => !o)}
+          title="Choisir les informations à afficher sur le schéma">
+          Afficher ▾
+        </button>
+        {displayOpen && (
+          <div className="tb-display-popover">
+            {DISPLAY_OPTIONS
+              .filter(o => !o.calcIds || o.calcIds.includes(activeCalcId))
+              .map(({ key, label }) => {
+                const active = !!canvasDisplay?.[key]
+                return (
+                  <label key={key} className="tb-display-item">
+                    <input type="checkbox" checked={active}
+                      onChange={() => onCanvasDisplayToggle?.(key)} />
+                    <span>{label}</span>
+                  </label>
+                )
+              })}
+          </div>
+        )}
+      </div>
+
       <div className="toolbar-sep" />
 
       {/* Draw tools */}
       <div className="toolbar-group">
         <span className="toolbar-label">Tracé :</span>
-        <button
-          className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller' : ''}`}
-          onClick={() => activateDraw('aller')}
-          title="Aller ECS — cliquer à nouveau ou Échap pour quitter">
-          <span className="pipe-prev-aller" /> Aller ECS
-        </button>
-        <button
-          className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour' : ''}`}
-          onClick={() => activateDraw('retour')}
-          title="Retour ECS — cliquer à nouveau ou Échap pour quitter">
-          <span className="pipe-prev-retour" /> Retour ECS
-        </button>
+        {activeCalcId === 'alimentation-ef' ? (
+          <button
+            className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller-ef' : ''}`}
+            onClick={() => activateDraw('aller')}
+            title="Aller EF — cliquer à nouveau ou Échap pour quitter">
+            <span className="pipe-prev-aller-ef" /> Aller EF
+          </button>
+        ) : (
+          <>
+            <button
+              className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller' : ''}`}
+              onClick={() => activateDraw('aller')}
+              title="Aller ECS — cliquer à nouveau ou Échap pour quitter">
+              <span className="pipe-prev-aller" /> Aller ECS
+            </button>
+            <button
+              className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour' : ''}`}
+              onClick={() => activateDraw('retour')}
+              title="Retour ECS — cliquer à nouveau ou Échap pour quitter">
+              <span className="pipe-prev-retour" /> Retour ECS
+            </button>
+          </>
+        )}
         <button
           className={`tb-btn ${drawMode === 'draw' && pipeType === 'point' ? 'active' : ''}`}
           onClick={() => activateDraw('point')}
@@ -127,45 +215,67 @@ export default function Toolbar({
 
       {/* Equipment */}
       <div className="toolbar-group">
-        <span className="toolbar-label">Équipements :</span>
+        {activeCalcId !== 'alimentation-ef' && <span className="toolbar-label">Équipements :</span>}
 
-        {/* Chaufferie */}
-        {!chaufferie?.placed ? (
+        {/* Local ECS — masqué en mode EF */}
+        {activeCalcId !== 'alimentation-ef' && (!chaufferie?.placed ? (
           <button
             className={`tb-btn ${placingChaufferie ? 'active' : ''}`}
             onClick={onAddChaufferie}
-            title="Cliquer sur le schéma pour placer la zone chaufferie">
-            Chaufferie
+            title="Cliquer sur le schéma pour placer le local ECS">
+            Local ECS
           </button>
         ) : (
           <button
             className={`tb-btn ${editChaufferie ? 'active' : ''}`}
             onClick={() => onEditChaufferieChange(!editChaufferie)}
-            title="Activer pour déplacer et redimensionner la zone chaufferie">
-            ✎ Modifier chaufferie
+            title="Activer pour déplacer et redimensionner le local ECS">
+            ✎ Modifier local ECS
           </button>
+        ))}
+
+        {activeCalcId === 'alimentation-ef' ? (
+          /* Arrivée EF — plusieurs autorisées */
+          <button
+            className={`tb-btn ${placingEquipment?.type === 'arriveeEF' ? 'active' : ''}`}
+            onClick={onAddArriveeEF}
+            title="Cliquer sur le schéma pour placer une arrivée d'eau froide">
+            Arrivée EF
+          </button>
+        ) : (
+          <>
+            {/* Prod. ECS */}
+            <button
+              className={`tb-btn ${placingEquipment?.type === 'productionECS' ? 'active' : ''}`}
+              onClick={onAddProductionECS}
+              disabled={hasProductionECS}
+              title={hasProductionECS ? 'Une production ECS est déjà placée sur le schéma' : 'Cliquer sur le schéma pour placer une production ECS'}>
+              Prod. ECS
+            </button>
+
+            {/* Pompe */}
+            <button
+              className={`tb-btn ${placingEquipment?.type === 'pump' ? 'active' : ''}`}
+              onClick={onAddPump}
+              title="Cliquer sur le schéma pour placer une pompe (sens modifiable via clic)">
+              <PumpSymbol
+                rotation={180}
+                color={placingEquipment?.type === 'pump' ? '#1d4ed8' : '#4f46e5'}
+                bg={placingEquipment?.type === 'pump' ? '#dbeafe' : 'rgba(238,242,255,0.97)'}
+              />
+              Pompe
+            </button>
+
+            {/* Vanne d'équilibrage */}
+            <button
+              className={`tb-btn ${drawMode === 'draw' && pipeType === 'vanne' ? 'active' : ''}`}
+              onClick={() => activateDraw('vanne')}
+              title="Cliquer sur un tronçon pour placer une vanne d'équilibrage">
+              <VanneIcon active={drawMode === 'draw' && pipeType === 'vanne'} />
+              Vanne équilib.
+            </button>
+          </>
         )}
-
-        {/* Prod. ECS */}
-        <button
-          className={`tb-btn ${placingEquipment?.type === 'productionECS' ? 'active' : ''}`}
-          onClick={onAddProductionECS}
-          title="Cliquer sur le schéma pour placer une production ECS">
-          Prod. ECS
-        </button>
-
-        {/* Pompe */}
-        <button
-          className={`tb-btn ${placingEquipment?.type === 'pump' ? 'active' : ''}`}
-          onClick={onAddPump}
-          title="Cliquer sur le schéma pour placer une pompe (sens modifiable via clic)">
-          <PumpSymbol
-            rotation={180}
-            color={placingEquipment?.type === 'pump' ? '#1d4ed8' : '#4f46e5'}
-            bg={placingEquipment?.type === 'pump' ? '#dbeafe' : 'rgba(238,242,255,0.97)'}
-          />
-          Pompe
-        </button>
       </div>
 
       {/* Errors */}
@@ -190,11 +300,6 @@ export default function Toolbar({
       {editChaufferie && (
         <span className="toolbar-hint">
           Glissez l'intérieur pour déplacer, les bords pour redimensionner · ✎ ou Échap pour terminer
-        </span>
-      )}
-      {isEditParams && (
-        <span className="toolbar-hint">
-          Cliquez sur un tronçon pour lui attribuer ses paramètres · Échap pour quitter
         </span>
       )}
 
