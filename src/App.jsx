@@ -649,10 +649,13 @@ export default function App() {
   const handleFluidChange = useCallback((fluidId, calcId) => {
     if (fluidId === activeFluidId) return
 
-    // Sauvegarder l'état du fluide actuel uniquement s'il a été configuré
-    if (activeFluidId && !pendingSetup) {
+    // Capturer l'état courant avant tout changement
+    const currentFullState = (activeFluidId && !pendingSetup) ? getFullState() : null
+
+    // Sauvegarder l'état du fluide actuel s'il a été configuré
+    if (currentFullState) {
       fluidStashRef.current.set(activeFluidId, {
-        state:  getFullState(),
+        state:  currentFullState,
         calcId: activeCalcId,
       })
     }
@@ -661,11 +664,31 @@ export default function App() {
     const resolvedCalcId = calcId ?? getAutoCalcId(fluidId)
 
     if (stashed) {
+      // Fluide déjà visité → restaurer son état
       loadState({ ...stashed.state, projectName })
       setActiveCalcId(resolvedCalcId ?? stashed.calcId)
       setPendingSetup(false)
+    } else if (currentFullState) {
+      // Nouveau fluide, mais une grille existe déjà → hériter de la structure, réseau vide, pas de setup
+      const baseData = currentFullState.variants?.find(v => v.isBase)?.data ?? initProject()
+      const inheritedData = {
+        ...initProject(),
+        levels:   baseData.levels,
+        lineYs:   baseData.lineYs,
+        columns:  baseData.columns,
+        columnXs: baseData.columnXs,
+      }
+      loadState({
+        version: 2,
+        projectName,
+        activeVariantId: 'v0',
+        variants: [{ id: 'v0', name: '', isBase: true, data: inheritedData }],
+      })
+      setActiveCalcId(resolvedCalcId)
+      setPendingSetup(false)
+      setPanelOpen(true)
     } else {
-      // Première visite → initialiser avec la grille par défaut et afficher le setup
+      // Tout premier fluide → afficher la fenêtre de configuration
       loadState({
         version: 2,
         projectName,
@@ -1068,7 +1091,7 @@ export default function App() {
           {activeFluidId && (
             <>
               <div className="app-hd-sep" />
-              {activeCalcId && (
+              {activeCalcId && !pendingSetup && (
                 <>
                   <VariantBar
                     variants={meta}
