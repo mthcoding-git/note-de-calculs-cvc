@@ -40,7 +40,7 @@ export default function ResultsPanel({ results }) {
             </tr>
           </thead>
           <tbody>
-            {Object.values(edgeResults).map(r => (
+            {(Object.values(edgeResults) as any[]).map(r => (
               <tr key={r.name}>
                 <td>{r.name}</td>
                 <td>{fmt(r.T_in)} °C</td>

@@ -70,7 +70,7 @@ export default function NetworkSetupCard({ fluidLabel, calcLabel, onPreview, onC
                 <div style={{ fontWeight: 600, fontSize: 13, color: '#1f2937' }}>{label}</div>
                 {desc && <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>{desc}</div>}
               </div>
-              <Stepper value={val} onChange={v => update(key, v)} min={mn} max={mx} />
+              <Stepper value={val as number} onChange={v => update(key as string, v)} min={mn as number} max={mx as number} />
             </div>
           ))}
         </div>

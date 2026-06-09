@@ -376,7 +376,7 @@ function StepGroupes({ levels, nCols, groupesGrid, onGridChange }) {
         </table>
       </div>
       <div style={{ marginTop: 10, fontSize: 11, color: '#9ca3af', textAlign: 'right' }}>
-        {(() => { const t = Object.values(groupesGrid).reduce((a, b) => a + (b ?? 0), 0); return `Total : ${t} groupe${t > 1 ? 's' : ''}` })()}
+        {(() => { const t = (Object.values(groupesGrid) as number[]).reduce((a, b) => a + (b ?? 0), 0); return `Total : ${t} groupe${t > 1 ? 's' : ''}` })()}
       </div>
     </div>
   )
@@ -387,7 +387,7 @@ const TITLE_S    = { margin: '0 0 6px', fontSize: 18, fontWeight: 700, color: '#
 const SUBTITLE_S = { margin: '0 0 20px', fontSize: 13, color: '#6b7280', lineHeight: 1.5 }
 const FIELD_LABEL_S = { fontSize: 12, fontWeight: 600, color: '#374151' }
 const INPUT_S    = { flex: 1, padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, width: '100%' }
-const TH_S       = { padding: '10px 8px', fontSize: 11, fontWeight: 700, color: '#6b7280', textAlign: 'center', borderBottom: '2px solid #e5e7eb', textTransform: 'uppercase', letterSpacing: '0.04em' }
+const TH_S       = { padding: '10px 8px', fontSize: 11, fontWeight: 700, color: '#6b7280', textAlign: 'center' as const, borderBottom: '2px solid #e5e7eb', textTransform: 'uppercase' as const, letterSpacing: '0.04em' }
 const TD_S       = { padding: '7px 8px', borderBottom: '1px solid #f1f5f9' }
 const CELL_BTN_S = { width: 22, height: 22, borderRadius: 4, border: '1px solid #d1d5db', background: '#f9fafb', fontSize: 13, cursor: 'pointer', lineHeight: 1, padding: 0 }
 

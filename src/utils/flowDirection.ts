@@ -101,7 +101,7 @@ export function computeFlowDirectionsEF(segments, points) {
   if (!sources.length) return new Map()
 
   const allerSegs = segments.filter(s => s.type === 'aller')
-  const dist = new Map(sources.map(p => [p.id, 0]))
+  const dist = new Map<string, number>(sources.map(p => [p.id as string, 0] as [string, number]))
   const queue = sources.map(p => [0, p.id])
 
   while (queue.length > 0) {

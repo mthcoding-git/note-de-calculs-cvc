@@ -12,7 +12,7 @@ function tAvalStyle(T, T_depart) {
   return { background: `hsl(${hue},58%,91%)`, borderColor: `hsl(${hue},50%,68%)`, labelColor: `hsl(${hue},40%,32%)` }
 }
 
-function Field({ label, unit, children }) {
+function Field({ label, unit = null, children }: { label: any, unit?: any, children: any }) {
   return (
     <div className="lp-field">
       <label className="lp-label">
