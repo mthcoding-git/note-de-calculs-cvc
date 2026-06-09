@@ -1445,7 +1445,8 @@ export default function DrawingCanvas({
       && segments.length + points.length > 0
       && segments.every(s => selectedIds.includes(s.id))
       && points.every(p => selectedIds.includes(p.id))
-    if (allSelected) {
+    const hasLockedGroupe = !groupesEditMode && points.some(p => p.type === 'groupe' && selectedIds.includes(p.id))
+    if (allSelected && !hasLockedGroupe) {
       const hitPt  = nearPt(pos)
       const hitSeg = nearestOnSegments(pos, hitSegs)
       if (hitPt || hitSeg) {
@@ -1461,7 +1462,9 @@ export default function DrawingCanvas({
         ? ids.includes(np.id) ? ids.filter(i => i !== np.id) : [...ids, np.id]
         : [np.id])
       const connectedSegs = segments.filter(s => s.startPointId === np.id || s.endPointId === np.id)
-      if (!np.isLocked && connectedSegs.length <= 2) {
+      const canDrag = !np.isLocked && connectedSegs.length <= 2
+        && (np.type !== 'groupe' || groupesEditMode)
+      if (canDrag) {
         ptDragRef.current = {
           ptId: np.id, startX: e.clientX, startY: e.clientY,
           origX: np.x, origY: np.y, moved: false,

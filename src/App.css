@@ -499,7 +499,7 @@
   border-bottom: 1px solid #e2e8f0;
   border-right: 1px solid #e2e8f0;
 }
-.rt-thg-result { background: #eff6ff !important; color: #1d4ed8 !important; }
+.rt-thg-result { background: #f1f5f9 !important; color: #64748b !important; }
 .rt-thead-cols th {
   background: #f8fafc;
   padding: 3px 7px;
@@ -512,7 +512,7 @@
   top: 0;
   z-index: 1;
 }
-.rt-th-result { background: #f0f7ff !important; }
+.rt-th-result { background: #f8fafc !important; }
 .rt-th-edit { background: #fefce8 !important; }
 .rt-row { border-bottom: 1px solid #f1f5f9; }
 .rt-row:hover { background: #f8fafc; }
@@ -528,7 +528,7 @@
 .rt-cell-name { min-width: 160px; max-width: 220px; font-size: 10.5px; color: #1e293b; }
 .rt-cell-level { color: #64748b; font-size: 10px; }
 .rt-cell-edit { background: #fffde7; }
-.rt-result { background: #f0f7ff; color: #1e40af; font-weight: 600; }
+.rt-result { background: transparent; color: #111827; font-weight: 600; }
 .rt-val-default { color: #9ca3af; font-style: italic; }
 .rt-val-override { color: #111827; font-weight: 600; }
 .rt-depth-marker { color: #cbd5e1; font-size: 9px; margin-right: 2px; }

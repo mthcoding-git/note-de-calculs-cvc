@@ -52,7 +52,7 @@ function tAvalStyle(T_aval, T_depart) {
 function SegRow({ row, segments, points, materials, insulations,
                   levels, lineYs, columns, columnXs, chaufferie,
                   globalParams, networkFlows, thermalResults,
-                  selectedIds, onSelectIds, rowRef, roleMap }) {
+                  selectedIds, onSelectIds, rowRef, roleMap, activeCalcId }) {
   const { seg, depth, segType } = row
 
   const sr = thermalResults?.segResults?.get(seg.id)
@@ -124,24 +124,24 @@ function SegRow({ row, segments, points, materials, insulations,
       <td className="rt-cell"><span className={cls(seg.di_override == null)}>{di != null ? fmt(di, 1) : '—'}</span></td>
       <td className="rt-cell"><span className={cls(seg.de_override == null)}>{de != null ? fmt(de, 1) : '—'}</span></td>
       <td className="rt-cell"><span className={cls(seg.lambda_tube_override == null)}>{lambdaTube != null ? fmt(lambdaTube, 0) : '—'}</span></td>
+      <td className="rt-cell"><span className={cls(lenIsDefault)}>{seg.length_override != null ? fmt(seg.length_override, 2) : '—'}</span></td>
 
       <td className="rt-cell"><span className={cls(insIsDefault)}>{ins?.name ?? '—'}</span></td>
       <td className="rt-cell"><span className={cls(seg.thickness == null)}>{seg.thickness != null ? fmt(seg.thickness, 0) : '—'}</span></td>
       <td className="rt-cell"><span className={cls(seg.lambda_insul_override == null)}>{lambdaInsul != null ? fmt(lambdaInsul, 3) : '—'}</span></td>
 
-      <td className="rt-cell"><span className={cls(lenIsDefault)}>{seg.length_override != null ? fmt(seg.length_override, 2) : '—'}</span></td>
-      <td className="rt-cell"><span className={cls(flowIsDefault)}>{flowRate != null ? flowRate.toFixed(3) : '—'}</span></td>
-
       <td className="rt-cell"><span className="rt-val-default">{T_amb != null ? fmt(T_amb, 1) : '—'}</span></td>
       <td className="rt-cell">{T_amont != null ? fmt(T_amont, 2) : '—'}</td>
 
-      <td className="rt-cell rt-result">{Ui != null ? fmt(Ui, 3) : '—'}</td>
-      <td className="rt-cell rt-result">{Q_W != null ? fmt(Q_W, 1) : '—'}</td>
-      <td className="rt-cell rt-result" style={{
+      <td className="rt-cell"><span className={cls(flowIsDefault)}>{flowRate != null ? flowRate.toFixed(3) : '—'}</span></td>
+      <td className="rt-cell" style={{
         color: velocityRedMin ? '#dc2626' : velocityOrangeMax ? '#f97316' : undefined,
         fontWeight: (velocityRedMin || velocityOrangeMax) ? 700 : undefined }}>
         {velocity != null ? fmt(velocity, 3) : '—'}
       </td>
+
+      <td className="rt-cell rt-result">{Ui != null ? fmt(Ui, 3) : '—'}</td>
+      <td className="rt-cell rt-result">{Q_W != null ? fmt(Q_W, 1) : '—'}</td>
       <td className="rt-cell rt-result" style={tAvalStyleObj}>
         {T_aval != null ? fmt(T_aval, 2) : '—'}
       </td>
@@ -350,7 +350,7 @@ export default function ResultsTable({
     segments, points, materials, insulations,
     levels, lineYs, columns, columnXs, chaufferie,
     globalParams, networkFlows, thermalResults,
-    selectedIds, onSelectIds, roleMap,
+    selectedIds, onSelectIds, roleMap, activeCalcId,
   }
 
   const isAlim = activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef'
@@ -468,11 +468,11 @@ export default function ResultsTable({
               <>
                 <tr className="rt-thead-group">
                   <th colSpan={3} className="rt-thg">Identification</th>
-                  <th colSpan={5} className="rt-thg">Canalisation</th>
+                  <th colSpan={6} className="rt-thg">Canalisation</th>
                   <th colSpan={3} className="rt-thg">Isolation</th>
-                  <th colSpan={2} className="rt-thg">Hydraulique</th>
                   <th colSpan={2} className="rt-thg">Thermique</th>
-                  <th colSpan={6} className="rt-thg rt-thg-result">Résultats</th>
+                  <th colSpan={2} className="rt-thg">Hydraulique</th>
+                  <th colSpan={5} className="rt-thg rt-thg-result">Résultats</th>
                 </tr>
                 <tr className="rt-thead-cols">
                   <th className="rt-th">Tronçon</th>
@@ -482,20 +482,20 @@ export default function ResultsTable({
                   <th className="rt-th">DN</th>
                   <th className="rt-th">dᵢ (mm)</th>
                   <th className="rt-th">dₑ (mm)</th>
-                  <th className="rt-th">λ_tube</th>
+                  <th className="rt-th">λ_tube (W/m·K)</th>
+                  <th className="rt-th">L (m)</th>
                   <th className="rt-th">Isolant</th>
                   <th className="rt-th">ép. (mm)</th>
-                  <th className="rt-th">λ_isol</th>
-                  <th className="rt-th">L (m)</th>
-                  <th className="rt-th">Débit (m³/h)</th>
-                  <th className="rt-th">T° amb</th>
+                  <th className="rt-th">λ_isol (W/m·K)</th>
+                  <th className="rt-th">T° amb (°C)</th>
                   <th className="rt-th">T amont (°C)</th>
+                  <th className="rt-th">Débit (m³/h)</th>
+                  <th className="rt-th">Vitesse (m/s)</th>
                   <th className="rt-th rt-th-result">Ui (W/m·K)</th>
-                  <th className="rt-th rt-th-result">Pertes (W)</th>
-                  <th className="rt-th rt-th-result">Vitesse (m/s)</th>
+                  <th className="rt-th rt-th-result">Pertes th. (W)</th>
                   <th className="rt-th rt-th-result">T aval (°C)</th>
-                  <th className="rt-th rt-th-result">ΔT tronçon</th>
-                  <th className="rt-th rt-th-result">ΔT/Départ</th>
+                  <th className="rt-th rt-th-result">ΔT tronçon (°C)</th>
+                  <th className="rt-th rt-th-result">ΔT/Dép. (°C)</th>
                 </tr>
               </>
             )}
