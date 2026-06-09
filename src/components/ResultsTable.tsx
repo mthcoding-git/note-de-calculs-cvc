@@ -183,7 +183,7 @@ function JunctionRow({ row, thermalResults, globalParams, selectedIds, onSelectI
 
 function SegRowAlim({ row, segments, points, materials, insulations,
                       levels, lineYs, columns, columnXs, chaufferie,
-                      alimentationResults, selectedIds, onSelectIds, rowRef, roleMap, hideAllerBadge, activeCalcId }) {
+                      alimentationResults, selectedIds, onSelectIds, rowRef, roleMap, hideAllerBadge = false, activeCalcId }) {
   const { seg } = row
 
   const ar   = alimentationResults?.get(seg.id)

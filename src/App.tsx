@@ -330,7 +330,7 @@ function initProject() {
 function useVariantHistory() {
   const INIT_ID = 'v0'
   // Per-variant undo stacks — never serialized, reset on load
-  const histRef = useRef({ [INIT_ID]: { stack: [initProject()], idx: 0 } })
+  const histRef = useRef<Record<string, { stack: any[], idx: number }>>({ [INIT_ID]: { stack: [initProject()], idx: 0 } })
 
   const [meta,        setMeta]        = useState([{ id: INIT_ID, name: '', isBase: true }])
   const [activeId,    setActiveId]    = useState(INIT_ID)
@@ -506,7 +506,7 @@ function useVariantHistory() {
       if (missing.length === 0) return v
       return { ...v, data: { ...data, materials: [...data.materials, ...missing] } }
     })
-    histRef.current = Object.fromEntries(variants.map(v => [v.id, { stack: [v.data], idx: 0 }]))
+    histRef.current = Object.fromEntries(variants.map(v => [v.id, { stack: [v.data], idx: 0 }])) as Record<string, { stack: any[], idx: number }>
     setMeta(variants.map(({ id, name, isBase }) => ({ id, name, isBase: !!isBase })))
     setActiveId(state.activeVariantId ?? variants[0].id)
     setProjectName(state.projectName ?? 'Projet ECS')
@@ -578,7 +578,7 @@ export default function App() {
       project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId),
     [project.segments, project.points, flowDirections,
      project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId]
-  )
+  ) as { rows: any[], roleMap: Map<any, any> }
 
   const efFlowRowsArr = useMemo(
     () => activeCalcId !== 'alimentation-ef' ? null : buildFlowRowsEF(
@@ -1093,10 +1093,10 @@ export default function App() {
     input.onchange = e => {
       const reader = new FileReader()
       reader.onload = ev => {
-        try { loadState(JSON.parse(ev.target.result)); setSelectedIds([]) }
+        try { loadState(JSON.parse((ev.target as FileReader).result as string)); setSelectedIds([]) }
         catch { alert('Fichier invalide.') }
       }
-      reader.readAsText(e.target.files[0])
+      reader.readAsText((e.target as HTMLInputElement).files![0])
     }
     input.click()
   }
@@ -1204,7 +1204,6 @@ export default function App() {
               onGlobalParamsChange={v => update('globalParams', v)}
               alimentationParams={resolveAlimentationParams(project.alimentationParams)}
               onAlimentationParamsChange={v => update('alimentationParams', v)}
-              activeCalcId={activeCalcId}
               levels={project.levels}
               lineYs={project.lineYs}
               onLevelsChange={v => update('levels', v)}
@@ -1226,7 +1225,6 @@ export default function App() {
               editColumnsEnabled={editColumnsEnabled}
               onEditColumnsChange={setEditColumnsEnabled}
               chaufferie={project.chaufferie}
-              onChaufferieChange={v => update('chaufferie', v)}
               segments={project.segments}
               points={project.points}
               networkFlows={networkFlows}
@@ -1321,7 +1319,6 @@ export default function App() {
             globalParams={project.globalParams}
             selectedIds={selectedIds}
             onSelectIds={setSelectedIds}
-            onSegmentUpdate={handleSegmentFieldUpdate}
           />
         )}
 

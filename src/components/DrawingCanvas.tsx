@@ -904,7 +904,7 @@ export default function DrawingCanvas({
   }, [onNetworkChange, points])
 
   // ── Commit in-progress drawing (Escape) ──────────────
-  const commitDrawing = useCallback((d) => {
+  const commitDrawing = useCallback((d?: any) => {
     const cur = d ?? drawing
     if (!cur || cur.vertices.length < 2) { setDrawing(null); return }
     const verts = collapseCollinear(cur.vertices)

@@ -170,7 +170,7 @@ export function computeAlimentationResults(segments, points, alimentationParams,
       else nonDTUIds.push(a.id)
     }
 
-    const N = Object.values(totalEquip).reduce((s, n) => s + n, 0)
+    const N = (Object.values(totalEquip) as number[]).reduce((s, n) => s + n, 0)
     if (N === 0 && nonDTUIds.length === 0) continue
 
     // Choix de la méthode (§3.2.1.2 vs §3.2.2)
