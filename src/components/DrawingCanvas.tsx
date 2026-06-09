@@ -818,6 +818,7 @@ export default function DrawingCanvas({
   materials,
   insulations,
   alimentationParams,
+  alimentationResults,
   activeCalcId,
   thermalResults,
   fitViewRequest,
@@ -2100,18 +2101,37 @@ export default function DrawingCanvas({
                   if (ins) lines.push({ text: seg.thickness != null ? `${ins.name} ${seg.thickness}mm` : ins.name })
                 }
                 if (canvasDisplay?.debit) {
-                  const flow = networkFlows?.get(seg.id)
-                  if (flow?.flowRate != null) lines.push({ text: `${flow.flowRate.toFixed(3)} m³/h` })
+                  if (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') {
+                    const ar = alimentationResults?.get(seg.id)
+                    if (ar?.method === 'collective' && ar.collective?.Qp != null)
+                      lines.push({ text: `${ar.collective.Qp.toFixed(2)} l/s` })
+                  } else {
+                    const flow = networkFlows?.get(seg.id)
+                    if (flow?.flowRate != null) lines.push({ text: `${flow.flowRate.toFixed(3)} m³/h` })
+                  }
                 }
                 if (canvasDisplay?.vitesse) {
-                  const flow = networkFlows?.get(seg.id)
-                  if (flow?.velocity != null) {
-                    const v = flow.velocity
-                    const segRole = roleMap?.get(seg.id)
-                    const vMax = segRole === 'collecteur-retour' ? 1.0 : 0.5
-                    const isRedMin    = seg.type === 'retour' && v < 0.2
-                    const isOrangeMax = seg.type === 'retour' && v > vMax
-                    lines.push({ text: `${sf(v, 2)} m/s`, red: isRedMin, orange: isOrangeMax && !isRedMin })
+                  if (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') {
+                    const ar = alimentationResults?.get(seg.id)
+                    const dnDef = (() => {
+                      const mat = seg.materialId ? materials?.find(m => m.id === seg.materialId) : null
+                      return mat && seg.dn ? mat.dns?.find(d => d.dn === seg.dn) : null
+                    })()
+                    const di_mm = seg.di_override ?? dnDef?.di ?? null
+                    const c = ar?.method === 'collective' ? ar.collective : null
+                    const area = c && di_mm ? Math.PI * (di_mm / 1000) ** 2 / 4 : null
+                    const v = area && c?.Qp > 0 ? (c.Qp * 1e-3) / area : null
+                    if (v != null) lines.push({ text: `${sf(v, 2)} m/s`, orange: v > 1.5 && v <= 2.0, red: v > 2.0 })
+                  } else {
+                    const flow = networkFlows?.get(seg.id)
+                    if (flow?.velocity != null) {
+                      const v = flow.velocity
+                      const segRole = roleMap?.get(seg.id)
+                      const vMax = segRole === 'collecteur-retour' ? 1.0 : 0.5
+                      const isRedMin    = seg.type === 'retour' && v < 0.2
+                      const isOrangeMax = seg.type === 'retour' && v > vMax
+                      lines.push({ text: `${sf(v, 2)} m/s`, red: isRedMin, orange: isOrangeMax && !isRedMin })
+                    }
                   }
                 }
                 if (canvasDisplay?.deltaT && activeCalcId !== 'alimentation-ecs' && activeCalcId !== 'alimentation-ef') {

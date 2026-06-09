@@ -4,7 +4,7 @@ import { getDisplayName } from '../utils/naming'
 
 const fmt = (v, d) => { const n = Number(v); return typeof v === 'number' && Number.isFinite(n) ? n.toFixed(d) : '—' }
 const TOTAL_COLS = 21
-const ALIM_COLS  = 13
+const ALIM_COLS  = 14
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -140,7 +140,7 @@ function SegRow({ row, segments, points, materials, insulations,
         {velocity != null ? fmt(velocity, 3) : '—'}
       </td>
 
-      <td className="rt-cell rt-result">{Ui != null ? fmt(Ui, 3) : '—'}</td>
+      <td className="rt-cell rt-result rt-result-first">{Ui != null ? fmt(Ui, 3) : '—'}</td>
       <td className="rt-cell rt-result">{Q_W != null ? fmt(Q_W, 1) : '—'}</td>
       <td className="rt-cell rt-result" style={tAvalStyleObj}>
         {T_aval != null ? fmt(T_aval, 2) : '—'}
@@ -233,13 +233,13 @@ function SegRowAlim({ row, segments, points, materials, insulations,
       {/* Colonne */}
       <td className="rt-cell rt-cell-sm">{extractColonne(shortName, columns) ?? <span className="rt-val-default">—</span>}</td>
 
-      {/* Appareils en aval */}
-      <td className="rt-cell" style={{ textAlign: 'center' }}>
+      {/* N appareils */}
+      <td className="rt-cell">
         {ar != null ? ar.N : '—'}
       </td>
 
       {/* Méthode */}
-      <td className="rt-cell" style={{ textAlign: 'center', fontSize: 10 }}>
+      <td className="rt-cell">
         {ar == null ? '—' : (
           <span>
             {methodLabel}
@@ -248,52 +248,47 @@ function SegRowAlim({ row, segments, points, materials, insulations,
         )}
       </td>
 
+      {/* Matériau */}
+      <td className="rt-cell">
+        <span className={seg.materialId == null ? 'rt-val-default' : 'rt-val-override'}>{mat?.name ?? '—'}</span>
+      </td>
+
       {/* DN */}
-      <td className="rt-cell" style={{ textAlign: 'center' }}>
-        <span className={seg.dn == null ? 'rt-val-default' : ''}>{seg.dn ?? '—'}</span>
+      <td className="rt-cell">
+        <span className={seg.dn == null ? 'rt-val-default' : 'rt-val-override'}>{seg.dn ?? '—'}</span>
       </td>
 
       {/* dᵢ effectif */}
-      <td className="rt-cell" style={{
-        textAlign: 'center',
-        color: diErr ? '#dc2626' : undefined,
-        fontWeight: diErr ? 700 : undefined,
-      }}>
-        {di != null ? fmt(di, 1) : '—'}
+      <td className="rt-cell">
+        <span className={seg.di_override == null ? 'rt-val-default' : 'rt-val-override'}>{di != null ? fmt(di, 1) : '—'}</span>
       </td>
 
-      {/* Individuelle — Coeff. X */}
-      <td className="rt-cell rt-result" style={{ textAlign: 'center' }}>
+      <td className="rt-cell rt-result rt-result-first">
         {!isCollective && ar != null ? fmt(ar.X, 1) : '—'}
       </td>
-
-      {/* Individuelle — dᵢ min. requis */}
-      <td className="rt-cell rt-result" style={{ textAlign: 'center' }}>
-        {!isCollective && ar?.di_min != null ? fmt(ar.di_min, 1) : '—'}
-      </td>
-
-      {/* Collective — Débit de base */}
-      <td className="rt-cell rt-result" style={{ textAlign: 'center', borderLeft: '2px solid #bfdbfe' }}>
+      <td className="rt-cell rt-result">
         {isCollective && c?.Qs_for_y != null ? fmt(c.Qs_for_y, 3) : '—'}
       </td>
-
-      {/* Collective — Coeff. y */}
-      <td className="rt-cell rt-result" style={{ textAlign: 'center' }}>
+      <td className="rt-cell rt-result">
         {isCollective && c?.y != null ? fmt(c.y, 3) : '—'}
       </td>
-
-      {/* Collective — Débit probable */}
-      <td className="rt-cell rt-result" style={{ textAlign: 'center' }}>
+      <td className="rt-cell rt-result">
         {isCollective && c?.Qp != null ? fmt(c.Qp, 3) : '—'}
       </td>
-
-      {/* Collective — Vitesse */}
       <td className="rt-cell rt-result" style={{
-        textAlign: 'center',
         color: velErr ? '#dc2626' : velWarn ? '#f97316' : undefined,
         fontWeight: (velErr || velWarn) ? 700 : undefined,
       }}>
         {isCollective && velocity != null ? fmt(velocity, 2) : '—'}
+      </td>
+      <td className="rt-cell rt-result" style={{
+        color: diErr ? '#dc2626' : undefined,
+        fontWeight: diErr ? 700 : undefined,
+      }}>
+        {isCollective
+          ? (c?.di_min != null ? fmt(c.di_min, 1) : '—')
+          : (ar?.di_min != null ? fmt(ar.di_min, 1) : '—')
+        }
       </td>
     </tr>
   )
@@ -373,23 +368,22 @@ export default function ResultsTable({
               <tr className="rt-thead-group">
                 <th colSpan={5} className="rt-thg">Identification</th>
                 <th colSpan={2} className="rt-thg">Canalisation</th>
-                <th colSpan={2} className="rt-thg rt-thg-result">Individuelle</th>
-                <th colSpan={4} className="rt-thg rt-thg-result" style={{ borderLeft: '2px solid #bfdbfe' }}>Collective</th>
+                <th colSpan={6} className="rt-thg rt-thg-result rt-th-result-first">Résultats</th>
               </tr>
               <tr className="rt-thead-cols">
                 <th className="rt-th">Tronçon</th>
                 <th className="rt-th">Niveau</th>
                 <th className="rt-th">Colonne</th>
-                <th className="rt-th">Appareils en aval</th>
+                <th className="rt-th">N appareils</th>
                 <th className="rt-th">Méthode</th>
                 <th className="rt-th">DN</th>
                 <th className="rt-th">dᵢ (mm)</th>
-                <th className="rt-th rt-th-result">Coeff. X</th>
-                <th className="rt-th rt-th-result">dᵢ min. requis (mm)</th>
-                <th className="rt-th rt-th-result" style={{ borderLeft: '2px solid #bfdbfe' }}>Débit de base (l/s)</th>
-                <th className="rt-th rt-th-result">Coeff. de simultanéité</th>
-                <th className="rt-th rt-th-result">Débit probable (l/s)</th>
+                <th className="rt-th rt-th-result rt-th-result-first">Coeff. X</th>
+                <th className="rt-th rt-th-result">Qs (l/s)</th>
+                <th className="rt-th rt-th-result">Coeff. y</th>
+                <th className="rt-th rt-th-result">Qp (l/s)</th>
                 <th className="rt-th rt-th-result">Vitesse (m/s)</th>
+                <th className="rt-th rt-th-result">dᵢ min. requis (mm)</th>
               </tr>
             </thead>
             <tbody>
@@ -444,24 +438,24 @@ export default function ResultsTable({
               <>
                 <tr className="rt-thead-group">
                   <th colSpan={5} className="rt-thg">Identification</th>
-                  <th colSpan={2} className="rt-thg">Canalisation</th>
-                  <th colSpan={2} className="rt-thg rt-thg-result">Individuelle</th>
-                  <th colSpan={4} className="rt-thg rt-thg-result" style={{ borderLeft: '2px solid #bfdbfe' }}>Collective</th>
+                  <th colSpan={3} className="rt-thg">Canalisation</th>
+                  <th colSpan={6} className="rt-thg rt-thg-result rt-th-result-first">Résultats</th>
                 </tr>
                 <tr className="rt-thead-cols">
                   <th className="rt-th">Tronçon</th>
                   <th className="rt-th">Niveau</th>
                   <th className="rt-th">Colonne</th>
-                  <th className="rt-th">Appareils en aval</th>
+                  <th className="rt-th">N appareils</th>
                   <th className="rt-th">Méthode</th>
+                  <th className="rt-th">Matériau</th>
                   <th className="rt-th">DN</th>
                   <th className="rt-th">dᵢ (mm)</th>
-                  <th className="rt-th rt-th-result">Coeff. X</th>
-                  <th className="rt-th rt-th-result">dᵢ min. requis (mm)</th>
-                  <th className="rt-th rt-th-result" style={{ borderLeft: '2px solid #bfdbfe' }}>Débit de base (l/s)</th>
-                  <th className="rt-th rt-th-result">Coeff. de simultanéité</th>
-                  <th className="rt-th rt-th-result">Débit probable (l/s)</th>
+                  <th className="rt-th rt-th-result rt-th-result-first">Coeff. X</th>
+                  <th className="rt-th rt-th-result">Qs (l/s)</th>
+                  <th className="rt-th rt-th-result">Coeff. y</th>
+                  <th className="rt-th rt-th-result">Qp (l/s)</th>
                   <th className="rt-th rt-th-result">Vitesse (m/s)</th>
+                  <th className="rt-th rt-th-result">dᵢ min. requis (mm)</th>
                 </tr>
               </>
             ) : (
@@ -472,7 +466,7 @@ export default function ResultsTable({
                   <th colSpan={3} className="rt-thg">Isolation</th>
                   <th colSpan={2} className="rt-thg">Thermique</th>
                   <th colSpan={2} className="rt-thg">Hydraulique</th>
-                  <th colSpan={5} className="rt-thg rt-thg-result">Résultats</th>
+                  <th colSpan={5} className="rt-thg rt-thg-result rt-th-result-first">Résultats</th>
                 </tr>
                 <tr className="rt-thead-cols">
                   <th className="rt-th">Tronçon</th>
@@ -491,7 +485,7 @@ export default function ResultsTable({
                   <th className="rt-th">T amont (°C)</th>
                   <th className="rt-th">Débit (m³/h)</th>
                   <th className="rt-th">Vitesse (m/s)</th>
-                  <th className="rt-th rt-th-result">Ui (W/m·K)</th>
+                  <th className="rt-th rt-th-result rt-th-result-first">Ui (W/m·K)</th>
                   <th className="rt-th rt-th-result">Pertes th. (W)</th>
                   <th className="rt-th rt-th-result">T aval (°C)</th>
                   <th className="rt-th rt-th-result">ΔT tronçon (°C)</th>

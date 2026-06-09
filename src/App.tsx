@@ -4,7 +4,7 @@ import LeftPanel from './components/LeftPanel'
 import RightPanel from './components/RightPanel'
 import Toolbar from './components/Toolbar'
 import VariantBar from './components/VariantBar'
-import { CalcFluidTabs, CalcModePills, getAutoCalcId, getCalcLabel, getFluidLabel } from './components/CalcSelector'
+import { CalcFluidTabs, getAutoCalcId, getCalcLabel, getFluidLabel, getNetworkLabel } from './components/CalcSelector'
 import NetworkSetupCard from './components/NetworkSetupCard'
 import { DEFAULT_MATERIALS } from './data/materials'
 import { DEFAULT_INSULATIONS } from './data/insulations'
@@ -330,7 +330,7 @@ function initProject() {
 function useVariantHistory() {
   const INIT_ID = 'v0'
   // Per-variant undo stacks — never serialized, reset on load
-  const histRef = useRef<Record<string, { stack: any[], idx: number }>>({ [INIT_ID]: { stack: [initProject()], idx: 0 } })
+  const histRef = useRef<Record<string, { stack: any[], idx: number }>>({ [INIT_ID]: { stack: [buildFluidSetupProject(1, 3, 3)], idx: 0 } })
 
   const [meta,        setMeta]        = useState([{ id: INIT_ID, name: '', isBase: true }])
   const [activeId,    setActiveId]    = useState(INIT_ID)
@@ -437,6 +437,24 @@ function useVariantHistory() {
     })
   }, [])
 
+  // Suppression de l'état de référence.
+  // Retourne 'promoted' si la variante 1 a été promue, 'last' si c'était le seul état.
+  const deleteBaseVariant = useCallback((): 'promoted' | 'last' => {
+    const currentMeta = metaRef.current
+    const base = currentMeta.find(m => m.isBase)
+    if (!base) return 'last'
+    if (currentMeta.length <= 1) return 'last'
+    // Promouvoir la première variante non-base
+    delete histRef.current[base.id]
+    const remaining = currentMeta.filter(m => !m.isBase)
+    const [newBase, ...rest] = remaining
+    const next = [{ ...newBase, isBase: true }, ...rest]
+    setMeta(next)
+    setActiveId(newBase.id)
+    bump(b => b + 1)
+    return 'promoted'
+  }, [])
+
   const renameVariant  = useCallback((id, name) => setMeta(prev => prev.map(m => m.id === id ? { ...m, name } : m)), [])
   const setBaseVariant = useCallback((id) => {
     setMeta(prev => {
@@ -516,7 +534,7 @@ function useVariantHistory() {
   return {
     project, setProject, patchProject, resetProject, undo, redo, canUndo, canRedo,
     meta, activeId, projectName, setProjectName,
-    switchVariant, duplicateVariant, deleteVariant, renameVariant, setBaseVariant, reorderVariant,
+    switchVariant, duplicateVariant, deleteVariant, deleteBaseVariant, renameVariant, setBaseVariant, reorderVariant,
     getFullState, loadState,
   }
 }
@@ -525,7 +543,7 @@ export default function App() {
   const {
     project, setProject, patchProject, resetProject, undo, redo, canUndo, canRedo,
     meta, activeId, projectName, setProjectName,
-    switchVariant, duplicateVariant, deleteVariant, renameVariant, setBaseVariant, reorderVariant,
+    switchVariant, duplicateVariant, deleteVariant, deleteBaseVariant, renameVariant, setBaseVariant, reorderVariant,
     getFullState, loadState,
   } = useVariantHistory()
 
@@ -537,7 +555,7 @@ export default function App() {
   // Sauvegarde d'état par type de réseau : fluidId → { state, calcId }
   const fluidStashRef = useRef(new Map())
 
-  const [pendingSetup, setPendingSetup] = useState(false)
+  const [pendingSetup, setPendingSetup] = useState(true)
 
   // Sens d'écoulement par tronçon — recalculé à chaque modification du réseau
   const flowDirections = useMemo(
@@ -731,12 +749,23 @@ export default function App() {
     } else if (currentFullState) {
       // Nouveau fluide, mais une grille existe déjà → hériter de la structure, réseau vide, pas de setup
       const baseData = currentFullState.variants?.find(v => v.isBase)?.data ?? initProject()
+
+      // Première fois qu'on bascule entre deux modes alimentation (ECS ↔ EF) :
+      // copier les groupes de puisage et les paramètres d'appareils.
+      const isAlimSwitch =
+        (activeFluidId === 'ecs' && fluidId === 'ef' && activeCalcId === 'alimentation-ecs') ||
+        (activeFluidId === 'ef' && fluidId === 'ecs' && activeCalcId === 'alimentation-ef')
+
       const inheritedData = {
         ...initProject(),
         levels:   baseData.levels,
         lineYs:   baseData.lineYs,
         columns:  baseData.columns,
         columnXs: baseData.columnXs,
+        ...(isAlimSwitch ? {
+          alimentationParams: baseData.alimentationParams,
+          points: (baseData.points ?? []).filter(p => p.type === 'groupe'),
+        } : {}),
       }
       loadState({
         version: 2,
@@ -748,13 +777,7 @@ export default function App() {
       setPendingSetup(false)
       setPanelOpen(true)
     } else {
-      // Tout premier fluide → afficher la fenêtre de configuration
-      loadState({
-        version: 2,
-        projectName,
-        activeVariantId: 'v0',
-        variants: [{ id: 'v0', name: '', isBase: true, data: buildFluidSetupProject(1, 3, 3) }],
-      })
+      // Tout premier fluide — la grille est déjà prévisualisée dans le canvas, on garde l'état courant
       setActiveCalcId(resolvedCalcId)
       setPendingSetup(true)
       setPanelOpen(false)
@@ -785,6 +808,42 @@ export default function App() {
     setPanelOpen(true)
     setFitViewRequest(r => r + 1)
   }, [])
+
+  const FLUID_FALLBACKS: Record<string, string[]> = {
+    'ecs':      ['ef', 'chauffage'],
+    'ef':       ['ecs', 'chauffage'],
+    'chauffage': ['ecs', 'ef'],
+  }
+
+  const handleDeleteBase = useCallback(() => {
+    const result = deleteBaseVariant()
+    if (result === 'last') {
+      // Retirer le fluide courant du stash
+      fluidStashRef.current.delete(activeFluidId)
+
+      // Chercher un fluide de repli dans l'ordre de priorité
+      const fallbacks = FLUID_FALLBACKS[activeFluidId] ?? []
+      const fallbackId = fallbacks.find(fid => fluidStashRef.current.has(fid)) ?? null
+
+      if (fallbackId) {
+        const stashed = fluidStashRef.current.get(fallbackId)
+        loadState({ ...stashed.state, projectName })
+        setActiveFluidId(fallbackId)
+        setActiveCalcId(stashed.calcId)
+        setPendingSetup(false)
+        setPanelOpen(true)
+      } else {
+        // Aucun autre réseau — retour à l'écran de lancement
+        setActiveFluidId(null)
+        setActiveCalcId(null)
+        setPendingSetup(true)
+        setPanelOpen(false)
+      }
+
+      setSelectedIds([])
+      setDrawMode('select')
+    }
+  }, [deleteBaseVariant, activeFluidId, loadState, projectName])
 
   const handleCalcChange = useCallback((id) => {
     if (!activeCalcId && !pendingSetup) setPanelOpen(true)
@@ -1126,33 +1185,37 @@ export default function App() {
             )}
           </div>
         </div>
-        <div className="app-hd-center" style={activeCalcId ? { justifyContent: 'flex-start' } : {}}>
-          {!activeFluidId && (
+        <div className="app-hd-center" style={activeCalcId && !pendingSetup ? { justifyContent: 'flex-start' } : {}}>
+          {pendingSetup && (
             <span className="hd-hint">Choisissez un type de réseau :</span>
           )}
-          <CalcFluidTabs activeFluidId={activeFluidId} onFluidChange={handleFluidChange} />
-          {activeFluidId && (
+          <CalcFluidTabs
+            activeFluidId={activeFluidId}
+            activeCalcId={activeCalcId}
+            onFluidChange={handleFluidChange}
+            onCalcChange={handleCalcChange}
+            isFluidKnown={fid => fid === activeFluidId || fluidStashRef.current.has(fid)}
+          />
+          {activeFluidId && activeCalcId && !pendingSetup && (
             <>
               <div className="app-hd-sep" />
-              {activeCalcId && !pendingSetup && (
-                <>
-                  <VariantBar
-                    variants={meta}
-                    activeVariantId={activeId}
-                    onActivate={id => { switchVariant(id); setSelectedIds([]) }}
-                    onDuplicate={duplicateVariant}
-                    onDelete={deleteVariant}
-                    onRename={renameVariant}
-                    onSetBase={setBaseVariant}
-                    onReorder={reorderVariant}
-                  />
-                  <div className="app-hd-sep" />
-                </>
-              )}
-              {!activeCalcId && (
-                <span className="hd-mode-hint">Choisissez un mode de calcul :</span>
-              )}
-              <CalcModePills activeFluidId={activeFluidId} activeCalcId={activeCalcId} onChange={handleCalcChange} />
+              <VariantBar
+                variants={meta}
+                activeVariantId={activeId}
+                calcLabel={getNetworkLabel(activeCalcId)}
+                onActivate={id => { switchVariant(id); setSelectedIds([]) }}
+                onDuplicate={duplicateVariant}
+                onDelete={deleteVariant}
+                onDeleteBase={handleDeleteBase}
+                onRename={renameVariant}
+                onSetBase={setBaseVariant}
+                onReorder={reorderVariant}
+              />
+              <div className="app-hd-sep" />
+              <div className="calc-sub-pills">
+                <button className="calc-sub-pill active">Dimensionnement</button>
+                <button className="calc-sub-pill soon" title="À venir">Pertes de charge</button>
+              </div>
             </>
           )}
         </div>
@@ -1189,11 +1252,11 @@ export default function App() {
       />
 
       <div className="app-body">
-        <aside className={`sidebar-left${(pendingSetup && activeCalcId) || (!pendingSetup && (panelOpen || drawMode === 'editParams')) ? '' : ' sidebar-closed'}${pendingSetup ? ' sidebar-no-transition' : ''}`}>
-          {pendingSetup && activeCalcId ? (
+        <aside className={`sidebar-left${pendingSetup || (!pendingSetup && (panelOpen || drawMode === 'editParams')) ? '' : ' sidebar-closed'}${pendingSetup ? ' sidebar-no-transition' : ''}`}>
+          {pendingSetup ? (
             <NetworkSetupCard
-              fluidLabel={getFluidLabel(activeFluidId)}
-              calcLabel={getCalcLabel(activeCalcId)}
+              fluidLabel={activeFluidId ? getFluidLabel(activeFluidId) : null}
+              calcLabel={activeCalcId ? getCalcLabel(activeCalcId) : null}
               onPreview={handlePreviewUpdate}
               onComplete={handleSetupComplete}
             />
@@ -1241,7 +1304,7 @@ export default function App() {
         </aside>
 
         <div className="canvas-col" style={{ position: 'relative' }}>
-        <main className="canvas-area" style={(!activeFluidId || (pendingSetup && !activeCalcId)) ? { display: 'none' } : {}}>
+        <main className="canvas-area">
           <DrawingCanvas
             levels={project.levels}
             lineYs={project.lineYs}
@@ -1285,6 +1348,7 @@ export default function App() {
             alimentationParams={resolveAlimentationParams(project.alimentationParams)}
             activeCalcId={activeCalcId}
             thermalResults={thermalResults}
+            alimentationResults={alimentationResults}
             fitViewRequest={fitViewRequest}
             valves={project.valves ?? []}
             onValvesChange={v => update('valves', typeof v === 'function' ? v(project.valves ?? []) : v)}

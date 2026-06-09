@@ -48,8 +48,8 @@ function NewVariantPopup({ items, onConfirm, onCancel }) {
 }
 
 export default function VariantBar({
-  variants, activeVariantId,
-  onActivate, onDuplicate, onDelete, onRename, onSetBase, onReorder,
+  variants, activeVariantId, calcLabel,
+  onActivate, onDuplicate, onDelete, onDeleteBase, onRename, onSetBase, onReorder,
 }) {
   const [open,         setOpen]         = useState(false)
   const [showNewPopup, setShowNewPopup] = useState(false)
@@ -74,6 +74,7 @@ export default function VariantBar({
             className={`vbar-selector${open ? ' vbar-selector-open' : ''}`}
             onClick={() => setOpen(o => !o)}>
             {activeItem?.isBase && <span className="vbar-sel-star">★</span>}
+            {calcLabel && <span className="vbar-calc-tag">{calcLabel}</span>}
             <span className="vbar-sel-text">{activeItem?.display ?? '—'}</span>
             <span className="vbar-sel-chev">{open ? '▴' : '▾'}</span>
           </button>
@@ -92,13 +93,14 @@ export default function VariantBar({
                           title="Définir comme état de référence"
                           onClick={e => { e.stopPropagation(); onSetBase(item.id) }}>☆</button>
                     }
+                    {calcLabel && <span className="vbar-calc-tag">{calcLabel}</span>}
                     <span className="vbar-opt-label">{item.display}</span>
                     <button
                       className={`vbar-pencil-btn${editingId === item.id ? ' active' : ''}`}
                       title="Renommer"
                       onClick={e => { e.stopPropagation(); setEditingId(id => id === item.id ? null : item.id) }}>✎</button>
-                    {!item.isBase && (
-                      <span className="vbar-opt-btns" onClick={e => e.stopPropagation()}>
+                    <span className="vbar-opt-btns" onClick={e => e.stopPropagation()}>
+                      {!item.isBase && (<>
                         <button
                           className="vbar-ord-btn"
                           disabled={i <= 1}
@@ -109,12 +111,15 @@ export default function VariantBar({
                           disabled={i === items.length - 1}
                           title="Descendre"
                           onClick={() => onReorder(i, i + 1)}>▼</button>
-                        <button
-                          className="vbar-ord-btn vbar-del-btn"
-                          title="Supprimer cette variante"
-                          onClick={() => { onDelete(item.id); setOpen(false) }}>✕</button>
-                      </span>
-                    )}
+                      </>)}
+                      <button
+                        className="vbar-ord-btn vbar-del-btn"
+                        title={item.isBase ? "Supprimer l'état de référence" : "Supprimer cette variante"}
+                        onClick={() => {
+                          if (item.isBase) { onDeleteBase?.(); } else { onDelete(item.id) }
+                          setOpen(false)
+                        }}>✕</button>
+                    </span>
                   </div>
                   {editingId === item.id && (
                     <input

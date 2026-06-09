@@ -163,14 +163,16 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
 
         <div className="lp-field">
           <label className="lp-label">Nom</label>
-          <div style={{ fontSize: 11, padding: '3px 7px', background: isDefault ? '#f5f3ff' : '#f9fafb',
-            border: `1px solid ${isDefault ? '#e4dff5' : '#e5e7eb'}`, borderRadius: 4,
-            marginBottom: 4, color: '#111827' }}>
-            {displayName}
-          </div>
           <input value={seg.name ?? ''} onChange={e => set('name', e.target.value || null)}
-            placeholder="Nom personnalisé (optionnel)..." />
+            placeholder={displayName} />
         </div>
+
+        <Field label="Longueur" unit="m">
+          <input type="number" min="0"
+            value={seg.length_override ?? ''}
+            placeholder="saisie manuelle"
+            onChange={e => set('length_override', e.target.value === '' ? null : +e.target.value)} />
+        </Field>
 
         <Field label="Matériau">
           {enabledMats.length === 0
@@ -208,6 +210,44 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
         )}
 
         <hr className="rp-divider" />
+
+        {/* ── Hydraulique : Débit / Vitesse ── */}
+        {(() => {
+          const isCollective = ad?.method === 'collective'
+          const c = isCollective ? ad?.collective : null
+          const area = c && di_mm ? Math.PI * (di_mm / 1000) ** 2 / 4 : null
+          const velocity = area && c?.Qp > 0 ? (c.Qp * 1e-3) / area : null
+          const debitLs = isCollective && c?.Qp != null ? c.Qp : null
+          if (velocity == null && debitLs == null) return null
+          const velErr  = velocity != null && velocity > 2.0
+          const velWarn = velocity != null && velocity > 1.5 && velocity <= 2.0
+          return (
+            <>
+              <SectionLabel>Hydraulique</SectionLabel>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                {debitLs != null && (
+                  <div style={{ flex: 1, padding: '8px 10px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                    <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Débit prob.</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                      <span style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>{debitLs.toFixed(2)}</span>
+                      <span style={{ fontSize: 11, color: '#9ca3af' }}>l/s</span>
+                    </div>
+                  </div>
+                )}
+                {velocity != null && (
+                  <div style={{ flex: 1, padding: '8px 10px', background: '#fff', border: `1px solid ${velErr ? '#fca5a5' : velWarn ? '#fed7aa' : '#e5e7eb'}`, borderRadius: 6 }}>
+                    <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Vitesse</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                      <span style={{ fontSize: 18, fontWeight: 700, color: velErr ? '#dc2626' : velWarn ? '#f97316' : '#111827' }}>{velocity.toFixed(2)}</span>
+                      <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <hr className="rp-divider" />
+            </>
+          )
+        })()}
 
         <SectionLabel>Résultats</SectionLabel>
 
@@ -607,39 +647,28 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
       {/* Identification */}
       <SectionLabel>Identification</SectionLabel>
       <div className="lp-field">
-        <label className="lp-label">Nom automatique</label>
-        <div style={{
-          fontSize: 12, lineHeight: 1.5, padding: '4px 7px',
-          background: isDefault ? '#f5f3ff' : '#f9fafb',
-          border: `1px solid ${isDefault ? '#e4dff5' : '#e5e7eb'}`,
-          borderRadius: 4, marginBottom: 5, wordBreak: 'break-word',
-          color: '#111827',
-        }}>
-          {displayName}
-        </div>
+        <label className="lp-label">Nom</label>
         <input
           value={seg.name ?? ''}
           onChange={e => set('name', e.target.value || null)}
-          placeholder="Nom personnalisé (optionnel)..."
+          placeholder={displayName}
         />
-        {isDefault
-          ? <span style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, display: 'block' }}>généré automatiquement</span>
-          : <span style={{ fontSize: 10, color: '#6b7280', marginTop: 2, display: 'block' }}>personnalisé · effacez pour rétablir le défaut</span>
-        }
+        {!isDefault && (
+          <span style={{ fontSize: 10, color: '#6b7280', marginTop: 2, display: 'block' }}>personnalisé · effacez pour rétablir le défaut</span>
+        )}
       </div>
+
+      <Field label="Type de tronçon">
+        <select value={seg.type} onChange={e => set('type', e.target.value)}>
+          <option value="aller">Aller ECS</option>
+          <option value="retour">Retour ECS</option>
+        </select>
+      </Field>
 
       <hr className="rp-divider" />
 
       {/* Hydraulique */}
       <SectionLabel>Hydraulique</SectionLabel>
-      <Field label="Longueur" unit="m">
-        <input type="number" min="0"
-          value={seg.length_override ?? ''}
-          placeholder="saisie manuelle"
-          onChange={e => set('length_override', e.target.value === '' ? null : +e.target.value)} />
-      </Field>
-
-      {/* Débit / Vitesse */}
       {(() => {
         const di_mm  = seg.di_override ?? dnDef?.di ?? null
         const area   = di_mm ? Math.PI * (di_mm / 1000) ** 2 / 4 : null
@@ -716,20 +745,15 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
 
       <hr className="rp-divider" />
 
-      {/* Réseau ECS */}
-
-      <SectionLabel>Réseau ECS</SectionLabel>
-      <Field label="Type de tronçon">
-        <select value={seg.type} onChange={e => set('type', e.target.value)}>
-          <option value="aller">Aller ECS</option>
-          <option value="retour">Retour ECS</option>
-        </select>
-      </Field>
-
-      <hr className="rp-divider" />
-
       {/* Canalisation */}
       <SectionLabel>Canalisation</SectionLabel>
+      <Field label="Longueur" unit="m">
+        <input type="number" min="0"
+          value={seg.length_override ?? ''}
+          placeholder="saisie manuelle"
+          onChange={e => set('length_override', e.target.value === '' ? null : +e.target.value)} />
+      </Field>
+
       <Field label="Matériau">
         {enabledMats.length === 0
           ? <p className="lp-hint">Aucun matériau activé dans les paramètres.</p>

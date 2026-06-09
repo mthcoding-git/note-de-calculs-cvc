@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 function Stepper({ value, onChange, min = 0, max = 30 }) {
   return (
@@ -27,6 +27,9 @@ export default function NetworkSetupCard({ fluidLabel, calcLabel, onPreview, onC
   const [nFloors,  setNFloors]  = useState(3)
   const [nCols,    setNCols]    = useState(3)
 
+  // Sync canvas preview on first render
+  useEffect(() => { onPreview?.(1, 3, 3) }, [])
+
   const update = (key, val) => {
     const next = { nSousSol, nFloors, nCols, [key]: val }
     if (key === 'nSousSol') setNSousSol(val)
@@ -37,15 +40,18 @@ export default function NetworkSetupCard({ fluidLabel, calcLabel, onPreview, onC
 
   const levelNames = buildLevelNames(nSousSol, nFloors)
   const total = levelNames.length
+  const ready = !!calcLabel
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#fff' }}>
 
       {/* En-tête */}
       <div style={{ padding: '18px 16px 14px', borderBottom: '1px solid #e5e7eb' }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
-          {fluidLabel}{calcLabel ? ` · ${calcLabel}` : ''}
-        </div>
+        {(fluidLabel || calcLabel) && (
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+            {fluidLabel}{calcLabel ? ` · ${calcLabel}` : ''}
+          </div>
+        )}
         <div style={{ fontSize: 15, fontWeight: 700, color: '#1f2937' }}>
           Configuration du bâtiment
         </div>
@@ -86,11 +92,16 @@ export default function NetworkSetupCard({ fluidLabel, calcLabel, onPreview, onC
       {/* Bouton */}
       <div style={{ padding: '12px 16px', borderTop: '1px solid #e5e7eb' }}>
         <button
-          onClick={() => onComplete?.()}
+          onClick={() => ready && onComplete?.()}
+          disabled={!ready}
           style={{
             width: '100%', padding: '10px 0', borderRadius: 7, border: 'none',
-            background: '#4f46e5', color: '#fff', fontSize: 13, fontWeight: 700,
-            cursor: 'pointer', boxShadow: '0 2px 8px rgba(79,70,229,0.25)',
+            background: ready ? '#4f46e5' : '#e5e7eb',
+            color: ready ? '#fff' : '#9ca3af',
+            fontSize: 13, fontWeight: 700,
+            cursor: ready ? 'pointer' : 'not-allowed',
+            boxShadow: ready ? '0 2px 8px rgba(79,70,229,0.25)' : 'none',
+            transition: 'background 0.15s, color 0.15s, box-shadow 0.15s',
           }}>
           Créer le réseau →
         </button>

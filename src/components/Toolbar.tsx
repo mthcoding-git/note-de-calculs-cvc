@@ -65,10 +65,10 @@ const DISPLAY_OPTIONS = [
   { key: 'nomTroncon',       label: 'Nom du tronçon',          calcIds: null },
   { key: 'material',         label: 'Matériau',                calcIds: null },
   { key: 'dn',               label: 'DN',                      calcIds: null },
-  { key: 'length',           label: 'Longueur (m)',            calcIds: ['bouclage-ecs'] },
+  { key: 'length',           label: 'Longueur (m)',            calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
   { key: 'insulation',       label: 'Isolant & épaisseur',     calcIds: ['bouclage-ecs'] },
-  { key: 'debit',            label: 'Débit (m³/h)',            calcIds: ['bouclage-ecs'] },
-  { key: 'vitesse',          label: 'Vitesse (m/s)',           calcIds: ['bouclage-ecs'] },
+  { key: 'debit',            label: 'Débit',                   calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
+  { key: 'vitesse',          label: 'Vitesse (m/s)',           calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
   { key: 'temperatureNoeud', label: 'T° nœuds (°C)',           calcIds: ['bouclage-ecs'] },
   { key: 'deltaT',           label: 'ΔT tronçon (°C)',         calcIds: ['bouclage-ecs'] },
   { key: 'equipment',        label: 'Équipements (groupes PP)', calcIds: ['alimentation-ecs', 'alimentation-ef'] },
@@ -128,7 +128,7 @@ export default function Toolbar({
         className="tb-btn tb-panel-toggle"
         onClick={onTogglePanel}
         title={isEditParams ? 'Quitter Attribuer et ouvrir le panneau Paramètres' : panelOpen ? 'Masquer le panneau' : 'Afficher le panneau'}>
-        {panelOpen ? '◀ Paramètres' : '▶ Paramètres'}
+        {isEditParams ? '▼ Paramètres' : panelOpen ? '◀ Paramètres' : '▶ Paramètres'}
       </button>
 
       <div className="toolbar-sep" />
