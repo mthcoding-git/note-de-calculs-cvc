@@ -169,6 +169,40 @@ function moveGaine(project, gapIdx, finalLeft) {
   }
 }
 
+// Adjusts (or removes) the PP zone for a column after group deletion.
+// Uses max(internalId) across remaining groups to determine the required width.
+function adjustPPZone(p, colId, newPoints, newSegments) {
+  const remainingGroups = newPoints.filter(pt => pt.type === 'groupe' && pt.colId === colId)
+  const ppIdx = p.columns.findIndex(c => c.isPPZone && c.colId === colId)
+  if (remainingGroups.length === 0) {
+    if (ppIdx >= 0) {
+      const xLeft  = p.columnXs[ppIdx]
+      const xRight = p.columnXs[ppIdx + 1]
+      const { newXs, newPoints: pts2, newSegments: segs2 } = processZoneRemoval(
+        p.columnXs, newPoints, newSegments, xLeft, xRight
+      )
+      const newColumns = p.columns.filter(c => c.id !== p.columns[ppIdx].id)
+      const dedupXs = newXs.filter((x, i) => i === 0 || x !== newXs[i - 1])
+      return { ...p, columns: newColumns, columnXs: dedupXs, points: pts2, segments: segs2 }
+    }
+    return { ...p, points: newPoints, segments: newSegments }
+  }
+  if (ppIdx >= 0) {
+    const maxId = Math.max(...remainingGroups.map(g => g.internalId ?? 1))
+    const newPPWidth = 23 + maxId * (LOCAL_W + LOCAL_GAP)
+    const ppRight = p.columnXs[ppIdx + 1]
+    const currentPPWidth = ppRight - p.columnXs[ppIdx]
+    const shrinkAmount = currentPPWidth - newPPWidth
+    if (shrinkAmount > 0) {
+      const { newXs, newPoints: pts2, newSegments: segs2 } = processZoneRemoval(
+        p.columnXs, newPoints, newSegments, ppRight - shrinkAmount, ppRight
+      )
+      return { ...p, columnXs: newXs, points: pts2, segments: segs2 }
+    }
+  }
+  return { ...p, points: newPoints, segments: newSegments }
+}
+
 // Removes a groupe point and all segments directly connected to it.
 // Nodes at the other end of those segments are always kept.
 function removeGroupeBranch(points, segments, groupePtId) {
@@ -258,6 +292,8 @@ const DEFAULT_CHAUFFERIE = {
 
 const DEFAULT_POINTS = []
 
+const CANVAS_DISPLAY_RESET = { nomTroncon: false, length: false, material: false, dn: false, insulation: false, debit: false, vitesse: false, temperatureNoeud: false, deltaT: false, equipment: false }
+
 function buildFluidSetupProject(nSousSol, nFloors, nCols) {
   const levels = []
   for (let i = nSousSol; i >= 1; i--)
@@ -308,6 +344,21 @@ function useVariantHistory() {
   useEffect(() => { metaRef.current = meta },        [meta])
   useEffect(() => { activeIdRef.current = activeId },    [activeId])
   useEffect(() => { projectNameRef.current = projectName }, [projectName])
+
+  // Sync new DEFAULT_MATERIALS entries into all in-memory variants on mount
+  useEffect(() => {
+    let changed = false
+    Object.values(histRef.current).forEach(hist => {
+      const data = hist.stack[hist.idx]
+      if (!Array.isArray(data?.materials)) return
+      const existingIds = new Set(data.materials.map(m => m.id))
+      const missing = DEFAULT_MATERIALS.filter(m => !existingIds.has(m.id))
+      if (missing.length === 0) return
+      hist.stack[hist.idx] = { ...data, materials: [...data.materials, ...missing] }
+      changed = true
+    })
+    if (changed) bump(b => b + 1)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeHist = () => histRef.current[activeId]
   const project = activeHist()?.stack[activeHist().idx] ?? initProject()
@@ -446,6 +497,15 @@ function useVariantHistory() {
       })
       return { ...v, data: { ...data, columns: newColumns, columnXs: newColumnXs } }
     })
+    // Migrate materials: add any new DEFAULT_MATERIALS entries missing from saved state
+    variants = variants.map(v => {
+      const data = v.data
+      if (!Array.isArray(data?.materials)) return v
+      const existingIds = new Set(data.materials.map(m => m.id))
+      const missing = DEFAULT_MATERIALS.filter(m => !existingIds.has(m.id))
+      if (missing.length === 0) return v
+      return { ...v, data: { ...data, materials: [...data.materials, ...missing] } }
+    })
     histRef.current = Object.fromEntries(variants.map(v => [v.id, { stack: [v.data], idx: 0 }]))
     setMeta(variants.map(({ id, name, isBase }) => ({ id, name, isBase: !!isBase })))
     setActiveId(state.activeVariantId ?? variants[0].id)
@@ -571,7 +631,7 @@ export default function App() {
   const [connHighlightIds,   setConnHighlightIds]   = useState([])
   const [groupesEditMode,    setGroupesEditMode]    = useState(false)
   const [showGroupeNames,    setShowGroupeNames]    = useState(false)
-  const [canvasDisplay, setCanvasDisplay] = useState({ nomTroncon: false, length: false, material: false, dn: false, insulation: false, debit: false, vitesse: false, temperatureNoeud: false, deltaT: false })
+  const [canvasDisplay, setCanvasDisplay] = useState(CANVAS_DISPLAY_RESET)
   const [showResultsTable, setShowResultsTable] = useState(false)
   const [tableHeight, setTableHeight] = useState(300)
   const tableHeightRef = useRef(0)
@@ -729,6 +789,7 @@ export default function App() {
   const handleCalcChange = useCallback((id) => {
     if (!activeCalcId && !pendingSetup) setPanelOpen(true)
     setActiveCalcId(id)
+    setCanvasDisplay(CANVAS_DISPLAY_RESET)
   }, [activeCalcId, pendingSetup])
 
   const startTableResize = useCallback((e) => {
@@ -848,19 +909,25 @@ export default function App() {
       const levelIdx = p.levels.findIndex(l => l.id === levelId)
       if (levelIdx < 0) return p
       const existing = p.points.filter(pt => pt.type === 'groupe' && pt.colId === colId && pt.levelId === levelId)
-      const k = existing.length
-      const minSep = 23 + (k + 1) * (LOCAL_W + LOCAL_GAP)
 
-      // Find existing PP zone gap column for this column (immediately after colIdx)
+      // Smallest missing internalId for this col/level
+      const usedIds = new Set(existing.map(pt => pt.internalId).filter(n => n != null))
+      let internalId = 1
+      while (usedIds.has(internalId)) internalId++
+
+      // PP zone width based on max internalId across ALL levels for this column
+      const allForCol = p.points.filter(pt => pt.type === 'groupe' && pt.colId === colId)
+      const currentMaxId = allForCol.length > 0 ? Math.max(...allForCol.map(g => g.internalId ?? 1)) : 0
+      const newMaxId = Math.max(currentMaxId, internalId)
+      const minSep = 23 + newMaxId * (LOCAL_W + LOCAL_GAP)
+
       const ppIdx = p.columns.findIndex(c => c.isPPZone && c.colId === colId)
       let base = p
 
       if (ppIdx < 0) {
-        // First group: create a PP zone gap column right after the column
         const xInsert = p.columnXs[colIdx + 1]
         base = expandZone(p, xInsert, minSep)
         const newPPZone = { id: uid('ppz'), isGap: true, isPPZone: true, colId, levelIds: 'all' }
-        // Re-insert xInsert as the left edge of PP zone (right edge of pipe column stays at xInsert)
         const insertAt = colIdx + 1
         base = {
           ...base,
@@ -868,7 +935,6 @@ export default function App() {
           columnXs:  [...base.columnXs.slice(0, insertAt), xInsert,   ...base.columnXs.slice(insertAt)],
         }
       } else {
-        // PP zone exists: expand to the right if needed
         const ppLeft  = p.columnXs[ppIdx]
         const ppRight = p.columnXs[ppIdx + 1]
         const currentPP = ppRight - ppLeft
@@ -877,14 +943,14 @@ export default function App() {
         }
       }
 
-      // Place new group inside the PP zone
+      // Place new group at the slot corresponding to its internalId
       const finalPPIdx = base.columns.findIndex(c => c.isPPZone && c.colId === colId)
       const ppLeft = base.columnXs[finalPPIdx]
-      const newX = snapG(ppLeft + 13 + k * (LOCAL_W + LOCAL_GAP) + LOCAL_W / 2)
+      const newX = snapG(ppLeft + 13 + (internalId - 1) * (LOCAL_W + LOCAL_GAP) + LOCAL_W / 2)
       const yBot = p.lineYs[levelIdx]
       const yTop = p.lineYs[levelIdx + 1] ?? (p.lineYs[levelIdx] - 210)
       const newY = snapG((yBot + yTop) / 2)
-      const newPt = { id: uid('grp'), type: 'groupe', name: '', showName: false, colId, levelId, x: newX, y: newY, isLocked: false }
+      const newPt = { id: uid('grp'), type: 'groupe', name: '', showName: false, colId, levelId, x: newX, y: newY, isLocked: false, internalId }
       return { ...base, points: [...base.points, newPt] }
     })
   }, [setProject])
@@ -893,42 +959,19 @@ export default function App() {
     setProject(p => {
       const existing = p.points.filter(pt => pt.type === 'groupe' && pt.colId === colId && pt.levelId === levelId)
       if (existing.length === 0) return p
-      const toRemove = [...existing].sort((a, b) => a.x - b.x).at(-1)
+      // Remove the group with the highest internalId (fallback: highest X for legacy data)
+      const toRemove = [...existing].sort((a, b) => (a.internalId ?? a.x) - (b.internalId ?? b.x)).at(-1)
       const { points: newPoints, segments: newSegments } = removeGroupeBranch(p.points, p.segments, toRemove.id)
+      return adjustPPZone(p, colId, newPoints, newSegments)
+    })
+  }, [setProject])
 
-      // If no groups remain for this column at all, remove the PP zone gap column
-      const remainingGroups = newPoints.filter(pt => pt.type === 'groupe' && pt.colId === colId)
-      const ppIdx = p.columns.findIndex(c => c.isPPZone && c.colId === colId)
-      if (remainingGroups.length === 0) {
-        if (ppIdx >= 0) {
-          const xLeft  = p.columnXs[ppIdx]
-          const xRight = p.columnXs[ppIdx + 1]
-          const { newXs, newPoints: pts2, newSegments: segs2 } = processZoneRemoval(
-            p.columnXs, newPoints, newSegments, xLeft, xRight
-          )
-          const newColumns = p.columns.filter(c => c.id !== p.columns[ppIdx].id)
-          const dedupXs = newXs.filter((x, i) => i === 0 || x !== newXs[i - 1])
-          return { ...p, columns: newColumns, columnXs: dedupXs, points: pts2, segments: segs2 }
-        }
-      } else if (ppIdx >= 0) {
-        // Shrink PP zone to exactly fit the remaining groups (max groups in any level)
-        const groupsPerLevel = new Map()
-        for (const pt of remainingGroups) {
-          groupsPerLevel.set(pt.levelId, (groupsPerLevel.get(pt.levelId) ?? 0) + 1)
-        }
-        const maxGroups = Math.max(...groupsPerLevel.values())
-        const newPPWidth = 23 + maxGroups * (LOCAL_W + LOCAL_GAP)
-        const ppRight = p.columnXs[ppIdx + 1]
-        const currentPPWidth = ppRight - p.columnXs[ppIdx]
-        const shrinkAmount = currentPPWidth - newPPWidth
-        if (shrinkAmount > 0) {
-          const { newXs, newPoints: pts2, newSegments: segs2 } = processZoneRemoval(
-            p.columnXs, newPoints, newSegments, ppRight - shrinkAmount, ppRight
-          )
-          return { ...p, columnXs: newXs, points: pts2, segments: segs2 }
-        }
-      }
-      return { ...p, points: newPoints, segments: newSegments }
+  const handleRemoveGroupeById = useCallback((ptId) => {
+    setProject(p => {
+      const toRemove = p.points.find(pt => pt.id === ptId && pt.type === 'groupe')
+      if (!toRemove) return p
+      const { points: newPoints, segments: newSegments } = removeGroupeBranch(p.points, p.segments, ptId)
+      return adjustPPZone(p, toRemove.colId, newPoints, newSegments)
     })
   }, [setProject])
 
@@ -1235,6 +1278,7 @@ export default function App() {
             networkFlows={networkFlows}
             flowDirections={flowDirections}
             groupesEditMode={groupesEditMode}
+            onRemoveGroupeById={handleRemoveGroupeById}
             showGroupeNames={showGroupeNames}
             canvasDisplay={canvasDisplay}
             roleMap={effectiveRoleMap}

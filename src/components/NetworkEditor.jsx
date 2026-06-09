@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { sf } from '../utils/fmt'
 import {
   ReactFlow,
   Controls,
@@ -72,7 +73,7 @@ export default function NetworkEditor({
     return {
       ...e,
       label: r
-        ? `${name ? name + ' | ' : ''}${r.T_in.toFixed(1)}° → ${r.T_out.toFixed(1)}°C`
+        ? `${name ? name + ' | ' : ''}${sf(r.T_in, 1)}° → ${sf(r.T_out, 1)}°C`
         : name,
       markerEnd: { type: MarkerType.ArrowClosed },
       style: r ? { stroke: '#3b82f6', strokeWidth: 2 } : { strokeWidth: 2 },

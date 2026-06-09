@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useMemo } from 'react'
 import { computeSegUI } from '../utils/thermalCalc'
 import { getDisplayName } from '../utils/naming'
 
-const fmt = (v, d) => v != null && !isNaN(v) ? Number(v).toFixed(d) : '—'
+const fmt = (v, d) => { const n = Number(v); return typeof v === 'number' && Number.isFinite(n) ? n.toFixed(d) : '—' }
 const TOTAL_COLS = 21
 const ALIM_COLS  = 13
 
@@ -98,8 +98,8 @@ function SegRow({ row, segments, points, materials, insulations,
   const lenIsDefault  = seg.length_override == null
   const flowIsDefault = seg.flowRate == null && seg.velocity == null
 
-  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id))
-    .replace(/^(Collecteur (aller|retour)|Aller|Retour) ECS\s*–\s*/, '')
+  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId)
+    .replace(/^((Collecteur (aller|retour)|Aller|Retour) ECS|EF)\s*–\s*/, '')
   const colonneName = extractColonne(shortName, columns)
   const levelName   = segLevelName(seg, levels, lineYs)
   const indent      = depth * 13
@@ -183,7 +183,7 @@ function JunctionRow({ row, thermalResults, globalParams, selectedIds, onSelectI
 
 function SegRowAlim({ row, segments, points, materials, insulations,
                       levels, lineYs, columns, columnXs, chaufferie,
-                      alimentationResults, selectedIds, onSelectIds, rowRef, roleMap, hideAllerBadge }) {
+                      alimentationResults, selectedIds, onSelectIds, rowRef, roleMap, hideAllerBadge, activeCalcId }) {
   const { seg } = row
 
   const ar   = alimentationResults?.get(seg.id)
@@ -206,8 +206,8 @@ function SegRowAlim({ row, segments, points, materials, insulations,
   const velErr    = velocity != null && velocity > 2.0
   const velWarn   = velocity != null && velocity > 1.5 && velocity <= 2.0
 
-  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id))
-    .replace(/^(Collecteur (aller|retour)|Aller|Retour) ECS\s*–\s*/, '')
+  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId)
+    .replace(/^((Collecteur (aller|retour)|Aller|Retour) ECS|EF)\s*–\s*/, '')
 
   const methodLabel  = ar == null ? '—' : ar.method === 'individual' ? 'Individuelle' : 'Collective'
   const methodReason = ar == null ? '' : ar.method === 'collective'
@@ -359,7 +359,7 @@ export default function ResultsTable({
   const sharedAlim = {
     segments, points, materials, insulations,
     levels, lineYs, columns, columnXs, chaufferie,
-    alimentationResults, selectedIds, onSelectIds, roleMap,
+    alimentationResults, selectedIds, onSelectIds, roleMap, activeCalcId,
   }
 
   // ── EF : tableau unique multi-sources ──────────────────────────────────────

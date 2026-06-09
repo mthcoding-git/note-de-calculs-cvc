@@ -2,6 +2,15 @@ import { useState } from 'react'
 import { ABAQUE } from '../utils/alimentationCalc'
 import { getDisplayName } from '../utils/naming'
 import { computeSegUI, getSegAmbTemp } from '../utils/thermalCalc'
+import { sf } from '../utils/fmt'
+
+function tAvalStyle(T, T_depart) {
+  if (T == null) return {}
+  if (T < 50) return { background: '#dc2626', color: '#fff', fontWeight: 700, borderColor: '#b91c1c', labelColor: 'rgba(255,255,255,0.8)' }
+  const ratio = Math.max(0, Math.min(1, (T - 50) / Math.max(T_depart - 50, 1)))
+  const hue   = Math.round(120 * ratio)
+  return { background: `hsl(${hue},58%,91%)`, borderColor: `hsl(${hue},50%,68%)`, labelColor: `hsl(${hue},40%,32%)` }
+}
 
 function Field({ label, unit, children }) {
   return (
@@ -35,7 +44,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
   const dnDef       = selMat?.dns.find(d => d.dn === seg.dn)
 
   const isDefault   = !seg.name
-  const displayName = getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id))
+  const displayName = getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId)
 
   const he = globalParams?.he ?? 10
   const uiValue = computeSegUI(seg, materials, insulations, he)
@@ -72,7 +81,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
             textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>{label}</div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
             <span style={{ fontSize: 18, fontWeight: 700, color: ko ? '#dc2626' : '#111827' }}>
-              {di_min != null ? di_min.toFixed(1) : '—'}
+              {sf(di_min, 1)}
             </span>
             <span style={{ fontSize: 11, color: '#9ca3af' }}>mm</span>
           </div>
@@ -211,8 +220,8 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
           const methodReason = isCollective
             ? ad.collectiveReason === 'N > 5'
               ? `N = ${ad.N} > 5`
-              : `N = ${ad.N} ≤ 5 et X = ${ad.X.toFixed(1)} > 15`
-            : `N = ${ad.N} ≤ 5 et X = ${ad.X.toFixed(1)} ≤ 15`
+              : `N = ${ad.N} ≤ 5 et X = ${sf(ad.X, 1)} > 15`
+            : `N = ${ad.N} ≤ 5 et X = ${sf(ad.X, 1)} ≤ 15`
 
           const Cell = ({ label, value, unit }) => (
             <div style={{ padding: '7px 5px', background: '#fff', textAlign: 'center' }}>
@@ -269,13 +278,13 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr' }}>
                       <Cell label="Appareils en aval" value={String(c.N_for_y)} unit="" />
                       <div style={{ background: '#e5e7eb' }} />
-                      <Cell label="Débit de base" value={c.Qs_for_y.toFixed(3)} unit="l/s" />
+                      <Cell label="Débit de base" value={sf(c.Qs_for_y, 3)} unit="l/s" />
                     </div>
                     <div style={{ height: 1, background: '#e5e7eb' }} />
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr' }}>
-                      <Cell label="Coeff. de simultanéité y" value={c.y.toFixed(3)} unit="" />
+                      <Cell label="Coeff. de simultanéité y" value={sf(c.y, 3)} unit="" />
                       <div style={{ background: '#e5e7eb' }} />
-                      <Cell label="Débit probable" value={c.Qp.toFixed(3)} unit="l/s" />
+                      <Cell label="Débit probable" value={sf(c.Qp, 3)} unit="l/s" />
                     </div>
                   </div>
                 ) : (
@@ -290,7 +299,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                     border: '1px solid #bfdbfe', borderRadius: 5, fontSize: 10, color: '#1e40af' }}>
                     <span style={{ fontWeight: 700 }}>Enseignement</span>
                     {' — lavabos et douches en simultané : '}
-                    {c.N_sim} app. → {c.Qs_sim.toFixed(3)} l/s (plein débit, y = 1)
+                    {c.N_sim} app. → {sf(c.Qs_sim, 3)} l/s (plein débit, y = 1)
                   </div>
                 )}
 
@@ -300,7 +309,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                     <span style={{ fontWeight: 700, color: '#c2410c' }}>WC robinets de chasse</span>
                     {' — '}{c.N_wcc} installé{c.N_wcc > 1 ? 's' : ''}
                     {' → '}{c.N_wcc_eff} simultané{c.N_wcc_eff > 1 ? 's' : ''}
-                    {' → '}{c.Qp_wcc.toFixed(3)} l/s
+                    {' → '}{sf(c.Qp_wcc, 3)} l/s
                   </div>
                 )}
 
@@ -321,7 +330,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
 
                 {di_mm != null && ad.di_min != null && di_mm < ad.di_min && (
                   <Alert level="error"
-                    msg={`di = ${di_mm} mm insuffisant — minimum requis : ${ad.di_min.toFixed(1)} mm`} />
+                    msg={`di = ${di_mm} mm insuffisant — minimum requis : ${sf(ad.di_min, 1)} mm`} />
                 )}
 
                 {/* N + X — centrés, police réduite */}
@@ -340,7 +349,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                       textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>
                       Coeff. d'usage X
                     </div>
-                    <span style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>{ad.X.toFixed(1)}</span>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>{sf(ad.X, 1)}</span>
                   </div>
                 </div>
 
@@ -439,17 +448,20 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                 {/* ── Températures ── */}
                 <div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    {[['T° amont', T_from], ['T° aval', T_to]].map(([label, val]) => (
-                      <div key={label} style={{ flex: 1, padding: '9px 8px', background: '#fffbeb',
-                        border: '1px solid #fde68a', borderRadius: 6, textAlign: 'center' }}>
-                        <div style={{ fontSize: 9, color: '#a16207', fontWeight: 700, marginBottom: 3,
-                          textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
-                        <div style={{ fontSize: 20, fontWeight: 700, color: '#111827', lineHeight: 1 }}>
-                          {val.toFixed(2)}
+                    {[['T° amont', T_from], ['T° aval', T_to]].map(([label, val]) => {
+                      const ts = tAvalStyle(val, T_depart)
+                      return (
+                        <div key={label} style={{ flex: 1, padding: '9px 8px', background: ts.background ?? '#fffbeb',
+                          border: `1px solid ${ts.borderColor ?? '#fde68a'}`, borderRadius: 6, textAlign: 'center' }}>
+                          <div style={{ fontSize: 9, color: ts.labelColor ?? '#a16207', fontWeight: 700, marginBottom: 3,
+                            textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+                          <div style={{ fontSize: 20, fontWeight: ts.fontWeight ?? 700, color: ts.color ?? '#111827', lineHeight: 1 }}>
+                            {sf(val, 2)}
+                          </div>
+                          <div style={{ fontSize: 10, color: ts.color ? 'rgba(255,255,255,0.7)' : '#9ca3af', marginTop: 2 }}>°C</div>
                         </div>
-                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>°C</div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                   {T_to < 50 && (
                     <Alert level="error"
@@ -462,15 +474,15 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                   <div style={{ textAlign: 'center', fontSize: 11, color: '#6b7280', lineHeight: 1.4 }}>
                     ΔT depuis départ :{' '}
                     <span style={{ fontWeight: 700, color: dtFromProd > 5 && isRetour && isLinkedToProdECS ? '#f97316' : '#374151' }}>
-                      {dtFromProd.toFixed(2)} K
+                      {sf(dtFromProd, 2)} K
                     </span>
                     <span style={{ color: '#9ca3af', marginLeft: 5, fontSize: 10 }}>
-                      ({T_depart.toFixed(0)} → {T_to.toFixed(2)} °C)
+                      ({sf(T_depart, 0)} → {sf(T_to, 2)} °C)
                     </span>
                   </div>
                   {dtFromProd > 5 && isRetour && isLinkedToProdECS && (
                     <Alert level="warning"
-                      msg={`ΔT = ${dtFromProd.toFixed(1)} K > 5 K — objectif de dimensionnement non atteint`} />
+                      msg={`ΔT = ${sf(dtFromProd, 1)} K > 5 K — objectif de dimensionnement non atteint`} />
                   )}
                 </div>
 
@@ -510,7 +522,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                     {[
                       { label: 'Débit',      value: flowRate != null ? flowRate.toFixed(3) : '—', unit: 'm³/h'   },
                       { label: 'UI',         value: uiValue  != null ? uiValue.toFixed(4)  : '—', unit: 'W/(m·K)' },
-                      { label: 'Pertes th.', value: Q.toFixed(1),                                  unit: 'W'      },
+                      { label: 'Pertes th.', value: sf(Q, 1),                                       unit: 'W'      },
                     ].reduce((acc, item, i) => {
                       if (i > 0) acc.push(
                         <div key={`sep${i}`} style={{ background: '#e5e7eb' }} />
@@ -540,7 +552,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                     Données techniques
                   </div>
                   <div style={{ fontSize: 10, color: '#9ca3af', lineHeight: 1.9 }}>
-                    <div>T amb = {T_amb.toFixed(1)} °C · ΔT tronçon = {Math.abs(deltaT).toFixed(3)} K</div>
+                    <div>T amb = {sf(T_amb, 1)} °C · ΔT tronçon = {sf(Math.abs(deltaT), 3)} K</div>
                     <div>
                       he = {he} W/(m²·K)
                       {de_mm != null && <> · de = {de_mm} · di = {di_mm ?? '—'} mm</>}
@@ -564,7 +576,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                     <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase',
                       letterSpacing: '0.05em', marginBottom: 3 }}>Vitesse</div>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                      <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{velocity.toFixed(3)}</span>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{sf(velocity, 3)}</span>
                       <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
                     </div>
                   </div>
@@ -575,7 +587,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                     <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase',
                       letterSpacing: '0.05em', marginBottom: 3 }}>UI</div>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                      <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{uiValue.toFixed(4)}</span>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{sf(uiValue, 4)}</span>
                       <span style={{ fontSize: 11, color: '#9ca3af' }}>W/(m·K)</span>
                     </div>
                   </div>
@@ -637,15 +649,15 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
         const resolved   = flowData
 
         const qPlaceholder = hasManualV && area
-          ? (seg.velocity * area * 3600).toFixed(3)
+          ? sf(seg.velocity * area * 3600, 3)
           : (!hasManual && resolved?.flowRate != null)
-          ? `Calculé : ${resolved.flowRate.toFixed(3)}`
+          ? `Calculé : ${sf(resolved.flowRate, 3)}`
           : 'm³/h'
 
         const vPlaceholder = hasManualQ && area
-          ? (seg.flowRate / (area * 3600)).toFixed(3)
+          ? sf(seg.flowRate / (area * 3600), 3)
           : (!hasManual && resolved?.velocity != null)
-          ? `Calculé : ${resolved.velocity.toFixed(3)}`
+          ? `Calculé : ${sf(resolved.velocity, 3)}`
           : 'm/s'
 
         return (
@@ -871,20 +883,21 @@ const DIR_BTNS = [
 function TempBadge({ temp, T_depart }) {
   if (temp == null) return null
   const dT = T_depart != null ? temp - T_depart : null
+  const ts = tAvalStyle(temp, T_depart ?? 60)
   return (
     <div style={{ marginTop: 8 }}>
-      <div style={{ padding: '7px 10px', background: '#fffbeb',
-        border: '1px solid #fde68a', borderRadius: 6 }}>
-        <div style={{ fontSize: 9, color: '#a16207', fontWeight: 700, marginBottom: 3,
+      <div style={{ padding: '7px 10px', background: ts.background,
+        border: `1px solid ${ts.borderColor}`, borderRadius: 6 }}>
+        <div style={{ fontSize: 9, color: ts.labelColor, fontWeight: 700, marginBottom: 3,
           textTransform: 'uppercase', letterSpacing: '0.05em' }}>Température au nœud</div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-          <span style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>{temp.toFixed(2)}</span>
-          <span style={{ fontSize: 10, color: '#9ca3af' }}>°C</span>
+          <span style={{ fontSize: 18, fontWeight: ts.fontWeight ?? 700, color: ts.color ?? '#111827' }}>{sf(temp, 2)}</span>
+          <span style={{ fontSize: 10, color: ts.color ? 'rgba(255,255,255,0.7)' : '#9ca3af' }}>°C</span>
         </div>
       </div>
       {dT != null && (
         <div style={{ marginTop: 2, textAlign: 'center', fontSize: 10, color: '#6b7280' }}>
-          ΔT depuis départ : <span style={{ fontWeight: 700, color: '#374151' }}>{dT.toFixed(2)} K</span>
+          ΔT depuis départ : <span style={{ fontWeight: 700, color: '#374151' }}>{sf(dT, 2)} K</span>
         </div>
       )}
     </div>
@@ -919,7 +932,7 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
             value={pt.size ?? 12}
             onChange={e => set('size', Math.max(8, Math.min(40, +e.target.value)))} />
         </Field>
-        <TempBadge temp={nodeTemp} T_depart={T_depart} />
+        <TempBadge temp={activeCalcId === 'alimentation-ecs' ? null : nodeTemp} T_depart={T_depart} />
       </div>
     )
   }
@@ -969,7 +982,7 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
             )
           })}
         </>)}
-        <TempBadge temp={nodeTemp} T_depart={T_depart} />
+        <TempBadge temp={activeCalcId === 'alimentation-ecs' ? null : nodeTemp} T_depart={T_depart} />
       </div>
     )
   }
@@ -1012,46 +1025,56 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
           <>
             <hr className="rp-divider" />
             <div style={{ display: 'flex', gap: 8 }}>
-              {/* T départ — rouge */}
-              <div style={{ flex: 1, padding: '8px 10px', background: '#fef2f2',
-                border: '1px solid #fca5a5', borderRadius: 6 }}>
-                <div style={{ fontSize: 9, color: '#dc2626', fontWeight: 700, marginBottom: 3,
-                  textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  T départ
-                </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>
-                    {T_depart != null ? T_depart.toFixed(1) : '—'}
-                  </span>
-                  <span style={{ fontSize: 10, color: '#9ca3af' }}>°C</span>
-                </div>
-              </div>
-              {/* T retour — orange */}
-              <div style={{ flex: 1, padding: '8px 10px', background: '#fff7ed',
-                border: '1px solid #fed7aa', borderRadius: 6 }}>
-                <div style={{ fontSize: 9, color: '#c2410c', fontWeight: 700, marginBottom: 3,
-                  textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  T retour
-                </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>
-                    {T_retour != null ? T_retour.toFixed(2) : '—'}
-                  </span>
-                  <span style={{ fontSize: 10, color: '#9ca3af' }}>°C</span>
-                </div>
-                {T_retour == null && (
-                  <div style={{ fontSize: 9, color: '#9ca3af', fontStyle: 'italic', marginTop: 2 }}>
-                    Non calculée
+              {/* T départ */}
+              {(() => {
+                const tsD = tAvalStyle(T_depart, T_depart)
+                return (
+                  <div style={{ flex: 1, padding: '8px 10px', background: tsD.background ?? '#fef2f2',
+                    border: `1px solid ${tsD.borderColor ?? '#fca5a5'}`, borderRadius: 6 }}>
+                    <div style={{ fontSize: 9, color: tsD.labelColor ?? '#dc2626', fontWeight: 700, marginBottom: 3,
+                      textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      T départ
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                      <span style={{ fontSize: 18, fontWeight: tsD.fontWeight ?? 700, color: tsD.color ?? '#111827' }}>
+                        {sf(T_depart, 1)}
+                      </span>
+                      <span style={{ fontSize: 10, color: tsD.color ? 'rgba(255,255,255,0.7)' : '#9ca3af' }}>°C</span>
+                    </div>
                   </div>
-                )}
-              </div>
+                )
+              })()}
+              {/* T retour */}
+              {(() => {
+                const tsR = tAvalStyle(T_retour, T_depart)
+                return (
+                  <div style={{ flex: 1, padding: '8px 10px', background: tsR.background ?? '#fff7ed',
+                    border: `1px solid ${tsR.borderColor ?? '#fed7aa'}`, borderRadius: 6 }}>
+                    <div style={{ fontSize: 9, color: tsR.labelColor ?? '#c2410c', fontWeight: 700, marginBottom: 3,
+                      textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      T retour
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                      <span style={{ fontSize: 18, fontWeight: tsR.fontWeight ?? 700, color: tsR.color ?? '#111827' }}>
+                        {sf(T_retour, 2)}
+                      </span>
+                      <span style={{ fontSize: 10, color: tsR.color ? 'rgba(255,255,255,0.7)' : '#9ca3af' }}>°C</span>
+                    </div>
+                    {T_retour == null && (
+                      <div style={{ fontSize: 9, color: '#9ca3af', fontStyle: 'italic', marginTop: 2 }}>
+                        Non calculée
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
             {dT_loop != null && (
               <div style={{ marginTop: 3, fontSize: 10, color: '#6b7280' }}>
                 ΔT depuis départ :{' '}
-                <span style={{ fontWeight: 700, color: '#374151' }}>{dT_loop.toFixed(2)} K</span>
+                <span style={{ fontWeight: 700, color: '#374151' }}>{sf(dT_loop, 2)} K</span>
                 <span style={{ color: '#9ca3af', marginLeft: 5 }}>
-                  ({T_depart.toFixed(0)} → {T_retour.toFixed(2)} °C)
+                  ({sf(T_depart, 0)} → {sf(T_retour, 2)} °C)
                 </span>
               </div>
             )}
@@ -1061,7 +1084,7 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
                 border: '1px solid #fed7aa', borderRadius: 4, fontSize: 10 }}>
                 <span style={{ color: '#f97316', fontWeight: 700, flexShrink: 0, marginTop: 1 }}>⚠</span>
                 <span style={{ color: '#c2410c', fontWeight: 600 }}>
-                  ΔT = {dT_loop.toFixed(1)} K &gt; 5 K — objectif de dimensionnement non atteint
+                  ΔT = {sf(dT_loop, 1)} K &gt; 5 K — objectif de dimensionnement non atteint
                 </span>
               </div>
             )}
@@ -1080,25 +1103,30 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
 
       {nodeTemp != null ? (
         <>
-          <div style={{ padding: '9px 10px', background: '#fffbeb',
-            border: '1px solid #fde68a', borderRadius: 6 }}>
-            <div style={{ fontSize: 9, color: '#a16207', fontWeight: 700, marginBottom: 3,
-              textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Température au nœud
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-              <span style={{ fontSize: 22, fontWeight: 700, color: '#111827' }}>
-                {nodeTemp.toFixed(2)}
-              </span>
-              <span style={{ fontSize: 11, color: '#9ca3af' }}>°C</span>
-            </div>
-          </div>
+          {(() => {
+            const tsN = tAvalStyle(nodeTemp, T_depart ?? 60)
+            return (
+              <div style={{ padding: '9px 10px', background: tsN.background ?? '#fffbeb',
+                border: `1px solid ${tsN.borderColor ?? '#fde68a'}`, borderRadius: 6 }}>
+                <div style={{ fontSize: 9, color: tsN.labelColor ?? '#a16207', fontWeight: 700, marginBottom: 3,
+                  textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Température au nœud
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                  <span style={{ fontSize: 22, fontWeight: tsN.fontWeight ?? 700, color: tsN.color ?? '#111827' }}>
+                    {sf(nodeTemp, 2)}
+                  </span>
+                  <span style={{ fontSize: 11, color: tsN.color ? 'rgba(255,255,255,0.7)' : '#9ca3af' }}>°C</span>
+                </div>
+              </div>
+            )
+          })()}
           {dT_depuis_depart != null && (
             <div style={{ marginTop: 3, textAlign: 'center', fontSize: 10, color: '#6b7280' }}>
               ΔT depuis départ :{' '}
-              <span style={{ fontWeight: 700, color: '#374151' }}>{dT_depuis_depart.toFixed(2)} K</span>
+              <span style={{ fontWeight: 700, color: '#374151' }}>{sf(dT_depuis_depart, 2)} K</span>
               <span style={{ color: '#9ca3af', marginLeft: 5 }}>
-                ({T_depart.toFixed(0)} → {nodeTemp.toFixed(2)} °C)
+                ({sf(T_depart, 0)} → {sf(nodeTemp, 2)} °C)
               </span>
             </div>
           )}
@@ -1298,7 +1326,7 @@ export default function RightPanel({
       .filter(s => flowDirections?.get(s.id)?.toId === pt.id)
       .map(s => ({
         id: s.id,
-        name: getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(s.id)),
+        name: getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(s.id), activeCalcId),
         flowRate: networkFlows?.get(s.id)?.flowRate ?? null,
         T_to:     thermalResults?.segResults.get(s.id)?.T_to ?? null,
         type:     s.type,

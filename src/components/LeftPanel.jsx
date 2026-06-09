@@ -797,9 +797,10 @@ function EditParamsPanel({
   )
 }
 
-function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chaufferie, networkFlows, onSelectIds, onConnHighlight }) {
+function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chaufferie, networkFlows, onSelectIds, onConnHighlight, activeCalcId }) {
   const [showConnHighlight,   setShowConnHighlight]   = useState(false)
   const [showManualHighlight, setShowManualHighlight] = useState(false)
+  const isEF = activeCalcId === 'alimentation-ef'
 
   const connIssues = useMemo(() => {
     const ptCount = new Map()
@@ -815,6 +816,7 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
       const startPt = points.find(p => p.id === s.startPointId)
       const endPt   = points.find(p => p.id === s.endPointId)
       return startPt?.type !== 'groupe' && endPt?.type !== 'groupe'
+        && startPt?.type !== 'arriveeEF' && endPt?.type !== 'arriveeEF'
     })
   }, [segments, points])
 
@@ -844,13 +846,15 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
         fontSize: 10, padding: '3px 8px', borderRadius: 3, cursor: 'pointer', lineHeight: 1.5,
         background: '#f9fafb', border: '1px solid transparent', color: '#6b7280', marginBottom: 2,
       }}>
-      {getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points)}
+      {getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points, null, activeCalcId)}
     </div>
   )
 
-  const hasAllerRetour = segments.some(s => s.type === 'aller' || s.type === 'retour')
-  const hasProdECS     = points.some(p => p.type === 'productionECS')
-  const missingProdECS = hasAllerRetour && !hasProdECS
+  const hasAllerRetour  = segments.some(s => s.type === 'aller' || s.type === 'retour')
+  const hasProdECS      = points.some(p => p.type === 'productionECS')
+  const hasArriveeEF    = points.some(p => p.type === 'arriveeEF')
+  const missingProdECS  = !isEF && hasAllerRetour && !hasProdECS
+  const missingArriveeEF = isEF && segments.length > 0 && !hasArriveeEF
 
   return (
     <div className="left-panel" style={{ gap: 0 }}>
@@ -867,6 +871,19 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
             Des tronçons Aller/Retour ECS sont tracés, mais aucune
             Production ECS n'est placée sur le synoptique.
             Utilisez le bouton <strong style={{ color: '#374151' }}>Prod. ECS</strong> dans
+            la barre d'outils pour la positionner.
+          </div>
+        </div>
+      )}
+
+      {missingArriveeEF && (
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb', background: '#fef2f2' }}>
+          <div style={{ fontWeight: 600, fontSize: 11, color: '#991b1b', marginBottom: 4 }}>
+            Arrivée EF non placée
+          </div>
+          <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.5 }}>
+            Des tronçons sont tracés, mais aucune arrivée d'eau froide n'est placée sur le synoptique.
+            Utilisez le bouton <strong style={{ color: '#374151' }}>Arrivée EF</strong> dans
             la barre d'outils pour la positionner.
           </div>
         </div>
@@ -1023,6 +1040,7 @@ export default function LeftPanel({
         networkFlows={networkFlows}
         onSelectIds={onSelectIds}
         onConnHighlight={onConnHighlight}
+        activeCalcId={activeCalcId}
       />
     )
   }

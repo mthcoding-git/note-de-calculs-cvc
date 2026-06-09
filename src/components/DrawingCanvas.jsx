@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { getDisplayName } from '../utils/naming'
+import { sf } from '../utils/fmt'
 
 const PT_R       = 4
 const HIT        = 8     // segment click radius
@@ -709,23 +710,35 @@ function applyFrontierSplits(segs, pts, levels, lineYs) {
 // Connexion automatique de Production ECS au réseau :
 // 1. Fusionne tout nœud ordinaire à l'intérieur du rectangle ECS (ECS survit)
 // 2. Si ECS n'a aucun tronçon connecté, le snapping sur le tronçon qui traverse son rectangle
-function applySpecialPtSnap(segs, pts) {
+function applySpecialPtSnap(segs, pts, skipGroupeIds = null) {
   let workSegs = segs, workPts = pts, anyChanged = false
 
-  for (const ecsOrig of pts.filter(p => p.type === 'productionECS' || p.type === 'arriveeEF')) {
+  for (const ecsOrig of pts.filter(p => p.type === 'productionECS' || p.type === 'arriveeEF' || p.type === 'groupe')) {
     const ecs = workPts.find(p => p.id === ecsOrig.id)
     if (!ecs) continue
-    const w = ecs.size?.w ?? 44, h = ecs.size?.h ?? 28
+    // Ne pas snapper un groupe qui vient d'être déplacé par l'utilisateur
+    if (ecs.type === 'groupe' && skipGroupeIds?.has(ecs.id)) continue
+    const w = ecs.type === 'groupe' ? 60 : (ecs.size?.w ?? 44)
+    const h = ecs.type === 'groupe' ? 30 : (ecs.size?.h ?? 28)
     const hw = w / 2, hh = h / 2
 
     // 1. Fusionner les nœuds ordinaires à l'intérieur du rectangle ECS → garder ECS
     let changed = true
     while (changed) {
       changed = false
-      const inside = workPts.find(p =>
-        p.id !== ecs.id && !p.isLocked && p.type !== 'pump' && p.type !== 'productionECS' && p.type !== 'arriveeEF' && p.type !== 'groupe' &&
-        Math.abs(p.x - ecs.x) <= hw && Math.abs(p.y - ecs.y) <= hh
-      )
+      const inside = workPts.find(p => {
+        if (p.id === ecs.id || p.isLocked || p.type === 'pump' || p.type === 'productionECS' || p.type === 'arriveeEF' || p.type === 'groupe') return false
+        if (Math.abs(p.x - ecs.x) > hw || Math.abs(p.y - ecs.y) > hh) return false
+        if (ecs.type === 'groupe') {
+          // Groupe déjà connecté : pas de connexion supplémentaire
+          const groupeConn = workSegs.filter(s => s.startPointId === ecs.id || s.endPointId === ecs.id).length
+          if (groupeConn >= 1) return false
+          // Seulement les extrémités libres (exactement 1 tronçon connecté)
+          const connCount = workSegs.filter(s => s.startPointId === p.id || s.endPointId === p.id).length
+          if (connCount !== 1) return false
+        }
+        return true
+      })
       if (inside) {
         const ecsPt = { x: ecs.x, y: ecs.y }
         workSegs = workSegs.map(seg => {
@@ -742,8 +755,9 @@ function applySpecialPtSnap(segs, pts) {
     }
 
     // 2. Si aucun tronçon connecté : snapping sur le tronçon traversant le rectangle ECS
+    // (non applicable aux groupes de puisage : connexion aux extrémités seulement)
     const hasConnected = workSegs.some(s => s.startPointId === ecs.id || s.endPointId === ecs.id)
-    if (!hasConnected) {
+    if (!hasConnected && ecs.type !== 'groupe') {
       let bestHit = null, bestD = Infinity
       for (const seg of workSegs) {
         const vs = seg.vertices
@@ -797,6 +811,7 @@ export default function DrawingCanvas({
   networkFlows,
   flowDirections,
   groupesEditMode,
+  onRemoveGroupeById,
   showGroupeNames,
   canvasDisplay,
   roleMap,
@@ -851,6 +866,7 @@ export default function DrawingCanvas({
   const [blockDragState, setBlockDragState] = useState(null)  // live drag {dx, dy}
   const [previewVanne,  setPreviewVanne]  = useState(null)  // { x, y, angle, t, segId }
   const [valveDragT, setValveDragT] = useState(null)  // { valveId, t } live drag
+  const justMovedGroupeIdsRef = useRef(new Set())
 
   // ── Clear drawing on mode/type change ────────────────
   useEffect(() => { if (drawMode !== 'draw') setDrawing(null) }, [drawMode])
@@ -865,7 +881,9 @@ export default function DrawingCanvas({
 
   // ── Auto-connect Production ECS to network ───────────
   useEffect(() => {
-    const result = applySpecialPtSnap(segments, points)
+    const skipIds = justMovedGroupeIdsRef.current
+    justMovedGroupeIdsRef.current = new Set()
+    const result = applySpecialPtSnap(segments, points, skipIds.size > 0 ? skipIds : null)
     if (result) onNetworkPatch(result.segs, result.pts)
   }, [segments, points]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -932,6 +950,13 @@ export default function DrawingCanvas({
       newPts.push(p); startId = p.id
     }
     let endId = endPtId
+    // Un groupe ne peut être raccordé qu'à un seul tronçon
+    if (endId) {
+      const endPt = points.find(p => p.id === endId)
+      if (endPt?.type === 'groupe' && segments.some(s => s.startPointId === endId || s.endPointId === endId)) {
+        endId = null // refuser la connexion → nouveau nœud
+      }
+    }
     if (!endId) {
       const existing = points.find(p => dist(p, endPos) < SNAP)
       if (existing) {
@@ -1003,15 +1028,18 @@ export default function DrawingCanvas({
           onSelectedValveChange?.(null)
           return
         }
-        const delPtIds  = selectedIds.filter(id => points.some(p => p.id === id && !p.isLocked && (p.type !== 'groupe' || groupesEditMode)))
-        const delSegIds = new Set(selectedIds.filter(id => segments.some(s => s.id === id)))
+        const delGroupIds = selectedIds.filter(id => points.some(p => p.id === id && p.type === 'groupe'))
+        const delPtIds    = selectedIds.filter(id => points.some(p => p.id === id && !p.isLocked && p.type !== 'groupe'))
+        const delSegIds   = new Set(selectedIds.filter(id => segments.some(s => s.id === id)))
+
+        // Groups: delegate to App (handles PP zone adjustment)
+        for (const gId of delGroupIds) onRemoveGroupeById?.(gId)
 
         let newSegs = segments.filter(s => !delSegIds.has(s.id))
         let newPts  = [...points]
         for (const ptId of delPtIds) {
           const pt = newPts.find(p => p.id === ptId)
           if (pt?.type === 'productionECS' || pt?.type === 'arriveeEF') {
-            // Keep the node to maintain segment connections — just strip the special type
             newPts = newPts.map(p => p.id === ptId ? { id: p.id, name: p.name ?? '', x: p.x, y: p.y } : p)
             continue
           }
@@ -1022,7 +1050,7 @@ export default function DrawingCanvas({
           const result = deleteNodeFromNetwork(ptId, newSegs, newPts)
           if (result) { newSegs = result.newSegs; newPts = result.newPts }
         }
-        onNetworkChange(newSegs, newPts)
+        if (delPtIds.length > 0 || delSegIds.size > 0) onNetworkChange(newSegs, newPts)
         onSelectIds([])
       }
     }
@@ -1030,7 +1058,7 @@ export default function DrawingCanvas({
     window.addEventListener('keydown', kd)
     window.addEventListener('keyup',   ku)
     return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku) }
-  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone, groupesEditMode, selectedValveId, onSelectedValveChange, onValvesChange])
+  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone, onRemoveGroupeById, selectedValveId, onSelectedValveChange, onValvesChange])
 
   // ── zoom ─────────────────────────────────────────────
   const onWheel = useCallback(e => {
@@ -1143,22 +1171,10 @@ export default function DrawingCanvas({
         }
       }
       if (ptDragRef.current.moved) {
-        const { constraint, lockedAxis, origX, origY, levelId, ptId: dragPtId, connectedCount } = ptDragRef.current
+        const { constraint, lockedAxis, origX, origY, ptId: dragPtId, connectedCount } = ptDragRef.current
         const effectiveConstraint = lockedAxis ?? constraint
         let x = effectiveConstraint === 'v' ? origX : snap(pos.x)
         let y = effectiveConstraint === 'h' ? origY : snap(pos.y)
-        if (levelId) {
-          const levelIdx = levels.findIndex(l => l.id === levelId)
-          if (levelIdx >= 0) {
-            const yBotBound = lineYs[levelIdx] - 13
-            const isTopLevel = levelIdx === levels.length - 1
-            if (isTopLevel) {
-              y = Math.min(yBotBound, y)
-            } else if (levelIdx + 1 < lineYs.length) {
-              y = Math.max(lineYs[levelIdx + 1] + 13, Math.min(yBotBound, y))
-            }
-          }
-        }
 
         // Clamp to adjacent inner vertices so node cannot cross segment angles
         let minX = -Infinity, maxX = Infinity, minY = -Infinity, maxY = Infinity
@@ -1445,14 +1461,15 @@ export default function DrawingCanvas({
         ? ids.includes(np.id) ? ids.filter(i => i !== np.id) : [...ids, np.id]
         : [np.id])
       const connectedSegs = segments.filter(s => s.startPointId === np.id || s.endPointId === np.id)
-      if (!np.isLocked && (np.type !== 'groupe' || groupesEditMode) && connectedSegs.length <= 2) {
+      if (!np.isLocked && connectedSegs.length <= 2) {
         ptDragRef.current = {
           ptId: np.id, startX: e.clientX, startY: e.clientY,
           origX: np.x, origY: np.y, moved: false,
-          constraint: np.type === 'groupe' ? 'v' : getDragConstraint(np.id, segments),
+          constraint: np.type === 'groupe'
+            ? (connectedSegs.length >= 1 ? getDragConstraint(np.id, segments) : null)
+            : getDragConstraint(np.id, segments),
           lockedAxis: null,
           connectedCount: connectedSegs.length,
-          ...(np.type === 'groupe' ? { levelId: np.levelId } : {}),
         }
       }
       return
@@ -1483,7 +1500,7 @@ export default function DrawingCanvas({
       placingEquipment, onPlacingDone,
       placingChaufferie, onPlacingChaufferieDone, levels, lineYs, chaufferie, onChaufferieChange,
       columns, columnXs, valves, onValvesChange, selectedValveId, onSelectedValveChange,
-      connHighlightIds, onConnHighlight, groupesEditMode])
+      connHighlightIds, onConnHighlight])
 
   // ── mouse up ──────────────────────────────────────────
   const onMouseUp = useCallback(e => {
@@ -1512,9 +1529,15 @@ export default function DrawingCanvas({
 
       // Priority 1: overlapping another point → merge (productionECS > pump > regular)
       const dragged = points.find(p => p.id === ptId)
-      const overlap = points.find(p => p.id !== ptId && dist(p, np) < PT_HIT)
+      if (dragged?.type === 'groupe') justMovedGroupeIdsRef.current.add(ptId)
+      const overlap = points.find(p => {
+        if (p.id === ptId || dist(p, np) >= PT_HIT) return false
+        // Ne pas merger vers un groupe déjà connecté à un tronçon
+        if (p.type === 'groupe' && segments.filter(s => s.startPointId === p.id || s.endPointId === p.id).length >= 1) return false
+        return true
+      })
       if (overlap && dragged) {
-        const rank = p => p?.type === 'productionECS' ? 2 : p?.type === 'pump' ? 1 : 0
+        const rank = p => p?.type === 'productionECS' ? 3 : p?.type === 'groupe' ? 2 : p?.type === 'pump' ? 1 : 0
         const draggedWins = rank(dragged) > rank(overlap)
         const winner = draggedWins ? dragged : overlap
         const loser  = draggedWins ? overlap : dragged
@@ -1537,12 +1560,13 @@ export default function DrawingCanvas({
         )
       } else {
         // Priority 2: dropping on a segment → split and become junction
+        // (excluded for groupe de puisage: connection to segment extremities only)
         const exclude = new Set(
           segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).map(s => s.id)
         )
         const hitSeg = nearestOnSegments(np, segments.filter(s => !exclude.has(s.id)))
 
-        if (hitSeg && hitSeg.d < SNAP) {
+        if (hitSeg && hitSeg.d < SNAP && dragged?.type !== 'groupe') {
           const { seg, subIdx } = hitSeg
           const seg1 = { ...seg, id: uid('T'), vertices: [...seg.vertices.slice(0, subIdx + 1), np], endPointId: ptId }
           const seg2 = { ...seg, id: uid('T'), vertices: [np, ...seg.vertices.slice(subIdx + 1)], startPointId: ptId }
@@ -1582,6 +1606,10 @@ export default function DrawingCanvas({
     // Commit bloc drag
     if (blockDragRef.current) {
       if (blockDragState && blockDragRef.current.moved) {
+        for (const id of selectedIds) {
+          if (points.find(p => p.id === id && p.type === 'groupe'))
+            justMovedGroupeIdsRef.current.add(id)
+        }
         const { dx, dy } = blockDragState
         const newPts = points.map(p =>
           selectedIds.includes(p.id) ? { ...p, x: snap(p.x + dx), y: snap(p.y + dy) } : p)
@@ -1604,12 +1632,12 @@ export default function DrawingCanvas({
       } else {
         const ids = []
         segments.forEach(s => { if (segInRect(s, selRect)) ids.push(s.id) })
-        points.forEach(p => { if (ptInRect(p, selRect) && (p.type !== 'groupe' || groupesEditMode)) ids.push(p.id) })
+        points.forEach(p => { if (ptInRect(p, selRect)) ids.push(p.id) })
         onSelectIds(prev => e.shiftKey ? [...new Set([...prev, ...ids])] : ids)
       }
       setRectSt(null); setSelRect(null)
     }
-  }, [rectSt, selRect, segments, points, selectedIds, onSelectIds, ptDragPos, segDragState, blockDragState, onNetworkChange, lineYs, groupesEditMode, onValvesChange, valveDragT])
+  }, [rectSt, selRect, segments, points, selectedIds, onSelectIds, ptDragPos, segDragState, blockDragState, onNetworkChange, lineYs, onValvesChange, valveDragT])
 
   // ── double-click → end segment ────────────────────────
   const onDblClick = useCallback(e => {
@@ -1930,10 +1958,11 @@ export default function DrawingCanvas({
           const isHighlighted = connHighlightIds?.length > 0 && connHighlightIds.includes(seg.id)
           const isGrayed      = connHighlightIds?.length > 0 && !connHighlightIds.includes(seg.id)
 
-          // match=green · missing=red · other=gray · dash always follows segment type
+          // match=green · missing=red(ECS)/blue(EF) · other=gray · dash always follows segment type
+          const missingColor = isEF ? '#93c5fd' : '#ef4444'
           const strokeColor = isGrayed      ? '#d1d5db'
             : editStyle === 'match'   ? '#16a34a'
-            : editStyle === 'missing' ? '#ef4444'
+            : editStyle === 'missing' ? missingColor
             : editStyle === 'other'   ? '#9ca3af'
             : sel ? '#2563eb' : col
           const strokeW = isGrayed ? 1
@@ -2019,7 +2048,7 @@ export default function DrawingCanvas({
                   }
                   cumLen += sl
                 }
-                const lbl = displayQ != null ? `${displayQ.toFixed(3)} m³/h` : `${displayV.toFixed(3)} m/s`
+                const lbl = displayQ != null ? `${sf(displayQ, 3)} m³/h` : `${sf(displayV, 3)} m/s`
                 const tw = lbl.length * 5 + 6
                 const BH = 11, OFF = 7
                 if (edgeDir === 'h') {
@@ -2047,7 +2076,7 @@ export default function DrawingCanvas({
                 // lines: [{text, red?}]
                 const lines = []
                 if (canvasDisplay?.nomTroncon) {
-                  const name = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, roleMap?.get(seg.id))
+                  const name = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, roleMap?.get(seg.id), activeCalcId)
                   if (name) lines.push({ text: name })
                 }
                 if (canvasDisplay?.length && seg.length_override != null) {
@@ -2079,12 +2108,12 @@ export default function DrawingCanvas({
                     const vMax = segRole === 'collecteur-retour' ? 1.0 : 0.5
                     const isRedMin    = seg.type === 'retour' && v < 0.2
                     const isOrangeMax = seg.type === 'retour' && v > vMax
-                    lines.push({ text: `${v.toFixed(2)} m/s`, red: isRedMin, orange: isOrangeMax && !isRedMin })
+                    lines.push({ text: `${sf(v, 2)} m/s`, red: isRedMin, orange: isOrangeMax && !isRedMin })
                   }
                 }
-                if (canvasDisplay?.deltaT) {
+                if (canvasDisplay?.deltaT && activeCalcId !== 'alimentation-ecs' && activeCalcId !== 'alimentation-ef') {
                   const sr = thermalResults?.segResults?.get(seg.id)
-                  if (sr?.deltaT != null) lines.push({ text: `ΔT ${sr.deltaT.toFixed(2)} °C` })
+                  if (sr?.deltaT != null) lines.push({ text: `ΔT ${sf(sr.deltaT, 2)} °C` })
                 }
                 if (!lines.length) return null
                 const vs = seg.vertices
@@ -2123,7 +2152,7 @@ export default function DrawingCanvas({
                 )
               })()}
               {seg.showName && (() => {
-                const label = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts)
+                const label = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, null, activeCalcId)
                 if (!label) return null
                 const raw = label.split(' → ')
                 const lines = raw.length >= 2
@@ -2221,6 +2250,7 @@ export default function DrawingCanvas({
           // Temperature helpers
           const resolveNodeTemp = (ptId) => {
             if (!canvasDisplay?.temperatureNoeud) return null
+            if (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') return null
             const mix = thermalResults?.nodeTemps?.get(ptId)
             if (mix != null) return mix
             if (!flowDirections) return null
@@ -2242,7 +2272,7 @@ export default function DrawingCanvas({
           const TempBadge = ({ x, y, T }) => {
             if (T == null) return null
             const red = T < 50
-            const lbl = `${T.toFixed(1)}°C`
+            const lbl = `${sf(T, 1)}°C`
             const W = lbl.length * 5 + 4
             return (
               <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
@@ -2257,6 +2287,7 @@ export default function DrawingCanvas({
 
           if (pt.isLocked) {
             const lockedClick = ev => {
+              if (drawMode === 'editParams') return
               ev.stopPropagation()
               onSelectIds(ids => ev.shiftKey
                 ? ids.includes(pt.id) ? ids.filter(i => i !== pt.id) : [...ids, pt.id]
@@ -2277,6 +2308,7 @@ export default function DrawingCanvas({
             )
           }
           const selClick = ev => {
+            if (drawMode === 'editParams') return
             ev.stopPropagation()
             onSelectIds(ids => ev.shiftKey
               ? ids.includes(pt.id) ? ids.filter(i => i !== pt.id) : [...ids, pt.id]
@@ -2408,7 +2440,7 @@ export default function DrawingCanvas({
                     T_ret != null && { label: 'Ret.', T: T_ret },
                   ].filter(Boolean)
                   const LH = 12, PAD = 3
-                  const maxW = Math.max(...items.map(it => (`${it.label} ${it.T.toFixed(1)}°C`).length)) * 5 + PAD * 2
+                  const maxW = Math.max(...items.map(it => (`${it.label} ${sf(it.T, 1)}°C`).length)) * 5 + PAD * 2
                   const totalH = items.length * LH + PAD * 2
                   const bx = pt.x + w / 2 + 4
                   const by = pt.y - totalH / 2
@@ -2419,7 +2451,7 @@ export default function DrawingCanvas({
                       {items.map(({ label, T }, i) => (
                         <text key={i} x={bx + PAD} y={by + PAD + (i + 1) * LH - 2}
                           fontSize={7.5} fill={T < 50 ? '#dc2626' : '#374151'} fontWeight="600">
-                          {label} {T.toFixed(1)}°C
+                          {label} {sf(T, 1)}°C
                         </text>
                       ))}
                     </g>

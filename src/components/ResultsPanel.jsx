@@ -1,5 +1,6 @@
 function fmt(val, decimals = 2) {
-  return val != null ? val.toFixed(decimals) : '—'
+  if (typeof val !== 'number' || !Number.isFinite(val)) return '—'
+  return val.toFixed(decimals)
 }
 
 export default function ResultsPanel({ results }) {

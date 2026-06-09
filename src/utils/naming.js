@@ -117,7 +117,8 @@ export function buildECSDistances(allSegs, specialPts) {
 // allerDist : Map<ptId, px> depuis buildECSDistances ; retourDist : depuis buildRetourDistances.
 // Aller : l'extrémité la plus proche de l'ECS (allerDist min) en premier.
 // Retour : l'extrémité la plus loin de l'ECS (retourDist max) en premier (sens du fluide).
-export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null, role = null) {
+export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null, role = null, activeCalcId = null) {
+  const isEF = activeCalcId === 'alimentation-ef'
   const ecsDistances = allerDist
   if (!seg.vertices?.length) return ''
   const verts = seg.vertices
@@ -125,7 +126,8 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
   const endV = verts[verts.length - 1]
   const startHint = verts.length > 1 ? verts[1] : null
   const endHint = verts.length > 1 ? verts[verts.length - 2] : null
-  const prefix = role === 'collecteur-aller'  ? 'Collecteur aller ECS'
+  const prefix = isEF ? 'EF'
+    : role === 'collecteur-aller'  ? 'Collecteur aller ECS'
     : role === 'collecteur-retour' ? 'Collecteur retour ECS'
     : seg.type === 'retour' ? 'Retour ECS'
     : 'Aller ECS'
@@ -142,12 +144,14 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
     return '?'
   }
 
-  // Si l'extrémité EST un nœud pompe/ECS (par ID), son nom prend priorité sur toute zone
+  // Si l'extrémité EST un nœud pompe/ECS/arriveeEF (par ID), son nom prend priorité sur toute zone
   const specialLabel = (ptId, v, hint) => {
-    const sp = specialPts?.find(p => p.id === ptId && (p.type === 'pump' || p.type === 'productionECS'))
+    const sp = specialPts?.find(p => p.id === ptId && (p.type === 'pump' || p.type === 'productionECS' || p.type === 'arriveeEF'))
     if (!sp) return null
     const lvl = getLevelName(v, hint)
-    return sp.type === 'pump' ? `${sp.name} (${lvl})` : `Production ECS (${lvl})`
+    if (sp.type === 'pump')         return `${sp.name} (${lvl})`
+    if (sp.type === 'arriveeEF')    return sp.name ? `${sp.name} (${lvl})` : `Arrivée EF (${lvl})`
+    return `Production ECS (${lvl})`
   }
 
   const startL = specialLabel(seg.startPointId, startV, startHint)
@@ -211,23 +215,21 @@ export function buildRetourDistances(allSegs, specialPts) {
 }
 
 // Nom d'affichage final (avec suffixe " - n°x" si doublons, triés par sens d'écoulement).
-export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts, role = null) {
+export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts, role = null, activeCalcId = null) {
   if (seg.name) return seg.name
   const allerDist  = buildECSDistances(allSegs, specialPts)
   const retourDist = buildRetourDistances(allSegs, specialPts)
-  const base      = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, role)
-  const baseRoute = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist)
+  const base      = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, role, activeCalcId)
+  const baseRoute = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId)
   const dupes = allSegs.filter(s => !s.name &&
-    getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist) === baseRoute)
+    getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId) === baseRoute)
   if (dupes.length <= 1) return base
 
   let sorted
   if (seg.type === 'aller') {
-    // Aller : n°1 = le plus proche de l'ECS (allerDist min)
     const score = s => Math.min(allerDist.get(s.startPointId) ?? Infinity, allerDist.get(s.endPointId) ?? Infinity)
     sorted = [...dupes].sort((a, b) => score(a) - score(b))
   } else {
-    // Retour : n°1 = le plus loin de l'ECS (retourDist max) — le fluide y passe en premier
     const score = s => Math.max(retourDist.get(s.startPointId) ?? -Infinity, retourDist.get(s.endPointId) ?? -Infinity)
     sorted = [...dupes].sort((a, b) => score(b) - score(a))
   }
