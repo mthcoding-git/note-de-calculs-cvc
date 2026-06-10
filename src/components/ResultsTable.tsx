@@ -374,14 +374,14 @@ export default function ResultsTable({
                 <th className="rt-th">Tronçon</th>
                 <th className="rt-th">Niveau</th>
                 <th className="rt-th">Colonne</th>
-                <th className="rt-th">N appareils</th>
+                <th className="rt-th">N appareils en aval</th>
                 <th className="rt-th">Méthode</th>
                 <th className="rt-th">DN</th>
                 <th className="rt-th">dᵢ (mm)</th>
                 <th className="rt-th rt-th-result rt-th-result-first">Coeff. X</th>
-                <th className="rt-th rt-th-result">Qs (l/s)</th>
-                <th className="rt-th rt-th-result">Coeff. y</th>
-                <th className="rt-th rt-th-result">Qp (l/s)</th>
+                <th className="rt-th rt-th-result">Débit de base (l/s)</th>
+                <th className="rt-th rt-th-result">Coeff. de simult. y</th>
+                <th className="rt-th rt-th-result">Débit probable (l/s)</th>
                 <th className="rt-th rt-th-result">Vitesse (m/s)</th>
                 <th className="rt-th rt-th-result">dᵢ min. requis (mm)</th>
               </tr>
@@ -445,15 +445,15 @@ export default function ResultsTable({
                   <th className="rt-th">Tronçon</th>
                   <th className="rt-th">Niveau</th>
                   <th className="rt-th">Colonne</th>
-                  <th className="rt-th">N appareils</th>
+                  <th className="rt-th">N appareils en aval</th>
                   <th className="rt-th">Méthode</th>
                   <th className="rt-th">Matériau</th>
                   <th className="rt-th">DN</th>
                   <th className="rt-th">dᵢ (mm)</th>
                   <th className="rt-th rt-th-result rt-th-result-first">Coeff. X</th>
-                  <th className="rt-th rt-th-result">Qs (l/s)</th>
-                  <th className="rt-th rt-th-result">Coeff. y</th>
-                  <th className="rt-th rt-th-result">Qp (l/s)</th>
+                  <th className="rt-th rt-th-result">Débit de base (l/s)</th>
+                  <th className="rt-th rt-th-result">Coeff. de simult. y</th>
+                  <th className="rt-th rt-th-result">Débit probable (l/s)</th>
                   <th className="rt-th rt-th-result">Vitesse (m/s)</th>
                   <th className="rt-th rt-th-result">dᵢ min. requis (mm)</th>
                 </tr>

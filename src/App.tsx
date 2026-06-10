@@ -13,6 +13,7 @@ import { buildFlowRows, buildFlowRowsEF } from './utils/tableOrder'
 import { computeNetworkFlows } from './utils/flowCalc'
 import { computeThermal } from './utils/thermalCalc'
 import { computeAlimentationResults } from './utils/alimentationCalc'
+import { computeSegPdc, DEFAULT_PDC_PARAMS } from './utils/pdcCalc'
 import ResultsTable from './components/ResultsTable'
 import './App.css'
 
@@ -203,15 +204,37 @@ function adjustPPZone(p, colId, newPoints, newSegments) {
   return { ...p, points: newPoints, segments: newSegments }
 }
 
-// Removes a groupe point and all segments directly connected to it.
-// Nodes at the other end of those segments are always kept.
-function removeGroupeBranch(points, segments, groupePtId) {
-  const branchSegIds = new Set(
-    segments.filter(s => s.startPointId === groupePtId || s.endPointId === groupePtId).map(s => s.id)
-  )
+// Removes a groupe point, its connected segment, and — when the other endpoint of that
+// segment sits exactly on a séparation line (a lineY value) — that node and its own
+// remaining segment as well (one-hop cascade cleanup).
+function removeGroupeBranch(points, segments, groupePtId, lineYs?: number[]) {
+  const SEP_TOL = 2 // px tolerance for matching a lineY coordinate
+
+  const branchSegs = segments.filter(s => s.startPointId === groupePtId || s.endPointId === groupePtId)
+  const branchSegIds = new Set(branchSegs.map(s => s.id))
+
+  // Collect séparation nodes to cascade-delete
+  const sepNodeIds = new Set<string>()
+  const sepSegIds  = new Set<string>()
+  if (lineYs?.length) {
+    for (const seg of branchSegs) {
+      const neighborId = seg.startPointId === groupePtId ? seg.endPointId : seg.startPointId
+      const neighbor   = points.find(p => p.id === neighborId)
+      if (!neighbor) continue
+      const onSep = lineYs.some(ly => Math.abs(neighbor.y - ly) <= SEP_TOL)
+      if (!onSep) continue
+      // Node is on a séparation line — also remove it and its remaining segment
+      sepNodeIds.add(neighborId)
+      const remainingSeg = segments.find(
+        s => !branchSegIds.has(s.id) && (s.startPointId === neighborId || s.endPointId === neighborId)
+      )
+      if (remainingSeg) sepSegIds.add(remainingSeg.id)
+    }
+  }
+
   return {
-    points:   points.filter(p => p.id !== groupePtId),
-    segments: segments.filter(s => !branchSegIds.has(s.id)),
+    points:   points.filter(p => p.id !== groupePtId && !sepNodeIds.has(p.id)),
+    segments: segments.filter(s => !branchSegIds.has(s.id) && !sepSegIds.has(s.id)),
   }
 }
 
@@ -313,6 +336,7 @@ function initProject() {
   return {
     globalParams: DEFAULT_GLOBAL_PARAMS,
     alimentationParams: DEFAULT_ALIMENTATION_PARAMS,
+    pdcParams: DEFAULT_PDC_PARAMS,
     materials: DEFAULT_MATERIALS,
     insulations: DEFAULT_INSULATIONS,
     levels: DEFAULT_LEVELS,
@@ -539,6 +563,12 @@ function useVariantHistory() {
   }
 }
 
+const FLUID_FALLBACKS: Record<string, string[]> = {
+  'ecs':       ['ef', 'chauffage'],
+  'ef':        ['ecs', 'chauffage'],
+  'chauffage': ['ecs', 'ef'],
+}
+
 export default function App() {
   const {
     project, setProject, patchProject, resetProject, undo, redo, canUndo, canRedo,
@@ -590,6 +620,26 @@ export default function App() {
     ),
     [project.segments, project.points, project.alimentationParams, flowDirections]
   )
+
+  const pdcResults = useMemo(() => {
+    const results = new Map()
+    if (activeCalcId !== 'bouclage-ecs') return results
+    const pdcParams = project.pdcParams ?? DEFAULT_PDC_PARAMS
+    for (const seg of project.segments) {
+      const flowData   = networkFlows.get(seg.id)
+      const thermalData = thermalResults.segResults.get(seg.id)
+      const T = thermalData
+        ? (thermalData.T_from + thermalData.T_to) / 2
+        : (project.globalParams.T_depart ?? 60)
+      const mat   = project.materials.find(m => m.id === seg.materialId)
+      const dnDef = mat?.dns.find(d => d.dn === seg.dn)
+      const di_mm = seg.di_override ?? dnDef?.di ?? null
+      const result = computeSegPdc(seg, pdcParams, flowData?.flowRate ?? null, di_mm, T, mat)
+      if (result) results.set(seg.id, result)
+    }
+    return results
+  }, [activeCalcId, project.segments, project.pdcParams, project.materials,
+      project.globalParams, networkFlows, thermalResults])
 
   const { rows: flowRows, roleMap } = useMemo(
     () => buildFlowRows(project.segments, project.points, flowDirections,
@@ -645,6 +695,7 @@ export default function App() {
     return conn + flow + missingProd
   }, [project.segments, project.points, networkFlows, activeCalcId])
 
+  const [calcSubMode, setCalcSubMode] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
   const [drawMode,           setDrawMode]           = useState('select')
   const [connHighlightIds,   setConnHighlightIds]   = useState([])
   const [groupesEditMode,    setGroupesEditMode]    = useState(false)
@@ -750,11 +801,12 @@ export default function App() {
       // Nouveau fluide, mais une grille existe déjà → hériter de la structure, réseau vide, pas de setup
       const baseData = currentFullState.variants?.find(v => v.isBase)?.data ?? initProject()
 
-      // Première fois qu'on bascule entre deux modes alimentation (ECS ↔ EF) :
+      // Première fois qu'on bascule entre ECS et EF (peu importe le calcId ECS actif — bouclage ou
+      // alimentation — car les deux partagent le même état de projet et donc les mêmes groupes) :
       // copier les groupes de puisage et les paramètres d'appareils.
       const isAlimSwitch =
-        (activeFluidId === 'ecs' && fluidId === 'ef' && activeCalcId === 'alimentation-ecs') ||
-        (activeFluidId === 'ef' && fluidId === 'ecs' && activeCalcId === 'alimentation-ef')
+        (activeFluidId === 'ecs' && fluidId === 'ef') ||
+        (activeFluidId === 'ef' && fluidId === 'ecs')
 
       const inheritedData = {
         ...initProject(),
@@ -809,12 +861,6 @@ export default function App() {
     setFitViewRequest(r => r + 1)
   }, [])
 
-  const FLUID_FALLBACKS: Record<string, string[]> = {
-    'ecs':      ['ef', 'chauffage'],
-    'ef':       ['ecs', 'chauffage'],
-    'chauffage': ['ecs', 'ef'],
-  }
-
   const handleDeleteBase = useCallback(() => {
     const result = deleteBaseVariant()
     if (result === 'last') {
@@ -848,6 +894,7 @@ export default function App() {
   const handleCalcChange = useCallback((id) => {
     if (!activeCalcId && !pendingSetup) setPanelOpen(true)
     setActiveCalcId(id)
+    setCalcSubMode('dimensionnement')
     setCanvasDisplay(CANVAS_DISPLAY_RESET)
   }, [activeCalcId, pendingSetup])
 
@@ -1020,7 +1067,7 @@ export default function App() {
       if (existing.length === 0) return p
       // Remove the group with the highest internalId (fallback: highest X for legacy data)
       const toRemove = [...existing].sort((a, b) => (a.internalId ?? a.x) - (b.internalId ?? b.x)).at(-1)
-      const { points: newPoints, segments: newSegments } = removeGroupeBranch(p.points, p.segments, toRemove.id)
+      const { points: newPoints, segments: newSegments } = removeGroupeBranch(p.points, p.segments, toRemove.id, p.lineYs)
       return adjustPPZone(p, colId, newPoints, newSegments)
     })
   }, [setProject])
@@ -1029,7 +1076,7 @@ export default function App() {
     setProject(p => {
       const toRemove = p.points.find(pt => pt.id === ptId && pt.type === 'groupe')
       if (!toRemove) return p
-      const { points: newPoints, segments: newSegments } = removeGroupeBranch(p.points, p.segments, ptId)
+      const { points: newPoints, segments: newSegments } = removeGroupeBranch(p.points, p.segments, ptId, p.lineYs)
       return adjustPPZone(p, toRemove.colId, newPoints, newSegments)
     })
   }, [setProject])
@@ -1207,15 +1254,29 @@ export default function App() {
                 onDuplicate={duplicateVariant}
                 onDelete={deleteVariant}
                 onDeleteBase={handleDeleteBase}
+                canDeleteBase={
+                  meta.length > 1 ||
+                  (FLUID_FALLBACKS[activeFluidId] ?? []).some(fid => fluidStashRef.current.has(fid))
+                }
                 onRename={renameVariant}
                 onSetBase={setBaseVariant}
                 onReorder={reorderVariant}
               />
-              <div className="app-hd-sep" />
-              <div className="calc-sub-pills">
-                <button className="calc-sub-pill active">Dimensionnement</button>
-                <button className="calc-sub-pill soon" title="À venir">Pertes de charge</button>
-              </div>
+              {activeCalcId === 'bouclage-ecs' && (
+                <>
+                  <div className="app-hd-sep" />
+                  <div className="calc-sub-pills">
+                    <button
+                      className={`calc-sub-pill${calcSubMode === 'dimensionnement' ? ' active' : ''}`}
+                      onClick={() => setCalcSubMode('dimensionnement')}
+                    >Dimensionnement</button>
+                    <button
+                      className={`calc-sub-pill${calcSubMode === 'pdc' ? ' active' : ''}`}
+                      onClick={() => setCalcSubMode('pdc')}
+                    >Pertes de charge</button>
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>
@@ -1263,10 +1324,13 @@ export default function App() {
           ) : (!pendingSetup && (panelOpen || drawMode === 'editParams')) && (
             <LeftPanel
               activeCalcId={activeCalcId}
+              calcSubMode={calcSubMode}
               globalParams={project.globalParams}
               onGlobalParamsChange={v => update('globalParams', v)}
               alimentationParams={resolveAlimentationParams(project.alimentationParams)}
               onAlimentationParamsChange={v => update('alimentationParams', v)}
+              pdcParams={project.pdcParams ?? DEFAULT_PDC_PARAMS}
+              onPdcParamsChange={v => update('pdcParams', v)}
               levels={project.levels}
               lineYs={project.lineYs}
               onLevelsChange={v => update('levels', v)}
@@ -1398,6 +1462,7 @@ export default function App() {
 
         <aside className={`sidebar-right${(pendingSetup || (selectedIds.length === 0 && !editChaufferie && !selectedValveId)) ? ' sidebar-right-closed' : ''}`}>
           <RightPanel
+            calcSubMode={calcSubMode}
             selectedIds={selectedIds}
             segments={project.segments}
             points={project.points}
@@ -1406,6 +1471,8 @@ export default function App() {
             insulations={project.insulations}
             activeCalcId={activeCalcId}
             alimentationParams={resolveAlimentationParams(project.alimentationParams)}
+            pdcParams={project.pdcParams ?? DEFAULT_PDC_PARAMS}
+            pdcResults={pdcResults}
             levels={project.levels}
             lineYs={project.lineYs}
             columns={project.columns}

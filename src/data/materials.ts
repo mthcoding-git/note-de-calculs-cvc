@@ -4,6 +4,7 @@ export const DEFAULT_MATERIALS = [
     name: 'Acier galvanisé',
     enabled: false,
     lambda: 50,
+    epsilon: 0.00015, // rugosité (m) pour Colebrook-White — acier galvanisé
     minDi: 16.1, // NF DTU 60.11 — min. DN 15 (di=16,1 mm)
     dns: [
       { dn: 'DN15',  di: 16.1, de: 21.3 },
@@ -24,6 +25,7 @@ export const DEFAULT_MATERIALS = [
     name: 'Acier inoxydable',
     enabled: false,
     lambda: 15,
+    epsilon: 0.000045, // rugosité (m) — acier inoxydable poli
     minDi: 12,   // NF DTU 60.11 — autres matériaux : di ≥ 12 mm
     // Dimensions selon NF EN 10312 (tubes soudés à paroi mince, usage sanitaire/ECS)
     dns: [
@@ -43,6 +45,7 @@ export const DEFAULT_MATERIALS = [
     name: 'Acier noir',
     enabled: false,
     lambda: 50,
+    epsilon: 0.000046, // rugosité (m) — acier noir commercial
     minDi: 16.1, // NF EN 10255 — série moyenne, même référence que galvanisé
     // Dimensions selon NF EN 10255 — série moyenne (même que galvanisé, sans zingage)
     dns: [
@@ -64,6 +67,7 @@ export const DEFAULT_MATERIALS = [
     name: 'Cuivre',
     enabled: false,
     lambda: 380,
+    epsilon: 0.0000015, // rugosité (m) — cuivre
     minDi: 12,   // NF DTU 60.11 — min. 14×1 (di=12 mm)
     dns: [
       { dn: '10×1',   di: 8.0,  de: 10.0 },
@@ -85,6 +89,7 @@ export const DEFAULT_MATERIALS = [
     name: 'Multicouche (PEX-AL-PEX)',
     enabled: false,
     lambda: 0.45,
+    epsilon: 0.000007, // rugosité (m) — multicouche
     minDi: 12,   // NF DTU 60.11 — autres matériaux : di ≥ 12 mm
     // Dimensions selon NF EN ISO 21003 — e totale paroi PE+Al+PE
     dns: [
@@ -103,6 +108,7 @@ export const DEFAULT_MATERIALS = [
     name: 'PB (polybutylène)',
     enabled: false,
     lambda: 0.22,
+    epsilon: 0.00001, // rugosité (m) — plastique lisse
     minDi: 13,   // NF DTU 60.11 — min. DN 16 − 16×1,5 (di=13 mm)
     dns: [
       { dn: 'DN16', di: 12.0, de: 16.0 },
@@ -118,6 +124,7 @@ export const DEFAULT_MATERIALS = [
     name: 'PE100 / HDPE',
     enabled: false,
     lambda: 0.40,
+    epsilon: 0.00001, // rugosité (m) — plastique lisse
     minDi: 16.2, // 20×1,9 → di=16,2 mm (plus petite taille courante en bâtiment)
     // Dimensions selon NF EN 12201-2 — SDR 11 (PN16 à 20°C, EF uniquement)
     dns: [
@@ -139,6 +146,7 @@ export const DEFAULT_MATERIALS = [
     name: 'PE-RT (type II)',
     enabled: false,
     lambda: 0.38,
+    epsilon: 0.00001, // rugosité (m) — plastique lisse
     minDi: 13,   // NF DTU 60.11 — autres matériaux : di ≥ 12 mm ; 16×1,5 → di=13 mm
     // Dimensions selon NF EN ISO 22391-2 — SDR 11 (PN6 à 70°C)
     dns: [
@@ -156,6 +164,7 @@ export const DEFAULT_MATERIALS = [
     name: 'PER / PEX',
     enabled: false,
     lambda: 0.40,
+    epsilon: 0.00001, // rugosité (m) — plastique lisse
     minDi: 13,   // NF DTU 60.11 — min. DN 16 − 16×1,5 (di=13 mm)
     dns: [
       { dn: 'DN16', di: 13.0, de: 16.0 },
@@ -171,6 +180,7 @@ export const DEFAULT_MATERIALS = [
     name: 'Plomb',
     enabled: false,
     lambda: 35,
+    epsilon: 0.0000015, // rugosité (m) — plomb laminé
     minDi: 8,
     // Dimensions selon NF A 43-013 (retirée) — désignation par diamètre intérieur
     dns: [
@@ -189,6 +199,7 @@ export const DEFAULT_MATERIALS = [
     name: 'PPR PN20',
     enabled: false,
     lambda: 0.22,
+    epsilon: 0.00001, // rugosité (m) — plastique lisse
     minDi: 12,   // NF DTU 60.11 — autres matériaux : di ≥ 12 mm
     // Dimensions selon NF EN ISO 15874-2 — SDR 6 (PN20 à 70°C)
     dns: [
@@ -208,6 +219,7 @@ export const DEFAULT_MATERIALS = [
     name: 'PVC-C',
     enabled: false,
     lambda: 0.14,
+    epsilon: 0.00001, // rugosité (m) — plastique lisse
     minDi: 12.4, // NF DTU 60.11 — min. DN 16 (di=12,4 mm)
     dns: [
       { dn: 'DN16', di: 12.4, de: 16.0 },
@@ -224,6 +236,7 @@ export const DEFAULT_MATERIALS = [
     name: 'PVC-U rigide',
     enabled: false,
     lambda: 0.15,
+    epsilon: 0.00001, // rugosité (m) — plastique lisse
     minDi: 13.0, // DN16 SDR 11 → di=13 mm
     // Dimensions selon NF EN ISO 1452-2 — SDR 11 (PN16 à 20°C, EF uniquement)
     dns: [

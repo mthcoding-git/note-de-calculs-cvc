@@ -322,13 +322,13 @@
   color: rgba(255,255,255,0.35);
   font-size: 11px;
   font-weight: 500;
-  cursor: default;
+  cursor: pointer;
   white-space: nowrap;
   transition: all 0.1s;
 }
 .calc-sub-pill:last-child { border-right: none; }
 .calc-sub-pill.active { background: rgba(255,255,255,0.16); color: rgba(255,255,255,0.9); font-weight: 600; }
-.calc-sub-pill.soon   { color: rgba(255,255,255,0.18); font-style: italic; }
+.calc-sub-pill:not(.active):hover { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.85); }
 @keyframes pill-pulse {
   0%, 100% { outline-color: rgba(255,255,255,0.45); background: rgba(255,255,255,0.15); }
   50%       { outline-color: rgba(255,255,255,0.9);  background: rgba(255,255,255,0.28); }
@@ -656,6 +656,14 @@
 }
 .lp-field input:focus, .lp-field select:focus,
 .lp-section-body input:focus, .lp-section-body select:focus { border-color: #3b82f6; }
+.lp-field textarea {
+  width: 100%; padding: 4px 7px; box-sizing: border-box;
+  border: 1px solid #d1d5db; border-radius: 4px;
+  font-size: 12px; color: #111827; background: #fff; outline: none;
+  resize: none; overflow: hidden; min-height: 26px; line-height: 1.5;
+  font-family: inherit;
+}
+.lp-field textarea:focus { border-color: #3b82f6; }
 
 /* Levels */
 .lp-levels-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }

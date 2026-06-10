@@ -49,7 +49,7 @@ function NewVariantPopup({ items, onConfirm, onCancel }) {
 
 export default function VariantBar({
   variants, activeVariantId, calcLabel,
-  onActivate, onDuplicate, onDelete, onDeleteBase, onRename, onSetBase, onReorder,
+  onActivate, onDuplicate, onDelete, onDeleteBase, canDeleteBase, onRename, onSetBase, onReorder,
 }) {
   const [open,         setOpen]         = useState(false)
   const [showNewPopup, setShowNewPopup] = useState(false)
@@ -111,14 +111,17 @@ export default function VariantBar({
                           disabled={i === items.length - 1}
                           title="Descendre"
                           onClick={() => onReorder(i, i + 1)}>▼</button>
+                        <button
+                          className="vbar-ord-btn vbar-del-btn"
+                          title="Supprimer cette variante"
+                          onClick={() => { onDelete(item.id); setOpen(false) }}>✕</button>
                       </>)}
-                      <button
-                        className="vbar-ord-btn vbar-del-btn"
-                        title={item.isBase ? "Supprimer l'état de référence" : "Supprimer cette variante"}
-                        onClick={() => {
-                          if (item.isBase) { onDeleteBase?.(); } else { onDelete(item.id) }
-                          setOpen(false)
-                        }}>✕</button>
+                      {item.isBase && canDeleteBase && (
+                        <button
+                          className="vbar-ord-btn vbar-del-btn"
+                          title="Supprimer l'état de référence"
+                          onClick={() => { onDeleteBase?.(); setOpen(false) }}>✕</button>
+                      )}
                     </span>
                   </div>
                   {editingId === item.id && (
