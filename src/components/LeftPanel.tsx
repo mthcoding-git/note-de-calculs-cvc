@@ -97,16 +97,6 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLev
 
   return (
     <Section title="Niveaux" defaultOpen={false}>
-      <div className="lp-field">
-        <label className="lp-checkbox-label">
-          <input type="checkbox" checked={editLevelsEnabled}
-            onChange={e => onEditLevelsChange(e.target.checked)} />
-          <span>Déplacer les lignes de niveaux</span>
-        </label>
-      </div>
-      {editLevelsEnabled && (
-        <p className="lp-hint">Glissez les lignes horizontales sur le plan pour ajuster la hauteur.</p>
-      )}
       <div className="lp-levels-list">
         <div className="lp-level-row lp-level-toiture">
           <span className="lp-level-badge">▲</span>
@@ -136,6 +126,16 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLev
         })}
       </div>
       <button className="lp-add-btn" onClick={addLevel}>+ Ajouter un niveau</button>
+      <div className="lp-field" style={{ marginTop: 8, marginBottom: 0 }}>
+        <label className="lp-checkbox-label">
+          <input type="checkbox" checked={editLevelsEnabled}
+            onChange={e => onEditLevelsChange(e.target.checked)} />
+          <span>Déplacer les lignes de niveaux</span>
+        </label>
+      </div>
+      {editLevelsEnabled && (
+        <p className="lp-hint">Glissez les lignes horizontales sur le plan pour ajuster la hauteur.</p>
+      )}
     </Section>
   )
 }
@@ -183,16 +183,6 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
 
   return (
     <Section title="Colonnes" defaultOpen={false}>
-      <div className="lp-field">
-        <label className="lp-checkbox-label">
-          <input type="checkbox" checked={editColumnsEnabled}
-            onChange={e => onEditColumnsChange(e.target.checked)} />
-          <span>Déplacer les colonnes</span>
-        </label>
-      </div>
-      {editColumnsEnabled && (
-        <p className="lp-hint">Glissez les lignes verticales sur le plan pour ajuster la largeur.</p>
-      )}
       <div className="lp-levels-list">
         {columns.map((col, i) => (
           <div key={col.id}>
@@ -262,6 +252,16 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
         <button className="lp-add-btn" style={{ flex: 1 }} onClick={onAddColumn}>+ Ajouter une colonne</button>
         <button className="lp-add-btn" style={{ flex: 1 }} onClick={addGap}>+ Ajouter une gaine</button>
       </div>
+      <div className="lp-field" style={{ marginTop: 8, marginBottom: 0 }}>
+        <label className="lp-checkbox-label">
+          <input type="checkbox" checked={editColumnsEnabled}
+            onChange={e => onEditColumnsChange(e.target.checked)} />
+          <span>Déplacer les colonnes</span>
+        </label>
+      </div>
+      {editColumnsEnabled && (
+        <p className="lp-hint">Glissez les lignes verticales sur le plan pour ajuster la largeur.</p>
+      )}
     </Section>
   )
 }
@@ -343,11 +343,12 @@ function AlimentationParamsSection({ params, onChange }) {
 }
 
 // ── Materials ──────────────────────────────────────────
-function MaterialsSection({ materials, onChange, showLambda = true }) {
+function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon = false, compact = false }) {
   const [expanded, setExpanded] = useState(null)
 
   const toggle      = id      => onChange(m => m.map(x => x.id === id ? { ...x, enabled: !x.enabled } : x))
   const setLambda   = (id, v) => onChange(m => m.map(x => x.id === id ? { ...x, lambda: v } : x))
+  const setEpsilon  = (id, v) => onChange(m => m.map(x => x.id === id ? { ...x, epsilon: parseFloat(v) || 0.0001 } : x))
   const setName     = (id, v) => onChange(m => m.map(x => x.id === id ? { ...x, name: v } : x))
   const removeMat   = id      => onChange(m => m.filter(x => x.id !== id))
   const setDnField  = (mid, idx, key, v) => onChange(m => m.map(x => {
@@ -378,17 +379,25 @@ function MaterialsSection({ materials, onChange, showLambda = true }) {
                   {expanded === mat.id ? '▾' : '▸'}
                 </button>
               )}
-              {mat.custom && (
+              {mat.custom && !compact && (
                 <button className="lp-icon-btn danger" onClick={() => removeMat(mat.id)} title="Supprimer">✕</button>
               )}
             </div>
           </div>
-          {mat.enabled && showLambda && (
+          {mat.enabled && showLambda && !compact && (
             <div className="lp-mat-lambda">
               <span>λ =</span>
               <input type="number" step="0.001" value={mat.lambda}
                 onChange={e => setLambda(mat.id, e.target.value)} />
               <span className="lp-unit">W/m·K</span>
+            </div>
+          )}
+          {mat.enabled && showEpsilon && (
+            <div className="lp-mat-lambda">
+              <span>ε =</span>
+              <input type="number" step="0.00001" min="0" value={mat.epsilon ?? 0.0001}
+                onChange={e => setEpsilon(mat.id, e.target.value)} />
+              <span className="lp-unit">m</span>
             </div>
           )}
           {mat.enabled && expanded === mat.id && (
@@ -575,19 +584,20 @@ function EditParamsPanel({
   segments, points, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie,
   editParam, onEditParamChange,
-  activeCalcId, alimentationParams,
+  activeCalcId, alimentationParams, calcSubMode,
 }) {
   const isAlim = activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef'
   const isEF   = activeCalcId === 'alimentation-ef'
+  const isPdc  = calcSubMode === 'pdc'
   const set = patch => onEditParamChange({ ...editParam, ...patch })
   const { paramType, segType, materialId, dn, insulationId, thickness,
           length, flowVelocityMode, flowVelocityValue } = editParam
 
   // Réinitialise paramType si la valeur courante n'est pas disponible dans ce mode
-  const validTypes = isEF ? ['material', 'length'] : isAlim ? ['type', 'material', 'length'] : ['type', 'material', 'insulation', 'length', 'flowVelocity']
+  const validTypes = isEF ? ['material', 'length'] : isAlim ? ['type', 'material', 'length'] : isPdc ? ['type', 'material', 'length', 'flowVelocity'] : ['type', 'material', 'insulation', 'length', 'flowVelocity']
   useEffect(() => {
     if (!validTypes.includes(paramType)) set({ paramType: 'material' })
-  }, [isAlim, paramType])
+  }, [isAlim, isPdc, paramType])
 
   const enabledMats = materials.filter(m => m.enabled)
   const enabledIns  = insulations.filter(i => i.enabled)
@@ -615,7 +625,7 @@ function EditParamsPanel({
         <select value={paramType} onChange={e => set({ paramType: e.target.value, materialId: null, dn: null, insulationId: null, thickness: null, length: null, flowVelocityValue: null })}>
           {!isEF && <option value="type">Réseau (Aller / Retour ECS)</option>}
           <option value="material">Matériau & DN</option>
-          {!isAlim && <option value="insulation">Isolant & épaisseur</option>}
+          {!isAlim && !isPdc && <option value="insulation">Isolant & épaisseur</option>}
           <option value="length">Longueur</option>
           {!isAlim && <option value="flowVelocity">Débit / Vitesse</option>}
         </select>
@@ -922,22 +932,43 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
 }
 
 // ── Pertes de charge — Bouclage ECS ───────────────────
-function PdcParamsSection({ params, onChange, materials, onMaterialsChange }) {
+function PdcParamsSection({ params, onChange }) {
   const set = (k, v) => onChange({ ...params, [k]: v })
-  const enabledMats = (materials ?? []).filter(m => m.enabled)
 
-  const BtnRow = ({ options, value, onSelect }) => (
+  const Block = ({ color, children }) => (
+    <div style={{
+      borderLeft: `3px solid ${color}`,
+      borderTop: '1px solid #e5e7eb',
+      borderRight: '1px solid #e5e7eb',
+      borderBottom: '1px solid #e5e7eb',
+      background: '#fff',
+      borderRadius: '0 6px 6px 0',
+      padding: '10px 10px 10px 12px',
+      marginBottom: 8,
+    }}>
+      {children}
+    </div>
+  )
+
+  const BlockTitle = ({ color, children }) => (
+    <div style={{ fontSize: 10, fontWeight: 700, color, textTransform: 'uppercase',
+      letterSpacing: '0.06em', marginBottom: 8 }}>{children}</div>
+  )
+
+  const BtnRow = ({ options, value, onSelect, activeColor, activeBg, activeBorder }) => (
     <div style={{ display: 'flex', gap: 4 }}>
       {options.map(opt => {
         const active = value === opt.value
         return (
           <button key={opt.value} onClick={() => onSelect(opt.value)}
             style={{
-              flex: 1, padding: '4px 0', fontSize: 11, fontWeight: active ? 700 : 500,
-              border: `1px solid ${active ? '#6366f1' : '#e5e7eb'}`,
-              borderRadius: 4, cursor: 'pointer',
-              background: active ? '#eef2ff' : '#f9fafb',
-              color: active ? '#4338ca' : '#6b7280',
+              flex: 1, padding: '4px 6px', fontSize: 10,
+              fontWeight: active ? 700 : 500,
+              border: `1px solid ${active ? activeBorder : '#e5e7eb'}`,
+              borderRadius: 5, cursor: 'pointer',
+              background: active ? activeBg : '#f9fafb',
+              color: active ? activeColor : '#6b7280',
+              transition: 'all 0.1s', lineHeight: 1.3,
             }}>
             {opt.label}
           </button>
@@ -946,111 +977,174 @@ function PdcParamsSection({ params, onChange, materials, onMaterialsChange }) {
     </div>
   )
 
+  const FormulaHint = ({ children }) => (
+    <div style={{ marginTop: 5, fontSize: 10, color: '#6b7280', lineHeight: 1.6, paddingLeft: 2 }}>
+      {children}
+    </div>
+  )
+
   return (
-    <Section title="Pertes de charge" defaultOpen={false}>
-      {/* ── Régulières ── */}
-      <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
-        letterSpacing: '0.05em', marginBottom: 5 }}>Régulières</div>
-      <div className="lp-field">
-        <label className="lp-label">Méthode</label>
-        <BtnRow
-          value={params.methodeReg}
-          onSelect={v => set('methodeReg', v)}
-          options={[
-            { value: 'darcy-colebrook', label: 'Darcy-Colebrook' },
-            { value: 'dtu-approche',    label: 'DTU approchée' },
-          ]}
-        />
+    <div className="lp-section">
+      <div className="lp-section-header" style={{ pointerEvents: 'none' }}>
+        <span>Paramètres de calcul</span>
       </div>
+      <div className="lp-section-body">
 
-      {params.methodeReg === 'darcy-colebrook' && (<>
-        <div className="lp-field">
-          <label className="lp-label">Rugosité ε</label>
-          <BtnRow
-            value={params.roughnessMode}
-            onSelect={v => set('roughnessMode', v)}
-            options={[
-              { value: 'global',        label: 'Valeur unique' },
-              { value: 'par-materiau',  label: 'Par matériau' },
-            ]}
-          />
+        {/* ── Unité d'affichage (compact) ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 10 }}>
+          <span style={{ fontSize: 10, color: '#9ca3af' }}>Unité :</span>
+          {([['Pa', 'Pa'], ['mmCE', 'mmCE'], ['both', 'Pa/mmCE']] as [string, string][]).map(([val, lbl]) => {
+            const active = (params.uniteAffichage ?? 'Pa') === val
+            return (
+              <button key={val} onClick={() => set('uniteAffichage', val)}
+                style={{
+                  padding: '2px 7px', fontSize: 9.5, borderRadius: 3, cursor: 'pointer',
+                  border: `1px solid ${active ? '#94a3b8' : '#e5e7eb'}`,
+                  background: active ? '#f1f5f9' : '#fff',
+                  color: active ? '#374151' : '#9ca3af',
+                  fontWeight: active ? 600 : 400,
+                }}>
+                {lbl}
+              </button>
+            )
+          })}
         </div>
 
-        {params.roughnessMode === 'global' && (
-          <div className="lp-field">
-            <label className="lp-label">ε global <span className="lp-unit">(m)</span></label>
-            <input type="number" step="0.00001" min="0"
-              value={params.roughnessGlobal ?? 0.0001}
-              onChange={e => set('roughnessGlobal', parseFloat(e.target.value) || 0.0001)} />
-            <p className="lp-hint" style={{ marginTop: 3 }}>DTU recommande 0,0001 m</p>
+        {/* ── Pertes linéaires ── */}
+        <Block color="#3b82f6">
+          <BlockTitle color="#1d4ed8">Pertes de charge linéaires</BlockTitle>
+          <div className="lp-field" style={{ marginBottom: 0 }}>
+            <label className="lp-label">Méthode de calcul</label>
+            <BtnRow
+              value={params.methodeReg}
+              onSelect={v => set('methodeReg', v)}
+              activeColor="#1d4ed8" activeBg="#dbeafe" activeBorder="#93c5fd"
+              options={[
+                { value: 'darcy-colebrook', label: 'Darcy-Weisbach' },
+                { value: 'dtu-approche',    label: 'Simplifiée DTU 60.11' },
+              ]}
+            />
+            {params.methodeReg === 'darcy-colebrook' && (
+              <FormulaHint>
+                <span style={{ fontFamily: 'ui-monospace, monospace', color: '#1e40af' }}>J = λ/D × ρV²/2</span>
+                <br /><span style={{ color: '#94a3b8' }}>Darcy-Weisbach — λ par Colebrook-White itératif</span>
+              </FormulaHint>
+            )}
           </div>
-        )}
-
-        {params.roughnessMode === 'par-materiau' && enabledMats.length > 0 && (
-          <div className="lp-field">
-            <label className="lp-label">ε par matériau <span className="lp-unit">(m)</span></label>
-            {enabledMats.map(mat => (
-              <div key={mat.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                <span style={{ flex: 1, fontSize: 11, color: '#374151', minWidth: 0, overflow: 'hidden',
-                  textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mat.name}</span>
-                <input type="number" step="0.000001" min="0"
-                  style={{ width: 80 }}
-                  value={mat.epsilon ?? 0.0001}
-                  onChange={e => {
-                    const val = parseFloat(e.target.value)
-                    if (!isNaN(val) && onMaterialsChange)
-                      onMaterialsChange(m => m.map(x => x.id === mat.id ? { ...x, epsilon: val } : x))
-                  }} />
+          {params.methodeReg === 'dtu-approche' && (
+            <div className="lp-field" style={{ marginBottom: 0, marginTop: 8 }}>
+              <label className="lp-label">Formule</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {[
+                  { value: 'Pa',  formula: 'J = 5,65 × V¹·⁸⁹⁶ / D¹·²⁷⁶', units: 'J en Pa/m · V en m/s · D en m' },
+                  { value: 'mCE', formula: 'J = 3,80 × V¹·⁸⁹⁶ / D¹·²⁷⁶', units: 'J en mCE/m · V en m/s · D en mm' },
+                ].map(opt => {
+                  const active = (params.dtuUnite ?? 'Pa') === opt.value
+                  return (
+                    <div key={opt.value}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="radio" name="dtuUnite"
+                          checked={active}
+                          onChange={() => set('dtuUnite', opt.value)} />
+                        <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11,
+                          fontWeight: active ? 600 : 400,
+                          color: active ? '#1e40af' : '#6b7280' }}>
+                          {opt.formula}
+                        </span>
+                      </label>
+                      {active && (
+                        <div style={{ fontSize: 9.5, color: '#94a3b8', marginTop: 2, paddingLeft: 22 }}>
+                          {opt.units}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
-            ))}
+              <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 6 }}>
+                Formule empirique NF DTU 60.11
+              </div>
+            </div>
+          )}
+        </Block>
+
+        {/* ── Singulières ── */}
+        <Block color="#c2562d">
+          <BlockTitle color="#c2562d">Pertes de charge singulières</BlockTitle>
+          <div className="lp-field" style={{ marginBottom: 0 }}>
+            <label className="lp-label">Méthode de calcul</label>
+            <BtnRow
+              value={params.methodeSing}
+              onSelect={v => set('methodeSing', v)}
+              activeColor="#c2562d" activeBg="#fef0ea" activeBorder="#fbd5c5"
+              options={[
+                { value: 'pourcentage', label: 'Forfaitaire (%)' },
+                { value: 'accessoires', label: 'Accessoires (ξ)' },
+              ]}
+            />
+            {params.methodeSing === 'pourcentage' && (
+              <FormulaHint>
+                <span style={{ fontFamily: 'ui-monospace, monospace', color: '#c2562d' }}>ΔP_sing = ΔP_rég × x %</span>
+                <br />Majoration forfaitaire appliquée sur les ΔP régulières
+              </FormulaHint>
+            )}
+            {params.methodeSing === 'accessoires' && (
+              <FormulaHint>
+                <span style={{ fontFamily: 'ui-monospace, monospace', color: '#c2562d' }}>ΔP = Σ ξ × ρV²/2</span>
+                <br />Accessoires renseignés tronçon par tronçon
+              </FormulaHint>
+            )}
           </div>
-        )}
-      </>)}
+          {params.methodeSing === 'pourcentage' && (
+            <div className="lp-field" style={{ marginTop: 8, marginBottom: 0 }}>
+              <label className="lp-label">Majoration <span className="lp-unit">(%)</span></label>
+              <input type="number" min="0" max="100" step="1"
+                value={params.pourcentageSing ?? 20}
+                onChange={e => set('pourcentageSing', parseFloat(e.target.value) || 0)} />
+            </div>
+          )}
+        </Block>
 
-      {/* ── Singulières ── */}
-      <hr className="rp-divider" style={{ margin: '8px 0' }} />
-      <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
-        letterSpacing: '0.05em', marginBottom: 5 }}>Singulières</div>
-      <div className="lp-field">
-        <label className="lp-label">Méthode</label>
-        <BtnRow
-          value={params.methodeSing}
-          onSelect={v => set('methodeSing', v)}
-          options={[
-            { value: 'pourcentage',  label: '% des ΔP rég.' },
-            { value: 'accessoires',  label: 'Accessoires' },
-          ]}
-        />
-      </div>
-      {params.methodeSing === 'pourcentage' && (
-        <div className="lp-field">
-          <label className="lp-label">Majoration <span className="lp-unit">(%)</span></label>
-          <input type="number" min="0" max="100" step="1"
-            value={params.pourcentageSing ?? 10}
-            onChange={e => set('pourcentageSing', parseFloat(e.target.value) || 0)} />
+        {/* ── Équipements ── */}
+        <Block color="#7c3aed">
+          <label className="lp-checkbox-label" style={{ margin: 0, cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!params.equipementsActifs}
+              onChange={e => set('equipementsActifs', e.target.checked)} />
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#7c3aed',
+              textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Pertes de charge des équipements
+            </span>
+          </label>
+        </Block>
+
+        {/* ── Coefficient de sécurité ── */}
+        <div className="lp-field" style={{ marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+            <label className="lp-checkbox-label" style={{ margin: 0 }}>
+              <input type="checkbox" checked={!!params.coefPompeActif}
+                onChange={e => set('coefPompeActif', e.target.checked)} />
+              <span style={{ color: '#6b7280', fontSize: 11 }}>Coefficient de sécurité</span>
+            </label>
+            {params.coefPompeActif && (<>
+              <input type="number" min="0" max="50" step="1"
+                style={{ width: 44 }}
+                value={params.coefPompe ?? 10}
+                onChange={e => set('coefPompe', parseFloat(e.target.value) || 0)} />
+              <span className="lp-unit">%</span>
+            </>)}
+          </div>
+          {params.coefPompeActif && (
+            <div style={{ fontSize: 9.5, color: '#94a3b8', marginTop: 4, paddingLeft: 20, lineHeight: 1.5 }}>
+              <span style={{ fontFamily: 'ui-monospace, monospace', color: '#6b7280' }}>
+                ΔP_majoré = ΔP_total × (1 + x %)
+              </span>
+              <br />Marge appliquée sur le ΔP total
+            </div>
+          )}
         </div>
-      )}
-      {params.methodeSing === 'accessoires' && (
-        <p className="lp-hint">Les accessoires sont renseignés tronçon par tronçon dans la fenêtre de droite (ξ × ρ × V²/2).</p>
-      )}
 
-      {/* ── Équipements ── */}
-      <hr className="rp-divider" style={{ margin: '8px 0' }} />
-      <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
-        letterSpacing: '0.05em', marginBottom: 5 }}>Équipements</div>
-      <div className="lp-field">
-        <label className="lp-checkbox-label">
-          <input type="checkbox" checked={!!params.equipementsActifs}
-            onChange={e => set('equipementsActifs', e.target.checked)} />
-          <span>Activer les ΔP équipements</span>
-        </label>
-        {params.equipementsActifs && (
-          <p className="lp-hint" style={{ marginTop: 4 }}>
-            Les équipements (filtres, clapets, échangeurs…) sont assignés tronçon par tronçon dans la fenêtre de droite via leur Kv fabricant (ΔP = (Q/Kv)² × 10⁵ Pa).
-          </p>
-        )}
       </div>
-    </Section>
+    </div>
   )
 }
 
@@ -1159,6 +1253,7 @@ export default function LeftPanel({
               editParam={editParam} onEditParamChange={onEditParamChange}
               activeCalcId={activeCalcId}
               alimentationParams={alimentationParams}
+              calcSubMode={calcSubMode}
             />
           </div>
         </div>
@@ -1182,10 +1277,8 @@ export default function LeftPanel({
   }
 
   if (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') {
-    return (
-      <div className="left-panel">
-        <MaterialsSection materials={materials} onChange={onMaterialsChange} showLambda={false} />
-        <AlimentationParamsSection params={alimentationParams} onChange={onAlimentationParamsChange} />
+    const tree = (
+      <>
         <LevelsSection
           levels={levels} lineYs={lineYs}
           onLevelsChange={onLevelsChange} onLineYsChange={onLineYsChange}
@@ -1204,6 +1297,16 @@ export default function LeftPanel({
           onAddGroupe={onAddGroupe} onRemoveGroupe={onRemoveGroupe}
           columns={columns} levels={levels} points={points}
         />
+      </>
+    )
+    if (calcSubMode === 'pdc') {
+      return <div className="left-panel">{tree}</div>
+    }
+    return (
+      <div className="left-panel">
+        <MaterialsSection materials={materials} onChange={onMaterialsChange} showLambda={false} />
+        <AlimentationParamsSection params={alimentationParams} onChange={onAlimentationParamsChange} />
+        {tree}
       </div>
     )
   }
@@ -1211,8 +1314,26 @@ export default function LeftPanel({
   if (activeCalcId === 'bouclage-ecs' && calcSubMode === 'pdc') {
     return (
       <div className="left-panel">
-        <PdcParamsSection params={pdcParams} onChange={onPdcParamsChange} materials={materials} onMaterialsChange={onMaterialsChange} />
-        <MaterialsSection materials={materials} onChange={onMaterialsChange} />
+        <PdcParamsSection params={pdcParams} onChange={onPdcParamsChange} />
+        <MaterialsSection materials={materials} onChange={onMaterialsChange} compact showEpsilon />
+        <LevelsSection
+          levels={levels} lineYs={lineYs}
+          onLevelsChange={onLevelsChange} onLineYsChange={onLineYsChange}
+          editLevelsEnabled={editLevelsEnabled} onEditLevelsChange={onEditLevelsChange}
+        />
+        <ColumnsSection
+          columns={columns} columnXs={columnXs}
+          onColumnsChange={onColumnsChange} onColumnXsChange={onColumnXsChange}
+          onRemoveColumn={onRemoveColumn} onAddColumn={onAddColumn} onAddGap={onAddGap} onMoveGaine={onMoveGaine}
+          levels={levels}
+          editColumnsEnabled={editColumnsEnabled} onEditColumnsChange={onEditColumnsChange}
+        />
+        <GroupesSection
+          groupesEditMode={groupesEditMode} onGroupesEditModeChange={onGroupesEditModeChange}
+          showGroupeNames={showGroupeNames} onShowGroupeNamesChange={onShowGroupeNamesChange}
+          onAddGroupe={onAddGroupe} onRemoveGroupe={onRemoveGroupe}
+          columns={columns} levels={levels} points={points}
+        />
       </div>
     )
   }

@@ -74,7 +74,7 @@ function SegNameField({ displayName, isDefault, value, onChange }) {
   )
 }
 
-function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData }) {
+function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, cumDp, postJunction = false }) {
   const [showIter, setShowIter] = useState(false)
 
   const fmtPa = (v: number) => v >= 10000
@@ -103,321 +103,301 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData }) {
   const L     = seg.length_override
   const di_mm = seg.di_override ?? dnDef?.di
   const Q     = flowData?.flowRate ?? null
+  const dynPressure = pdcResult.dynPressure ?? (pdcResult.rho * pdcResult.V ** 2 / 2)
+
+  const unite = pdcParams?.uniteAffichage ?? 'Pa'
+  const fmtMce = (pa: number): string => `${(pa / 9.81).toFixed(0)} mmCE`
+  const fmtP = (pa: number): string => {
+    if (unite === 'mmCE') return fmtMce(pa)
+    if (unite === 'both') return `${fmtPa(pa)} / ${fmtMce(pa)}`
+    return fmtPa(pa)
+  }
+  const fmtPNode = (pa: number): React.ReactNode => {
+    if (unite === 'mmCE') return fmtMce(pa)
+    if (unite === 'both') return (
+      <>{fmtPa(pa)}<span style={{ fontSize: '0.75em', color: '#8d96a8', fontWeight: 400 }}> /{fmtMce(pa)}</span></>
+    )
+    return fmtPa(pa)
+  }
+  const paStr = (pa: number): string => `${Math.round(pa)} Pa`
 
   const secLabel = (text: string) => (
     <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
       letterSpacing: '0.04em', marginBottom: 4 }}>{text}</div>
   )
-  const calcRow = (label: string, value: string, accent = false) => (
+  const row = (label: string, value: string) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-      padding: '2px 0', borderBottom: '1px solid #f3f4f6' }}>
-      <span style={{ fontSize: 10, color: accent ? '#1d4ed8' : '#6b7280', fontWeight: accent ? 600 : 400 }}>{label}</span>
-      <span style={{ fontSize: 10.5, fontWeight: accent ? 700 : 500,
-        color: accent ? '#1d4ed8' : '#374151', fontFamily: 'ui-monospace, monospace' }}>{value}</span>
+      padding: '2px 0', borderBottom: '1px solid #f3f4f6', gap: 6 }}>
+      <span style={{ fontSize: 10, color: '#6b7280', minWidth: 0 }}>{label}</span>
+      <span style={{ fontSize: 10.5, fontWeight: 500, color: '#374151',
+        fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
     </div>
   )
-
-  const dynPressure = pdcResult.dynPressure ?? (pdcResult.rho * pdcResult.V ** 2 / 2)
+  const resultRow = (label: string, value: string, color: string) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      padding: '4px 0', marginTop: 4, gap: 6 }}>
+      <span style={{ fontSize: 10, color, fontWeight: 600 }}>{label}</span>
+      <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
+    </div>
+  )
+  const techBox = (children: React.ReactNode) => (
+    <div style={{ padding: '7px 10px', background: '#f9fafb', border: '1px solid #f3f4f6',
+      borderRadius: 6, fontSize: 10, color: '#9ca3af', lineHeight: 1.9, marginTop: 6 }}>
+      {secLabel('Données techniques')}
+      {children}
+    </div>
+  )
+  const cardHeader = (title: string, value: React.ReactNode, pctVal: string, color: string, light: string) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      padding: '7px 12px', background: '#f9fafb', borderBottom: '1px solid #f3f4f6' }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: '#374151',
+        textTransform: 'uppercase', letterSpacing: '0.05em' }}>{title}</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color }}>{value}</span>
+        <span style={{ fontSize: 10, color: light }}>{pctVal}</span>
+      </div>
+    </div>
+  )
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
 
+      {/* ── ΔP depuis production ── */}
+      {cumDp != null && (
+        <>
+          <div style={{ paddingBottom: 10, marginBottom: 2, borderBottom: '2px solid #e5e7eb', paddingLeft: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: postJunction ? 2 : 0 }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
+                letterSpacing: '0.07em' }}>ΔP depuis production ECS</span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a',
+                fontFamily: 'ui-monospace, monospace' }}>{fmtPNode(cumDp)}</span>
+            </div>
+            {postJunction && (
+              <div style={{ fontSize: 9, color: '#9ca3af', fontStyle: 'italic', textAlign: 'right' }}>
+                circuit le plus défavorisé
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
       {/* ── ΔP Total ── */}
-      <div style={{ padding: '10px 14px', background: '#f8fafc', border: '1px solid #e2e8f0',
-        borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <div style={{ fontSize: 9, color: '#64748b', fontWeight: 700, textTransform: 'uppercase',
-            letterSpacing: '0.06em', marginBottom: 4 }}>ΔP Total</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-            <span style={{ fontSize: 20, fontWeight: 800, color: '#0f172a' }}>
-              {pdcResult.dpTotal >= 10000
-                ? (pdcResult.dpTotal / 1000).toFixed(2)
-                : Math.round(pdcResult.dpTotal)}
-            </span>
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>
-              {pdcResult.dpTotal >= 10000 ? 'kPa' : 'Pa'}
-            </span>
+      <div style={{ padding: '10px 14px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 9, color: '#64748b', fontWeight: 700, textTransform: 'uppercase',
+              letterSpacing: '0.06em', marginBottom: 4 }}>ΔP Total tronçon</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 20, fontWeight: 800, color: '#0f172a' }}>
+                {unite === 'mmCE'
+                  ? (pdcResult.dpTotal / 9.81).toFixed(0)
+                  : pdcResult.dpTotal >= 10000 ? (pdcResult.dpTotal / 1000).toFixed(2) : Math.round(pdcResult.dpTotal)}
+              </span>
+              <span style={{ fontSize: 20, fontWeight: 800, color: '#0f172a' }}>
+                {unite === 'mmCE'
+                  ? 'mmCE'
+                  : pdcResult.dpTotal >= 10000 ? 'kPa' : 'Pa'}
+              </span>
+              {unite === 'both' && (
+                <span style={{ fontSize: 11, color: '#94a3b8' }}>/ {fmtMce(pdcResult.dpTotal)}</span>
+              )}
+            </div>
+          </div>
+          <div style={{ fontSize: 10, textAlign: 'right', lineHeight: 1.9 }}>
+            <div style={{ color: '#2563eb' }}>lin. {fmtPNode(pdcResult.dpReg)}</div>
+            <div style={{ color: '#c2562d' }}>sing. {fmtPNode(pdcResult.dpSing)}</div>
+            {pdcParams?.equipementsActifs && pdcResult.dpEquip > 0 && (
+              <div style={{ color: '#7c3aed' }}>équip. {fmtPNode(pdcResult.dpEquip)}</div>
+            )}
+            {pdcResult.dpPompe != null && (
+              <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid #e2e8f0',
+                color: '#94a3b8', fontWeight: 600 }}>
+                majoré {fmtPNode(pdcResult.dpPompe)}
+                <span style={{ fontSize: 9, fontWeight: 400, color: '#b45309', marginLeft: 4 }}>
+                  +{pdcParams?.coefPompe ?? 10} %
+                </span>
+              </div>
+            )}
           </div>
         </div>
-        <div style={{ fontSize: 10, textAlign: 'right', lineHeight: 1.9 }}>
-          <div style={{ color: '#2563eb' }}>rég. {Math.round(pdcResult.dpReg)} Pa</div>
-          <div style={{ color: '#7c3aed' }}>sing. {Math.round(pdcResult.dpSing)} Pa</div>
+        <div style={{ marginTop: 10, height: 5, borderRadius: 3, overflow: 'hidden', display: 'flex', gap: 2 }}>
+          <div style={{ flex: pdcResult.dpReg, background: '#2563eb', borderRadius: 3 }} />
+          <div style={{ flex: pdcResult.dpSing, background: '#c2562d', borderRadius: 3 }} />
           {pdcParams?.equipementsActifs && pdcResult.dpEquip > 0 && (
-            <div style={{ color: '#be185d' }}>équip. {Math.round(pdcResult.dpEquip)} Pa</div>
+            <div style={{ flex: pdcResult.dpEquip, background: '#7c3aed', borderRadius: 3 }} />
           )}
         </div>
       </div>
 
-      {/* ── Régulières ── */}
-      <div style={{ border: '1px solid #bfdbfe', borderRadius: 8, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '7px 12px', background: '#dbeafe', borderBottom: '1px solid #bfdbfe' }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: '#1e40af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Régulières
-          </span>
-          <div>
-            <span style={{ fontSize: 15, fontWeight: 700, color: '#1d4ed8' }}>{fmtPa(pdcResult.dpReg)}</span>
-          </div>
-        </div>
-
-        <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div>
-            {secLabel('Méthode')}
-            <div style={{ fontSize: 11, color: '#374151' }}>
-              {pdcParams?.methodeReg === 'darcy-colebrook'
-                ? 'Darcy-Weisbach + Colebrook-White itératif'
-                : 'Formule approchée DTU 60.11'}
-            </div>
+      {/* ── Pertes linéaires ── */}
+      <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #2563eb', borderRadius: 8, overflow: 'hidden' }}>
+        {cardHeader('Pertes linéaires', fmtPNode(pdcResult.dpReg), pct(pdcResult.dpReg), '#2563eb', '#93c5fd')}
+        <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
+            {pdcParams?.methodeReg === 'darcy-colebrook'
+              ? 'Darcy-Weisbach + Colebrook-White'
+              : `DTU 60.11 — formule approchée${pdcParams?.dtuUnite === 'mCE' ? ' (mCE)' : ' (Pa)'}`}
           </div>
 
-          <div>
-            {secLabel('Résultats de calcul')}
-            {pdcParams?.methodeReg === 'darcy-colebrook' && (<>
-              {calcRow(`ρ  (Kell, T = ${pdcResult.T_used.toFixed(1)} °C)`, `${pdcResult.rho.toFixed(2)} kg/m³`)}
-              {calcRow('ν = μ/ρ  (Vogel-Andrade)', `${(pdcResult.nu * 1e6).toFixed(3)} ×10⁻⁶ m²/s`)}
-            </>)}
-
-            {pdcParams?.methodeReg === 'darcy-colebrook' && pdcResult.Re != null && (<>
-              {calcRow('Re = V·di / ν',
-                `${Math.round(pdcResult.Re)}  —  ${
-                  pdcResult.regime === 'laminar' ? 'laminaire'
-                  : pdcResult.regime === 'transition' ? 'zone de transition'
-                  : 'turbulent'
-                }`
-              )}
-              {pdcResult.regime === 'laminar' && calcRow('λ = 64 / Re', `${pdcResult.lambda?.toFixed(5)}`)}
-              {(pdcResult.regime === 'transition') && calcRow(
-                'λ  (interpolation lam.↔turb.)', `${pdcResult.lambda?.toFixed(5)}`
-              )}
-              {pdcResult.regime === 'turbulent' && (
-                <div style={{ padding: '2px 0', borderBottom: '1px solid #f3f4f6' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 10, color: '#6b7280' }}>λ  (Colebrook-White)</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                      <span style={{ fontSize: 10.5, fontWeight: 500, color: '#374151',
-                        fontFamily: 'ui-monospace, monospace' }}>{pdcResult.lambda?.toFixed(5)}</span>
-                      {pdcResult.iterations && (
-                        <button onClick={() => setShowIter(v => !v)}
-                          style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, cursor: 'pointer',
-                            background: showIter ? '#e0f2fe' : '#f1f5f9',
-                            border: `1px solid ${showIter ? '#7dd3fc' : '#cbd5e1'}`,
-                            color: showIter ? '#0284c7' : '#64748b', fontWeight: 600 }}>
-                          {pdcResult.iterations.length} iter. {showIter ? '▴' : '▾'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {showIter && pdcResult.iterations && (
-                    <div style={{ margin: '5px 0 3px', padding: '7px 9px', background: '#f8fafc',
-                      border: '1px solid #e2e8f0', borderRadius: 5 }}>
-                      <div style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginBottom: 5 }}>
-                        Init. Swamee-Jain : λ₀ = <span style={{ fontFamily: 'ui-monospace, monospace', color: '#374151' }}>
-                          {pdcResult.lambdaInit?.toFixed(6)}
-                        </span>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '20px 1fr 80px',
-                        gap: '2px 8px', fontSize: 9.5 }}>
-                        <span style={{ color: '#94a3b8', fontWeight: 600 }}>i</span>
-                        <span style={{ color: '#94a3b8', fontWeight: 600 }}>λ</span>
-                        <span style={{ color: '#94a3b8', fontWeight: 600 }}>|Δλ|</span>
-                        {pdcResult.iterations.map((it, idx) => (
-                          <span key={idx} style={{ display: 'contents' }}>
-                            <span style={{ color: '#6b7280' }}>{it.i}</span>
-                            <span style={{ fontFamily: 'ui-monospace, monospace', color: '#0f172a' }}>{it.lambda.toFixed(7)}</span>
-                            <span style={{ fontFamily: 'ui-monospace, monospace',
-                              color: it.delta < 1e-8 ? '#16a34a' : '#9ca3af', fontSize: 9 }}>
-                              {it.delta.toExponential(1)}
-                            </span>
-                          </span>
-                        ))}
-                      </div>
-                      <div style={{ marginTop: 5, fontSize: 9, color: '#16a34a', fontWeight: 600 }}>
-                        ✓ Convergence atteinte (|Δλ| &lt; 10⁻⁸)
-                      </div>
-                    </div>
+          {/* Résultats intermédiaires calculés */}
+          {pdcParams?.methodeReg === 'darcy-colebrook' && (<>
+            {row('ρ', `${pdcResult.rho.toFixed(2)} kg/m³`)}
+            {row('μ', `${(pdcResult.mu * 1e3).toFixed(3)} ×10⁻³ Pa·s`)}
+            {row('ν', `${(pdcResult.nu * 1e6).toFixed(3)} ×10⁻⁶ m²/s`)}
+            {pdcResult.Re != null && row(
+              `Re — ${pdcResult.regime === 'laminar' ? 'laminaire' : pdcResult.regime === 'transition' ? 'transition' : 'turbulent'}`,
+              `${Math.round(pdcResult.Re)}`
+            )}
+            {pdcResult.regime === 'laminar'     && row('λ', `${pdcResult.lambda?.toFixed(5)}`)}
+            {pdcResult.regime === 'transition'  && row('λ  (interpolation)', `${pdcResult.lambda?.toFixed(5)}`)}
+            {pdcResult.regime === 'turbulent' && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '2px 0', borderBottom: '1px solid #f3f4f6' }}>
+                <span style={{ fontSize: 10, color: '#6b7280' }}>λ</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 500, color: '#374151',
+                    fontFamily: 'ui-monospace, monospace' }}>{pdcResult.lambda?.toFixed(5)}</span>
+                  {pdcResult.iterations && (
+                    <button onClick={() => setShowIter(v => !v)}
+                      style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, cursor: 'pointer',
+                        background: showIter ? '#e0f2fe' : '#f1f5f9',
+                        border: `1px solid ${showIter ? '#7dd3fc' : '#cbd5e1'}`,
+                        color: showIter ? '#0284c7' : '#64748b', fontWeight: 600 }}>
+                      {pdcResult.iterations.length} iter. {showIter ? '▴' : '▾'}
+                    </button>
                   )}
                 </div>
-              )}
-              {calcRow('J = λ/D × ρV²/2', `${pdcResult.J.toFixed(1)} Pa/m`)}
-            </>)}
-            {pdcParams?.methodeReg === 'dtu-approche' && (
-              calcRow('J = 5.65 × V¹·⁸⁹⁶ / D¹·²⁷⁶', `${pdcResult.J.toFixed(1)} Pa/m`)
+              </div>
             )}
+            {showIter && pdcResult.iterations && (
+              <div style={{ margin: '3px 0', padding: '7px 9px', background: '#f8fafc',
+                border: '1px solid #e2e8f0', borderRadius: 5 }}>
+                <div style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginBottom: 5 }}>
+                  Init. Swamee-Jain : λ₀ = <span style={{ fontFamily: 'ui-monospace, monospace', color: '#374151' }}>
+                    {pdcResult.lambdaInit?.toFixed(6)}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '20px 1fr 80px', gap: '2px 8px', fontSize: 9.5 }}>
+                  <span style={{ color: '#94a3b8', fontWeight: 600 }}>i</span>
+                  <span style={{ color: '#94a3b8', fontWeight: 600 }}>λ</span>
+                  <span style={{ color: '#94a3b8', fontWeight: 600 }}>|Δλ|</span>
+                  {pdcResult.iterations.map((it, idx) => (
+                    <span key={idx} style={{ display: 'contents' }}>
+                      <span style={{ color: '#6b7280' }}>{it.i}</span>
+                      <span style={{ fontFamily: 'ui-monospace, monospace', color: '#0f172a' }}>{it.lambda.toFixed(7)}</span>
+                      <span style={{ fontFamily: 'ui-monospace, monospace',
+                        color: it.delta < 1e-8 ? '#16a34a' : '#9ca3af', fontSize: 9 }}>
+                        {it.delta.toExponential(1)}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+                <div style={{ marginTop: 5, fontSize: 9, color: '#16a34a', fontWeight: 600 }}>
+                  ✓ Convergence atteinte (|Δλ| &lt; 10⁻⁸)
+                </div>
+              </div>
+            )}
+            {row('J', `${pdcResult.J.toFixed(1)} Pa/m`)}
+          </>)}
+          {pdcParams?.methodeReg === 'dtu-approche' && row('J', `${pdcResult.J.toFixed(1)} Pa/m`)}
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-              padding: '3px 0', marginTop: 2 }}>
-              <span style={{ fontSize: 10, color: '#1d4ed8', fontWeight: 600 }}>ΔP_rég = J × L</span>
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#1d4ed8',
-                fontFamily: 'ui-monospace, monospace' }}>
-                {pdcResult.J.toFixed(1)} × {L != null ? L.toFixed(1) : '—'} = {Math.round(pdcResult.dpReg)} Pa
-              </span>
-            </div>
-          </div>
+          {resultRow(
+            'ΔP_lin = J × L',
+            `${pdcResult.J.toFixed(1)} × ${L != null ? L.toFixed(1) : '—'} = ${paStr(pdcResult.dpReg)}`,
+            '#2563eb'
+          )}
 
-          <div style={{ padding: '7px 10px', background: '#f8fafc', border: '1px solid #f1f5f9', borderRadius: 6 }}>
-            {secLabel('Données techniques')}
-            <div style={{ fontSize: 10, color: '#9ca3af', lineHeight: 1.9 }}>
-              <div>V = {pdcResult.V.toFixed(4)} m/s · di = {di_mm != null ? `${di_mm} mm` : '—'}</div>
-              <div>L = {L != null ? `${L.toFixed(1)} m` : '—'}
-                {pdcResult.epsilon_used != null ? ` · ε = ${pdcResult.epsilon_used} m` : ''}</div>
-              {pdcParams?.methodeReg === 'darcy-colebrook' && (
-                <div>T = {pdcResult.T_used.toFixed(1)} °C</div>
-              )}
-            </div>
-          </div>
+          {/* Données d'entrée */}
+          {techBox(<>
+            <div>V = {pdcResult.V.toFixed(3)} m/s · di = {di_mm != null ? `${di_mm} mm` : '—'} · L = {L != null ? `${L.toFixed(1)} m` : '—'}</div>
+            {(pdcResult.epsilon_used != null || pdcParams?.methodeReg === 'darcy-colebrook') && (
+              <div>
+                {pdcResult.epsilon_used != null && `ε = ${pdcResult.epsilon_used} m`}
+                {pdcResult.epsilon_used != null && pdcParams?.methodeReg === 'darcy-colebrook' ? ' · ' : ''}
+                {pdcParams?.methodeReg === 'darcy-colebrook' && `T = ${pdcResult.T_used.toFixed(1)} °C`}
+              </div>
+            )}
+          </>)}
         </div>
       </div>
 
-      {/* ── Singulières ── */}
-      <div style={{ border: '1px solid #ddd6fe', borderRadius: 8, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '7px 12px', background: '#ede9fe', borderBottom: '1px solid #ddd6fe' }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: '#5b21b6', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Singulières
-          </span>
-          <div>
-            <span style={{ fontSize: 15, fontWeight: 700, color: '#6d28d9' }}>{fmtPa(pdcResult.dpSing)}</span>
-            <span style={{ fontSize: 10, color: '#a78bfa', marginLeft: 5 }}>
-              {pdcParams?.methodeSing === 'pourcentage'
-                ? `${pdcParams.pourcentageSing ?? 10} % des rég.`
-                : pct(pdcResult.dpSing)}
-            </span>
-          </div>
-        </div>
-
-        <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div>
-            {secLabel('Méthode')}
-            <div style={{ fontSize: 11, color: '#374151' }}>
-              {pdcParams?.methodeSing === 'pourcentage'
-                ? 'Forfaitaire (% des pertes régulières)'
-                : 'Par accessoires — ξ × ρV²/2'}
-            </div>
+      {/* ── Pertes singulières ── */}
+      <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #c2562d', borderRadius: 8, overflow: 'hidden' }}>
+        {cardHeader('Pertes singulières', fmtPNode(pdcResult.dpSing), pct(pdcResult.dpSing), '#c2562d', '#fca38a')}
+        <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
+            {pdcParams?.methodeSing === 'pourcentage'
+              ? `Forfaitaire — ${pdcParams.pourcentageSing ?? 10} % des pertes linéaires`
+              : 'Par accessoires — ξ × ρV²/2'}
           </div>
 
-          <div>
-            {secLabel('Résultats de calcul')}
-            {pdcParams?.methodeSing === 'pourcentage' ? (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '3px 0' }}>
-                <span style={{ fontSize: 10, color: '#6d28d9', fontWeight: 600 }}>
-                  ΔP_sing = ΔP_rég × {pdcParams.pourcentageSing ?? 10} %
-                </span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: '#6d28d9',
-                  fontFamily: 'ui-monospace, monospace' }}>
-                  {Math.round(pdcResult.dpReg)} × {((pdcParams.pourcentageSing ?? 10) / 100).toFixed(2)} = {Math.round(pdcResult.dpSing)} Pa
-                </span>
-              </div>
-            ) : (() => {
-              const fittings: any[] = seg.fittings ?? []
-              const active = fittings.filter(f => (f.count ?? 0) > 0)
-              return (
-                <>
-                  {calcRow('ρV²/2  (pression dynamique)', `${dynPressure.toFixed(2)} Pa`)}
+          {pdcParams?.methodeSing === 'pourcentage'
+            ? (<>
+                {row(`ΔP_lin × ${pdcParams.pourcentageSing ?? 10} %`, `${Math.round(pdcResult.dpReg)} × ${((pdcParams.pourcentageSing ?? 10) / 100).toFixed(2)}`)}
+                {resultRow('ΔP_sing', paStr(pdcResult.dpSing), '#c2562d')}
+              </>)
+            : (() => {
+                const fittings: any[] = seg.fittings ?? []
+                const active = fittings.filter(f => (f.count ?? 0) > 0)
+                return (<>
+                  {row('ρV²/2  (pression dynamique)', paStr(dynPressure))}
                   {active.length === 0
-                    ? <div style={{ fontSize: 10, color: '#a78bfa', fontStyle: 'italic', padding: '3px 0' }}>
+                    ? <div style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic', padding: '3px 0' }}>
                         Aucun accessoire renseigné
                       </div>
                     : active.map(f => {
-                      const def = FITTING_TYPES.find(t => t.id === f.type)
-                      const xi  = f.xiOverride ?? def?.xi ?? 0
-                      const dp  = xi * (f.count ?? 1) * dynPressure
-                      return calcRow(
-                        `${f.count}× ${def?.label ?? f.type}  (ξ = ${xi})`,
-                        `${xi} × ${f.count} × ${dynPressure.toFixed(1)} = ${Math.round(dp)} Pa`,
-                        false
-                      )
-                    })
+                        const def = FITTING_TYPES.find(t => t.id === f.type)
+                        const xi  = f.xiOverride ?? def?.xi ?? 0
+                        const dp  = xi * (f.count ?? 1) * dynPressure
+                        return row(
+                          `${f.count}× ${def?.label ?? f.type}  (ξ = ${xi})`,
+                          paStr(dp)
+                        )
+                      })
                   }
-                  {active.length > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-                      padding: '3px 0', marginTop: 2 }}>
-                      <span style={{ fontSize: 10, color: '#6d28d9', fontWeight: 600 }}>ΔP_sing = Σ</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: '#6d28d9',
-                        fontFamily: 'ui-monospace, monospace' }}>{Math.round(pdcResult.dpSing)} Pa</span>
-                    </div>
-                  )}
-                </>
-              )
-            })()}
-          </div>
+                  {active.length > 0 && resultRow('ΔP_sing = Σ', paStr(pdcResult.dpSing), '#c2562d')}
+                </>)
+              })()
+          }
 
-          <div style={{ padding: '7px 10px', background: '#faf5ff', border: '1px solid #f3e8ff', borderRadius: 6 }}>
-            {secLabel('Données techniques')}
-            <div style={{ fontSize: 10, color: '#9ca3af', lineHeight: 1.9 }}>
-              {pdcParams?.methodeSing === 'pourcentage'
-                ? <div>Pourcentage forfaitaire : {pdcParams.pourcentageSing ?? 10} %</div>
-                : (() => {
-                  const fittings: any[] = seg.fittings ?? []
-                  const active = fittings.filter(f => (f.count ?? 0) > 0)
-                  return active.length > 0
-                    ? active.map(f => {
-                      const def = FITTING_TYPES.find(t => t.id === f.type)
-                      const xi  = f.xiOverride ?? def?.xi ?? 0
-                      return <div key={f.type}>{f.count}× {def?.label ?? f.type} — ξ = {xi}</div>
-                    })
-                    : <div style={{ fontStyle: 'italic' }}>Aucun accessoire configuré</div>
-                })()
-              }
-            </div>
-          </div>
         </div>
       </div>
 
       {/* ── Équipements ── */}
       {pdcParams?.equipementsActifs && (
-        <div style={{ border: '1px solid #f9a8d4', borderRadius: 8, overflow: 'hidden' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '7px 12px', background: '#fce7f3', borderBottom: '1px solid #f9a8d4' }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#9d174d', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Équipements
-            </span>
-            <div>
-              <span style={{ fontSize: 15, fontWeight: 700, color: '#be185d' }}>{fmtPa(pdcResult.dpEquip)}</span>
-              <span style={{ fontSize: 10, color: '#f9a8d4', marginLeft: 5 }}>{pct(pdcResult.dpEquip)}</span>
-            </div>
-          </div>
-          <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div>
-              {secLabel('Résultats de calcul')}
-              {(() => {
-                const equipment: any[] = seg.equipment ?? []
-                if (equipment.length === 0) {
-                  return <div style={{ fontSize: 10, color: '#f9a8d4', fontStyle: 'italic', padding: '3px 0' }}>
-                    Aucun équipement configuré
-                  </div>
-                }
-                return (
-                  <>
-                    {equipment.map((e, idx) => {
-                      const def = EQUIPMENT_TYPES.find(t => t.id === e.type)
-                      const kv  = e.kvOverride ?? def?.kvDefault ?? null
-                      const dp  = kv && Q ? Math.pow(Q / kv, 2) * 100000 : null
-                      return calcRow(
-                        `${def?.label ?? e.type}  (Kv = ${kv ?? '?'})`,
-                        dp != null ? `(${Q?.toFixed(3)}/${kv})² × 10⁵ = ${Math.round(dp)} Pa` : 'Kv manquant'
-                      )
-                    })}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-                      padding: '3px 0', marginTop: 2 }}>
-                      <span style={{ fontSize: 10, color: '#be185d', fontWeight: 600 }}>ΔP_équip = Σ</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: '#be185d',
-                        fontFamily: 'ui-monospace, monospace' }}>{Math.round(pdcResult.dpEquip)} Pa</span>
-                    </div>
-                  </>
-                )
-              })()}
-            </div>
-            <div style={{ padding: '7px 10px', background: '#fff1f2', border: '1px solid #ffe4e6', borderRadius: 6 }}>
-              {secLabel('Données techniques')}
-              <div style={{ fontSize: 10, color: '#9ca3af', lineHeight: 1.9 }}>
-                <div>Q = {Q != null ? Q.toFixed(3) : '—'} m³/h</div>
-                {(seg.equipment ?? []).map((e: any, idx: number) => {
+        <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #7c3aed', borderRadius: 8, overflow: 'hidden' }}>
+          {cardHeader('Équipements', fmtPNode(pdcResult.dpEquip), pct(pdcResult.dpEquip), '#7c3aed', '#c4b5fd')}
+          <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {(() => {
+              const equipment: any[] = seg.equipment ?? []
+              if (equipment.length === 0) return (
+                <div style={{ fontSize: 10, color: '#c4b5fd', fontStyle: 'italic', padding: '3px 0' }}>
+                  Aucun équipement configuré
+                </div>
+              )
+              return (<>
+                {equipment.map((e, idx) => {
                   const def = EQUIPMENT_TYPES.find(t => t.id === e.type)
                   const kv  = e.kvOverride ?? def?.kvDefault ?? null
-                  return <div key={idx}>{def?.label ?? e.type} — Kv = {kv ?? '?'} m³/h/√bar</div>
+                  const dp  = kv && Q ? Math.pow(Q / kv, 2) * 100000 : null
+                  return row(
+                    `${def?.label ?? e.type}`,
+                    dp != null ? paStr(dp) : 'Kv manquant'
+                  )
                 })}
-              </div>
-            </div>
+                {resultRow('ΔP_équip = Σ', paStr(pdcResult.dpEquip), '#7c3aed')}
+              </>)
+            })()}
+            {techBox(<>
+              <div>Q = {Q != null ? Q.toFixed(3) : '—'} m³/h</div>
+              {Array.from(new Map((seg.equipment ?? []).map((e: any) => [e.type, e])).values())
+                .map((e: any) => {
+                  const def = EQUIPMENT_TYPES.find(t => t.id === e.type)
+                  const kv  = e.kvOverride ?? def?.kvDefault ?? null
+                  return <div key={e.type}>{def?.label ?? e.type} — Kv = {kv ?? '?'} m³/h/√bar</div>
+                })
+              }
+            </>)}
           </div>
         </div>
       )}
@@ -426,7 +406,7 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData }) {
   )
 }
 
-function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, pdcParams, pdcResult, calcSubMode }) {
+function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, pdcParams, pdcResult, calcSubMode, pdcCumResults }) {
   const [tab, setTab] = useState('params')
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
 
@@ -806,7 +786,10 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
       {tab === 'results' && (
         <div>
           {calcSubMode === 'pdc' ? (
-            <PdcSegResults pdcResult={pdcResult} pdcParams={pdcParams} seg={seg} dnDef={dnDef} flowData={flowData} />
+            <PdcSegResults pdcResult={pdcResult} pdcParams={pdcParams} seg={seg} dnDef={dnDef} flowData={flowData}
+              cumDp={pdcCumResults?.segCumDp.get(seg.id)}
+              postJunction={pdcCumResults?.segPostJunction.get(seg.id) ?? false}
+            />
           ) : thermalData ? (() => {
             const { Q, deltaT, T_from, T_to, T_amb } = thermalData
             const velocity = flowData?.velocity
@@ -1162,7 +1145,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
               }
               return (
                 <div style={{ marginBottom: 8 }}>
-                  <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 6 }}>Singulières — accessoires (ξ × ρV²/2)</div>
+                  <div style={{ fontSize: 12, color: '#374151', fontWeight: 500, marginBottom: 6 }}>Singulières — accessoires</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                     {FITTING_TYPES.map(ft => {
                       const entry = fittings.find(f => f.type === ft.id)
@@ -1171,9 +1154,9 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                       const xiDisplay = xiOverride ?? ft.xi
                       return (
                         <div key={ft.id} style={{ display: 'flex', alignItems: 'center', gap: 4,
-                          padding: '4px 6px', background: count > 0 ? '#f0fdf4' : '#f9fafb',
-                          border: `1px solid ${count > 0 ? '#86efac' : '#e5e7eb'}`, borderRadius: 4 }}>
-                          <div style={{ flex: 1, fontSize: 10, color: count > 0 ? '#15803d' : '#6b7280',
+                          padding: '4px 6px', background: count > 0 ? '#fef7f4' : '#f9fafb',
+                          border: `1px solid ${count > 0 ? '#fbd5c5' : '#e5e7eb'}`, borderRadius: 4 }}>
+                          <div style={{ flex: 1, fontSize: 10, color: count > 0 ? '#c2562d' : '#6b7280',
                             lineHeight: 1.3, minWidth: 0 }}>
                             <div style={{ fontWeight: count > 0 ? 600 : 400 }}>{ft.label}</div>
                             {count > 0 && (
@@ -1196,7 +1179,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                             <button onClick={() => removeFitting(ft.id)} disabled={count === 0}
                               className="lp-icon-btn" style={{ padding: '1px 6px', fontWeight: 700 }}>−</button>
                             <span style={{ minWidth: 14, textAlign: 'center', fontSize: 12, fontWeight: 700,
-                              color: count > 0 ? '#15803d' : '#9ca3af' }}>{count}</span>
+                              color: count > 0 ? '#c2562d' : '#9ca3af' }}>{count}</span>
                             <button onClick={() => addFitting(ft.id)}
                               className="lp-icon-btn" style={{ padding: '1px 6px', fontWeight: 700 }}>+</button>
                           </div>
@@ -1221,24 +1204,24 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
               }
               return (
                 <div>
-                  <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 6 }}>Équipements (ΔP = (Q/Kv)² × 10⁵ Pa)</div>
+                  <div style={{ fontSize: 12, color: '#374151', fontWeight: 500, marginBottom: 6 }}>Équipements</div>
                   {equipment.map((e, idx) => {
                     const def = EQUIPMENT_TYPES.find(t => t.id === e.type)
-                    const kvDisplay = e.kvOverride ?? def?.kvDefault
+                    const kvDisplay = e.kvOverride
                     return (
                       <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 4,
-                        padding: '5px 6px', background: '#eff6ff',
-                        border: '1px solid #bfdbfe', borderRadius: 4, marginBottom: 4 }}>
+                        padding: '5px 6px', background: '#f5f3ff',
+                        border: '1px solid #ddd6fe', borderRadius: 4, marginBottom: 4 }}>
                         <div style={{ flex: 1, fontSize: 10, minWidth: 0 }}>
-                          <div style={{ fontWeight: 600, color: '#1e40af' }}>{def?.label ?? e.type}</div>
+                          <div style={{ fontWeight: 600, color: '#7c3aed' }}>{def?.label ?? e.type}</div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
                             <span style={{ fontSize: 9, color: '#6b7280' }}>Kv =</span>
                             <input type="number" step="0.1" min="0"
                               style={{ width: 60, fontSize: 10, padding: '1px 4px',
                                 border: '1px solid #d1d5db', borderRadius: 3 }}
                               value={kvDisplay ?? ''}
-                              placeholder="m³/h/√bar"
                               onChange={e2 => setKv(idx, e2.target.value === '' ? null : +e2.target.value)} />
+                            <span style={{ fontSize: 9, color: '#9ca3af' }}>m³/h/√bar</span>
                             {e.kvOverride != null && (
                               <button onClick={() => setKv(idx, null)}
                                 style={{ fontSize: 9, color: '#9ca3af', background: 'none',
@@ -1258,7 +1241,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                     {EQUIPMENT_TYPES.map(et => (
                       <button key={et.id} onClick={() => addEquipment(et.id)}
                         style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, cursor: 'pointer',
-                          background: '#f0f9ff', border: '1px solid #bae6fd', color: '#0369a1', fontWeight: 600 }}>
+                          background: '#f5f3ff', border: '1px solid #ddd6fe', color: '#7c3aed', fontWeight: 600 }}>
                         + {et.label}
                       </button>
                     ))}
@@ -1543,9 +1526,56 @@ function TempBadge({ temp, T_depart }) {
   )
 }
 
-function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, points = [] }) {
+function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, points = [], calcSubMode, pdcCumResults, pdcParams }) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
   const T_depart = globalParams?.T_depart ?? null
+
+  const renderPdcCum = () => {
+    if (calcSubMode !== 'pdc' || !pdcCumResults) return null
+    const incoming       = pdcCumResults.nodeIncoming.get(pt.id) ?? []
+    const isJunction     = incoming.length > 1
+    const isPostJunction = pdcCumResults.nodePostJunction.get(pt.id) ?? false
+    const cumDp          = pdcCumResults.nodeCumDp.get(pt.id)
+    if (cumDp == null && incoming.length === 0) return null
+
+    const unite = pdcParams?.uniteAffichage ?? 'Pa'
+    const fmtDpNode = (pa: number): React.ReactNode => {
+      const mmce = `${(pa / 9.81).toFixed(0)} mmCE`
+      if (unite === 'mmCE') return mmce
+      if (unite === 'both') return (
+        <>{Math.round(pa)} Pa<span style={{ fontSize: '0.8em', color: '#8d96a8', fontWeight: 400 }}> /{mmce}</span></>
+      )
+      return `${Math.round(pa)} Pa`
+    }
+
+    const title = (
+      <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
+        letterSpacing: '0.06em', marginBottom: 6 }}>ΔP depuis production ECS</div>
+    )
+
+    const wrap = (children: React.ReactNode) => (
+      <div style={{ paddingBottom: 10, marginBottom: 10, borderBottom: '2px solid #e5e7eb' }}>
+        {title}
+        {children}
+      </div>
+    )
+
+
+    if (cumDp != null) {
+      return wrap(
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <span style={{ fontSize: 20, fontWeight: 800, color: '#0f172a',
+            fontFamily: 'ui-monospace, monospace', letterSpacing: '-0.5px' }}>{fmtDpNode(cumDp)}</span>
+          {isPostJunction && (
+            <span style={{ fontSize: 9, color: '#9ca3af', fontStyle: 'italic' }}>
+              circuit le plus défavorisé
+            </span>
+          )}
+        </div>
+      )
+    }
+    return null
+  }
 
   if (pt.type === 'pump') {
     return (
@@ -1622,6 +1652,7 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
           })}
         </>)}
         <TempBadge temp={activeCalcId === 'alimentation-ecs' ? null : nodeTemp} T_depart={T_depart} />
+
       </div>
     )
   }
@@ -1729,6 +1760,7 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
             )}
           </>
         )}
+
       </div>
     )
   }
@@ -1740,13 +1772,13 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
     <div className="rp-section">
       <h3 className="rp-title">Nœud</h3>
 
-      {nodeTemp != null ? (
+      {nodeTemp != null && calcSubMode !== 'pdc' && (
         <>
           {(() => {
             const tsN = tAvalStyle(nodeTemp, T_depart ?? 60)
             return (
               <div style={{ padding: '9px 10px', background: tsN.background ?? '#fffbeb',
-                border: `1px solid ${tsN.borderColor ?? '#fde68a'}`, borderRadius: 6 }}>
+                border: `1px solid ${tsN.borderColor ?? '#fde68a'}`, borderRadius: 6, marginTop: 8 }}>
                 <div style={{ fontSize: 9, color: tsN.labelColor ?? '#a16207', fontWeight: 700, marginBottom: 3,
                   textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   Température au nœud
@@ -1770,51 +1802,77 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
             </div>
           )}
         </>
-      ) : (
-        <p className="lp-hint" style={{ marginBottom: 8 }}>
-          Température non calculée — vérifiez longueur, débit et données matériau des tronçons amont.
-        </p>
       )}
 
       {/* Tronçons arrivants */}
       {inSegs.length > 0 && (
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 8 }}>
           {inSegs.length > 1 && (
             <SectionLabel>Tronçons arrivants ({inSegs.length})</SectionLabel>
           )}
-          {inSegs.map(s => (
-            <div key={s.id} style={{ padding: '8px 10px', background: '#f9fafb',
-              border: '1px solid #e5e7eb', borderRadius: 5, marginBottom: 5 }}>
-              {/* Nom sur autant de lignes que nécessaire */}
-              <div style={{ fontSize: 11, fontWeight: 600, color: '#111827',
-                marginBottom: 6, lineHeight: 1.4, wordBreak: 'break-word' }}>
-                {s.name}
-                <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700,
-                  color: '#6b7280', background: '#e5e7eb',
-                  borderRadius: 3, padding: '1px 4px' }}>
-                  {s.type ?? '—'}
-                </span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-                <div>
-                  <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>Débit</div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: '#111827' }}>
-                    {s.flowRate != null ? s.flowRate.toFixed(3) + ' m³/h' : '—'}
+          {(() => {
+            const pdcCumDps = inSegs.map(s => pdcCumResults?.segCumDp.get(s.id) ?? null)
+            const maxCumDp  = calcSubMode === 'pdc' && inSegs.length > 1
+              ? Math.max(...pdcCumDps.filter(v => v != null) as number[])
+              : null
+            const unite = pdcParams?.uniteAffichage ?? 'Pa'
+            const fmtDp = (pa: number) => {
+              if (unite === 'mmCE') return `${(pa / 9.81).toFixed(0)} mmCE`
+              if (unite === 'both') return `${Math.round(pa)} Pa / ${(pa / 9.81).toFixed(0)} mmCE`
+              return `${Math.round(pa)} Pa`
+            }
+            return inSegs.map((s, i) => {
+              const segCumDp = pdcCumDps[i]
+              const isWorst  = maxCumDp != null && segCumDp === maxCumDp
+              return (
+                <div key={s.id} style={{ padding: '8px 10px', background: '#f9fafb',
+                  border: `1px solid ${isWorst ? '#cbd5e1' : '#e5e7eb'}`, borderRadius: 5, marginBottom: 5 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#111827',
+                    marginBottom: 6, lineHeight: 1.4, wordBreak: 'break-word' }}>
+                    {s.name}
+                    <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700,
+                      color: '#6b7280', background: '#e5e7eb',
+                      borderRadius: 3, padding: '1px 4px' }}>
+                      {s.type ?? '—'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                    <div>
+                      <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>Débit</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#111827' }}>
+                        {s.flowRate != null ? s.flowRate.toFixed(3) + ' m³/h' : '—'}
+                      </div>
+                    </div>
+                    {calcSubMode === 'pdc' && segCumDp != null ? (
+                      <div>
+                        <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>ΔP depuis Prod. ECS</div>
+                        <div style={{ fontSize: 12, fontWeight: isWorst ? 700 : 600,
+                          color: isWorst ? '#0f172a' : '#374151', fontFamily: 'ui-monospace, monospace' }}>
+                          {fmtDp(segCumDp)}
+                        </div>
+                        {isWorst && (
+                          <div style={{ fontSize: 8.5, color: '#9ca3af', fontStyle: 'italic', marginTop: 1 }}>
+                            circuit le plus défavorisé
+                          </div>
+                        )}
+                      </div>
+                    ) : calcSubMode !== 'pdc' ? (
+                      <div>
+                        <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>T arrivée</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>
+                          {s.T_to != null ? s.T_to.toFixed(2) + ' °C' : '—'}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>T arrivée</div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>
-                    {s.T_to != null ? s.T_to.toFixed(2) + ' °C' : '—'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
+              )
+            })
+          })()}
         </div>
       )}
 
-      {inSegs.length === 0 && nodeTemp == null && (
+      {inSegs.length === 0 && nodeTemp == null && calcSubMode !== 'pdc' && (
         <p className="lp-hint">Aucune propriété modifiable.</p>
       )}
     </div>
@@ -1906,7 +1964,7 @@ export default function RightPanel({
   drawMode, onExitEditParams,
   selectedValveId, valves, onValveUpdate,
   activeCalcId, alimentationParams, alimentationResults,
-  pdcParams, pdcResults,
+  pdcParams, pdcResults, pdcCumResults,
 }) {
   // In editChaufferie mode, chaufferie panel takes priority
   if (editChaufferie && chaufferie?.placed) {
@@ -1963,6 +2021,7 @@ export default function RightPanel({
       pdcParams={pdcParams}
       pdcResult={pdcResults?.get(seg.id)}
       calcSubMode={calcSubMode}
+      pdcCumResults={pdcCumResults}
     />
   )
   if (pt) {
@@ -1978,12 +2037,15 @@ export default function RightPanel({
     return (
       <PointPanel
         pt={pt} onUpdate={onUpdate}
-        nodeTemp={thermalResults?.nodeTemps.get(pt.id)}
+        nodeTemp={calcSubMode === 'pdc' ? null : thermalResults?.nodeTemps.get(pt.id)}
         inSegs={inSegs}
         globalParams={globalParams}
         activeCalcId={activeCalcId}
         alimentationParams={alimentationParams}
         points={points}
+        calcSubMode={calcSubMode}
+        pdcCumResults={pdcCumResults}
+        pdcParams={pdcParams}
       />
     )
   }

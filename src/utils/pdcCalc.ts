@@ -22,12 +22,16 @@ export const EQUIPMENT_TYPES = [
 ]
 
 export const DEFAULT_PDC_PARAMS = {
-  methodeReg:      'darcy-colebrook' as 'darcy-colebrook' | 'dtu-approche',
-  roughnessMode:   'global'          as 'global' | 'par-materiau',
-  roughnessGlobal: 0.0001,           // m — valeur DTU
-  methodeSing:     'pourcentage'     as 'pourcentage' | 'accessoires',
-  pourcentageSing: 10,               // %
+  methodeReg:       'darcy-colebrook' as 'darcy-colebrook' | 'dtu-approche',
+  dtuUnite:         'Pa'             as 'Pa' | 'mCE',
+  roughnessMode:    'global'          as 'global' | 'par-materiau',
+  roughnessGlobal:  0.0001,           // m — valeur DTU
+  methodeSing:      'pourcentage'     as 'pourcentage' | 'accessoires',
+  pourcentageSing:  20,               // %
   equipementsActifs: false,
+  coefPompeActif:   false,
+  coefPompe:        10,               // % appliqué sur ΔP total pour dimensionnement pompe
+  uniteAffichage:   'Pa'             as 'Pa' | 'mmCE' | 'both',
 }
 
 /** Masse volumique de l'eau (kg/m³) — formule de Kell (0–100 °C). */
@@ -87,10 +91,16 @@ export function darcyLambda(Re: number, epsilon: number, D: number): number {
 
 /**
  * Gradient de pression linéaire (Pa/m) — formule approchée DTU 60.11.
- * J = 5,65 × V^1,896 / D^1,276  (V en m/s, D en m, eau chaude sanitaire).
+ * Variante Pa  : J [Pa/m]   = 5,65 × V^1,896 / D^1,276  (V en m/s, D en m)
+ * Variante mCE : J [mCE/m]  = 3,80 × V^1,896 / D^1,276  (V en m/s, D en mm) → converti en Pa/m
  */
-export function dtuJ(V: number, D: number): number {
+export function dtuJ(V: number, D: number, unite: 'Pa' | 'mCE' = 'Pa'): number {
   if (V <= 0 || D <= 0) return 0
+  if (unite === 'mCE') {
+    const D_mm = D * 1000
+    const J_mCE = 3.80 * Math.pow(V, 1.896) / Math.pow(D_mm, 1.276)
+    return J_mCE * 9810   // 1 mCE = 9 810 Pa
+  }
   return 5.65 * Math.pow(V, 1.896) / Math.pow(D, 1.276)
 }
 
@@ -119,6 +129,7 @@ export interface SegPdcResult {
   dpEquip:      number              // ΔP équipements (Pa)
   // ── Total ──────────────────────────────────────────────────────────────
   dpTotal:      number              // ΔP total (Pa)
+  dpPompe?:     number              // ΔP majoré pour dimensionnement pompe (Pa)
 }
 
 /**
@@ -161,12 +172,10 @@ export function computeSegPdc(
   let epsilon_used: number | undefined
 
   if (pdcParams.methodeReg === 'dtu-approche') {
-    J = dtuJ(V, D)
+    J = dtuJ(V, D, pdcParams.dtuUnite ?? 'Pa')
   } else {
     Re = V * D / nu
-    epsilon_used = pdcParams.roughnessMode === 'par-materiau'
-      ? (material?.epsilon ?? 0.0001)
-      : (pdcParams.roughnessGlobal ?? 0.0001)
+    epsilon_used = material?.epsilon ?? pdcParams.roughnessGlobal ?? 0.0001
     const relRough = epsilon_used / D
 
     if (Re < 2300) {
@@ -212,6 +221,11 @@ export function computeSegPdc(
     }
   }
 
+  const dpTotal = dpReg + dpSing + dpEquip
+  const dpPompe = pdcParams.coefPompeActif
+    ? dpTotal * (1 + (pdcParams.coefPompe ?? 10) / 100)
+    : undefined
+
   return {
     T_used: T, rho, mu, nu,
     A, V,
@@ -219,6 +233,7 @@ export function computeSegPdc(
     dpReg,
     dynPressure, dpSing,
     dpEquip,
-    dpTotal: dpReg + dpSing + dpEquip,
+    dpTotal,
+    dpPompe,
   }
 }

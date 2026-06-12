@@ -328,7 +328,8 @@
 }
 .calc-sub-pill:last-child { border-right: none; }
 .calc-sub-pill.active { background: rgba(255,255,255,0.16); color: rgba(255,255,255,0.9); font-weight: 600; }
-.calc-sub-pill:not(.active):hover { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.85); }
+.calc-sub-pill:not(.active):not(:disabled):hover { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.85); }
+.calc-sub-pill:disabled { cursor: default; opacity: 0.35; }
 @keyframes pill-pulse {
   0%, 100% { outline-color: rgba(255,255,255,0.45); background: rgba(255,255,255,0.15); }
   50%       { outline-color: rgba(255,255,255,0.9);  background: rgba(255,255,255,0.28); }
@@ -654,6 +655,13 @@
   border: 1px solid #d1d5db; border-radius: 4px;
   font-size: 12px; color: #111827; background: #fff; outline: none;
 }
+.lp-field input[type="radio"],
+.lp-field input[type="checkbox"],
+.lp-section-body input[type="radio"],
+.lp-section-body input[type="checkbox"] { width: auto; padding: 0; border: none; background: none; }
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; }
 .lp-field input:focus, .lp-field select:focus,
 .lp-section-body input:focus, .lp-section-body select:focus { border-color: #3b82f6; }
 .lp-field textarea {

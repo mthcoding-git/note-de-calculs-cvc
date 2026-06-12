@@ -14,6 +14,7 @@ import { computeNetworkFlows } from './utils/flowCalc'
 import { computeThermal } from './utils/thermalCalc'
 import { computeAlimentationResults } from './utils/alimentationCalc'
 import { computeSegPdc, DEFAULT_PDC_PARAMS } from './utils/pdcCalc'
+import { computeCumDp } from './utils/pdcCumul'
 import ResultsTable from './components/ResultsTable'
 import './App.css'
 
@@ -696,6 +697,14 @@ export default function App() {
   }, [project.segments, project.points, networkFlows, activeCalcId])
 
   const [calcSubMode, setCalcSubMode] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
+
+  const pdcCumResults = useMemo(
+    () => activeCalcId === 'bouclage-ecs' && calcSubMode === 'pdc'
+      ? computeCumDp(project.segments, project.points, flowDirections, pdcResults)
+      : null,
+    [activeCalcId, calcSubMode, project.segments, project.points, flowDirections, pdcResults]
+  )
+
   const [drawMode,           setDrawMode]           = useState('select')
   const [connHighlightIds,   setConnHighlightIds]   = useState([])
   const [groupesEditMode,    setGroupesEditMode]    = useState(false)
@@ -1262,7 +1271,7 @@ export default function App() {
                 onSetBase={setBaseVariant}
                 onReorder={reorderVariant}
               />
-              {activeCalcId === 'bouclage-ecs' && (
+              {(activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') && (
                 <>
                   <div className="app-hd-sep" />
                   <div className="calc-sub-pills">
@@ -1271,8 +1280,9 @@ export default function App() {
                       onClick={() => setCalcSubMode('dimensionnement')}
                     >Dimensionnement</button>
                     <button
-                      className={`calc-sub-pill${calcSubMode === 'pdc' ? ' active' : ''}`}
-                      onClick={() => setCalcSubMode('pdc')}
+                      className={`calc-sub-pill${activeCalcId === 'bouclage-ecs' && calcSubMode === 'pdc' ? ' active' : ''} soon`}
+                      disabled={activeCalcId !== 'bouclage-ecs'}
+                      onClick={() => activeCalcId === 'bouclage-ecs' && setCalcSubMode('pdc')}
                     >Pertes de charge</button>
                   </div>
                 </>
@@ -1473,6 +1483,7 @@ export default function App() {
             alimentationParams={resolveAlimentationParams(project.alimentationParams)}
             pdcParams={project.pdcParams ?? DEFAULT_PDC_PARAMS}
             pdcResults={pdcResults}
+            pdcCumResults={pdcCumResults}
             levels={project.levels}
             lineYs={project.lineYs}
             columns={project.columns}
