@@ -45,18 +45,40 @@ export function buildFlowRows(segments, points, flowDirections, columns, columnX
   const allerSegs  = segments.filter(s => s.type === 'aller')
   const retourSegs = segments.filter(s => s.type === 'retour')
 
-  // Pré-calcul : segments aller possédant un retour accessible en aval
-  // (utilisé pour le filtre tirage ET la détection collecteur)
+  // ── allerHasRetour : aller segments ayant un retour accessible en aval ────
   const allerHasRetour = new Set()
   for (const seg of allerSegs) {
     const fd = flowDirections.get(seg.id)
-    if (fd && hasRetourDownstream(fd.toId, allerSegs, retourSegs, flowDirections)) {
+    if (fd && hasRetourDownstream(fd.toId, allerSegs, retourSegs, flowDirections))
       allerHasRetour.add(seg.id)
+  }
+
+  // ── Nœuds atteignables via aller-avec-retour (exclut les tirages) ─────────
+  const reachable = new Set([prodECS.id])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const s of allerSegs) {
+      if (!allerHasRetour.has(s.id)) continue
+      const d = flowDirections.get(s.id)
+      if (d && reachable.has(d.fromId) && !reachable.has(d.toId)) {
+        reachable.add(d.toId); changed = true
+      }
     }
   }
 
-  const visitedAller  = new Set()
-  const visitedRetour = new Set()
+  // ── Nombre de tronçons retour arrivant à chaque nœud (jonctions retour) ──
+  const retourIncomingCount = new Map()
+  for (const s of retourSegs) {
+    const d = flowDirections.get(s.id)
+    if (!d) continue
+    retourIncomingCount.set(d.toId, (retourIncomingCount.get(d.toId) ?? 0) + 1)
+  }
+  const junctionEmitted = new Map()
+
+  const visited    = new Set()
+  const rows       = []
+  const toProdRows = []   // tronçons retour arrivant à ECS → placés après flow-end
 
   // ── Colonne d'un point ────────────────────────────────────────────────────
   const getColFor = (ptId) => {
@@ -88,31 +110,6 @@ export function buildFlowRows(segments, points, flowDirections, columns, columnX
     return (fc && fc === tc) ? fc : null
   }
 
-  // ── Primitives de parcours ────────────────────────────────────────────────
-  const getOutgoingAller = (nodeId) =>
-    allerSegs.filter(s => {
-      const d = flowDirections.get(s.id)
-      return d?.fromId === nodeId && !visitedAller.has(s.id)
-    })
-
-  const getOutwardRetour = (nodeId) =>
-    retourSegs.filter(s => {
-      const d = flowDirections.get(s.id)
-      return d?.toId === nodeId && !visitedRetour.has(s.id)
-    })
-
-  const xDist = (nodeId) => {
-    const pt = points.find(p => p.id === nodeId)
-    return pt ? Math.abs(pt.x - prodECS.x) : Infinity
-  }
-
-  const sortAller  = (segs) => [...segs].sort((a, b) =>
-    xDist(flowDirections.get(a.id)?.toId) - xDist(flowDirections.get(b.id)?.toId))
-
-  const sortRetour = (segs) => [...segs].sort((a, b) =>
-    xDist(flowDirections.get(a.id)?.fromId) - xDist(flowDirections.get(b.id)?.fromId))
-
-  // Cherche la première colonne dans la série aller à partir de aSeg (look-ahead sans marquer).
   const findBranchColumn = (aSeg) => {
     let col = segColName(aSeg)
     if (col) return col
@@ -121,7 +118,7 @@ export function buildFlowRows(segments, points, flowDirections, columns, columnX
     while (cur) {
       const out = allerSegs.filter(s => {
         const d = flowDirections.get(s.id)
-        return d?.fromId === cur && !visitedAller.has(s.id) && !tempVis.has(s.id)
+        return d?.fromId === cur && allerHasRetour.has(s.id) && !visited.has(s.id) && !tempVis.has(s.id)
       })
       if (out.length !== 1) break
       const s = out[0]; tempVis.add(s.id)
@@ -132,14 +129,16 @@ export function buildFlowRows(segments, points, flowDirections, columns, columnX
     return null
   }
 
-  // Prédicats de topologie (ignorent l'état visited — lecture de structure uniquement)
-  // Ne compte que les branches aller avec retour en aval (exclut les tirages)
+  const xOf = (nodeId) => points.find(p => p.id === nodeId)?.x ?? Infinity
+
+  // Prédicat topologique : y a-t-il une séparation aller en aval de nodeId ?
   const leadsToSeparation = (nodeId) => {
     let cur = nodeId
-    const tempSeen = new Set()
-    while (!tempSeen.has(cur)) {
-      tempSeen.add(cur)
-      const out = allerSegs.filter(s => flowDirections.get(s.id)?.fromId === cur && allerHasRetour.has(s.id))
+    const seen = new Set()
+    while (!seen.has(cur)) {
+      seen.add(cur)
+      const out = allerSegs.filter(s =>
+        flowDirections.get(s.id)?.fromId === cur && allerHasRetour.has(s.id))
       if (out.length > 1) return true
       if (out.length === 0) return false
       cur = flowDirections.get(out[0].id).toId
@@ -147,161 +146,159 @@ export function buildFlowRows(segments, points, flowDirections, columns, columnX
     return false
   }
 
-  const retourLeadsFromJunction = (nodeId) => {
-    let cur = nodeId
-    const tempSeen = new Set()
-    while (!tempSeen.has(cur)) {
-      tempSeen.add(cur)
-      const inc = retourSegs.filter(s => flowDirections.get(s.id)?.toId === cur)
-      if (inc.length > 1) return true
-      if (inc.length === 0) return false
-      cur = flowDirections.get(inc[0].id).fromId
+  // Suit récursivement une antenne (aller sans retour aval) depuis nodeId
+  const followAntenne = (nodeId) => {
+    const out = allerSegs.filter(s => {
+      const d = flowDirections.get(s.id)
+      return d?.fromId === nodeId && !visited.has(s.id) && !allerHasRetour.has(s.id)
+    })
+    out.sort((a, b) => xOf(flowDirections.get(a.id).toId) - xOf(flowDirections.get(b.id).toId))
+    for (const seg of out) {
+      visited.add(seg.id)
+      rows.push({ kind: 'segment', seg, depth: 0, segType: 'aller', antenne: true })
+      followAntenne(flowDirections.get(seg.id).toId)
     }
-    return false
   }
 
-  // ── DFS couplé ────────────────────────────────────────────────────────────
-  const dfs = (allerNode, retourNode) => {
-    const rows = []
+  // ── Parcours principal ────────────────────────────────────────────────────
+  // Suit le fluide depuis startNodeId jusqu'à une jonction incomplète ou ECS.
+  const processFrom = (startNodeId, isTopLevel = false) => {
+    let cur = startNodeId
+    let allerEmitted = 0   // compte les tronçons aller émis dans CET appel
 
-    // Série aller (1 sortant à chaque pas)
-    const allerSeries = []
-    let aCur = allerNode
     while (true) {
-      const out = getOutgoingAller(aCur)
-      if (out.length !== 1) break
-      const seg = out[0]; visitedAller.add(seg.id)
-      allerSeries.push({ seg, toId: flowDirections.get(seg.id).toId })
-      aCur = flowDirections.get(seg.id).toId
-    }
+      // ── Phase aller ──────────────────────────────────────────────────────
+      const allerOut = allerSegs.filter(s => {
+        const d = flowDirections.get(s.id)
+        return d?.fromId === cur && !visited.has(s.id) && allerHasRetour.has(s.id)
+      })
 
-    // Série retour à rebours (1 "sortant outward" à chaque pas)
-    const retourSeries = []
-    let rCur = retourNode
-    while (true) {
-      const inc = getOutwardRetour(rCur)
-      if (inc.length !== 1) break
-      const seg = inc[0]; visitedRetour.add(seg.id)
-      retourSeries.push(seg)
-      rCur = flowDirections.get(seg.id).fromId
-    }
-
-    const aBranches = getOutgoingAller(aCur)
-    const rBranches = getOutwardRetour(rCur)
-
-    const allerCollecteur = aBranches.filter(s => allerHasRetour.has(s.id)).length > 1 ? 'aller' : undefined
-    const retourCollecteur = rBranches.length > 1 ? 'retour' : undefined
-
-    for (const { seg } of allerSeries) {
-      rows.push({ kind: 'segment', seg, depth: 0, segType: 'aller', collecteur: allerCollecteur })
-    }
-
-    if (aBranches.length > 1) {
-      rows.push({ kind: 'separation', ptId: aCur, branchCount: aBranches.length })
-
-      const sortedA = sortAller(aBranches)
-      const sortedR = sortRetour(rBranches)
-
-      for (let i = 0; i < sortedA.length; i++) {
-        const aSeg = sortedA[i]
-        const rSeg = sortedR[i]
-
-        // En-tête de colonne : englobe le tronçon de liaison + les tronçons de la colonne
-        const branchCol = findBranchColumn(aSeg)
-        if (branchCol) rows.push({ kind: 'col-header', name: branchCol })
-
-        visitedAller.add(aSeg.id)
-        const aNext = flowDirections.get(aSeg.id).toId
-        rows.push({ kind: 'segment', seg: aSeg, depth: 0, segType: 'aller', collecteur: leadsToSeparation(aNext) ? 'aller' : undefined })
-
-        let rNext = null
-        if (rSeg) { visitedRetour.add(rSeg.id); rNext = flowDirections.get(rSeg.id).fromId }
-
-        rows.push(...dfs(aNext, rNext ?? aNext))
-
-        if (rSeg) rows.push({ kind: 'segment', seg: rSeg, depth: 0, segType: 'retour', collecteur: retourLeadsFromJunction(flowDirections.get(rSeg.id).fromId) ? 'retour' : undefined })
+      if (allerOut.length === 1) {
+        // Émettre les antennes depuis cur avant de continuer sur le bouclage principal
+        followAntenne(cur)
+        const seg = allerOut[0]; visited.add(seg.id)
+        const toId = flowDirections.get(seg.id).toId
+        const isCollecteur = leadsToSeparation(toId)
+        // Séparateur uniquement après le 1er tronçon de l'appel principal (depuis prodECS)
+        if (isTopLevel && isCollecteur && allerEmitted === 1)
+          rows.push({ kind: 'collecteur-header', role: 'collecteur-aller' })
+        rows.push({ kind: 'segment', seg, depth: 0, segType: 'aller',
+          collecteur: isCollecteur ? 'aller' : undefined })
+        allerEmitted++
+        cur = toId
+        continue
       }
 
-      if (rBranches.length > 1) {
-        rows.push({ kind: 'junction', ptId: rCur, depth: 0, incomingCount: rBranches.length })
+      if (allerOut.length > 1) {
+        // Séparation : trier bouclage + antennes ensemble par x
+        const antenneFromCur = allerSegs.filter(s => {
+          const d = flowDirections.get(s.id)
+          return d?.fromId === cur && !visited.has(s.id) && !allerHasRetour.has(s.id)
+        })
+        const allBranches = [...allerOut, ...antenneFromCur]
+        const sorted = allBranches.sort((a, b) =>
+          xOf(flowDirections.get(a.id).toId) - xOf(flowDirections.get(b.id).toId))
+
+        for (const branchSeg of sorted) {
+          const branchToId = flowDirections.get(branchSeg.id).toId
+          if (allerHasRetour.has(branchSeg.id)) {
+            const branchIsCollecteur = leadsToSeparation(branchToId)
+            if (branchIsCollecteur) {
+              rows.push({ kind: 'collecteur-header', role: 'collecteur-aller' })
+            } else {
+              rows.push({ kind: 'col-header', name: findBranchColumn(branchSeg) ?? null })
+            }
+            visited.add(branchSeg.id)
+            rows.push({ kind: 'segment', seg: branchSeg, depth: 0, segType: 'aller',
+              collecteur: branchIsCollecteur ? 'aller' : undefined })
+            processFrom(branchToId)
+          } else {
+            // Antenne : émettre et suivre jusqu'au bout
+            visited.add(branchSeg.id)
+            rows.push({ kind: 'segment', seg: branchSeg, depth: 0, segType: 'aller', antenne: true })
+            followAntenne(branchToId)
+          }
+        }
+        return
+      }
+
+      // ── Plus d'aller bouclage : émettre les antennes depuis cur avant le retour ──
+      followAntenne(cur)
+
+      // ── Phase retour (plus d'aller disponible) ───────────────────────────
+      let collecteurRetourActif = false
+
+      while (true) {
+        const retourOut = retourSegs.filter(s => {
+          const d = flowDirections.get(s.id)
+          return d?.fromId === cur && !visited.has(s.id)
+        })
+
+        if (retourOut.length === 0) return   // impasse
+
+        const seg = retourOut[0]; visited.add(seg.id)
+        const nextNode = flowDirections.get(seg.id).toId
+
+        // Collecteur-retour : part d'une jonction OU suite d'un collecteur-retour en série
+        const isCollecteur = (retourIncomingCount.get(cur) ?? 0) > 1 || collecteurRetourActif
+        collecteurRetourActif = isCollecteur
+
+        // Tronçon retour arrivant directement à ECS → différé après flow-end
+        if (nextNode === prodECS.id) {
+          toProdRows.push({ kind: 'segment', seg, depth: 0, segType: 'retour',
+            collecteur: isCollecteur ? 'retour' : undefined })
+          return
+        }
+
+        rows.push({ kind: 'segment', seg, depth: 0, segType: 'retour',
+          collecteur: isCollecteur ? 'retour' : undefined })
+
+        const totalIn = retourIncomingCount.get(nextNode) ?? 0
+        if (totalIn > 1) {
+          // Nœud jonction : vérifier si toutes les branches sont traitées
+          const emitted = (junctionEmitted.get(nextNode) ?? 0) + 1
+          junctionEmitted.set(nextNode, emitted)
+          if (emitted < totalIn) return       // jonction incomplète → on s'arrête
+          rows.push({ kind: 'junction', ptId: nextNode, depth: 0, incomingCount: totalIn })
+          collecteurRetourActif = false       // après une jonction, on repart en mode normal
+        }
+
+        cur = nextNode
       }
     }
-
-    for (let i = retourSeries.length - 1; i >= 0; i--) {
-      rows.push({ kind: 'segment', seg: retourSeries[i], depth: 0, segType: 'retour', collecteur: retourCollecteur })
-    }
-
-    return rows
   }
 
-  // ── Entrée depuis Production ECS ─────────────────────────────────────────
-  const contentRows = []
-  const toProdRows  = []  // tronçons retour directement vers ECS → après flow-end
+  // ── Lancement depuis Production ECS ──────────────────────────────────────
+  rows.push({ kind: 'flow-start' })
+  processFrom(prodECS.id, true)
 
-  const aBranchesECS = getOutgoingAller(prodECS.id)
-  const rBranchesECS = getOutwardRetour(prodECS.id)
-
-  // Marquer tous les retours vers ECS comme visités dès le départ
-  for (const s of rBranchesECS) {
-    visitedRetour.add(s.id)
-    const fromNode = flowDirections.get(s.id).fromId
-    const isCollecteurRetour = retourLeadsFromJunction(fromNode)
-    toProdRows.push({ kind: 'segment', seg: s, depth: 0, segType: 'retour', collecteur: isCollecteurRetour ? 'retour' : undefined })
-  }
-
-  if (aBranchesECS.length === 1) {
-    const aSeg = aBranchesECS[0]; visitedAller.add(aSeg.id)
-    const aNext = flowDirections.get(aSeg.id).toId
-    // rNext = nœud côté réseau du (premier) retour vers ECS
-    const rNext = rBranchesECS[0] ? flowDirections.get(rBranchesECS[0].id).fromId : aNext
-    const isCollecteurAller = leadsToSeparation(aNext)
-    contentRows.push({ kind: 'segment', seg: aSeg, depth: 0, segType: 'aller', collecteur: isCollecteurAller ? 'aller' : undefined })
-    contentRows.push(...dfs(aNext, rNext))
-  } else if (aBranchesECS.length > 1) {
-    contentRows.push({ kind: 'separation', ptId: prodECS.id, branchCount: aBranchesECS.length })
-    const sortedA = sortAller(aBranchesECS)
-    // rBranchesECS déjà visités ; on utilise leurs fromId pour le DFS retour
-    const sortedRFromIds = sortRetour(rBranchesECS).map(s => flowDirections.get(s.id).fromId)
-    for (let i = 0; i < sortedA.length; i++) {
-      const aSeg = sortedA[i]; visitedAller.add(aSeg.id)
-      const aNext = flowDirections.get(aSeg.id).toId
-      const rNext = sortedRFromIds[i] ?? aNext
-      const branchCol = findBranchColumn(aSeg)
-      if (branchCol) contentRows.push({ kind: 'col-header', name: branchCol })
-      contentRows.push({ kind: 'segment', seg: aSeg, depth: 0, segType: 'aller', collecteur: leadsToSeparation(aNext) ? 'aller' : undefined })
-      contentRows.push(...dfs(aNext, rNext))
-    }
-    if (rBranchesECS.length > 1) {
-      contentRows.push({ kind: 'junction', ptId: prodECS.id, depth: 0, incomingCount: rBranchesECS.length })
-    }
-  }
-
-  // Orphelins
+  // Orphelins (tronçons non visités)
   for (const seg of segments) {
-    if (!visitedAller.has(seg.id) && !visitedRetour.has(seg.id)) {
-      contentRows.push({ kind: 'segment', seg, depth: 0, segType: seg.type })
-    }
+    if (!visited.has(seg.id))
+      rows.push({ kind: 'segment', seg, depth: 0, segType: seg.type })
   }
 
-  let finalRows = [{ kind: 'flow-start' }, ...contentRows, { kind: 'flow-end' }, ...toProdRows]
+  rows.push({ kind: 'flow-end' })
+  // Tronçons retour arrivant à ECS → après "◀ Production ECS — Retour"
+  rows.push(...toProdRows)
+  // Jonction à ECS après les tronçons retour qui y arrivent
+  if (toProdRows.length > 1)
+    rows.push({ kind: 'junction', ptId: prodECS.id, depth: 0, incomingCount: toProdRows.length })
 
-  // ── Bouclage + Alimentation : exclure les tronçons aller sans retour en aval (tirages) ──
+  // ── Filtres mode bouclage / alimentation ─────────────────────────────────
+  let finalRows = rows
   if (activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs') {
     finalRows = finalRows.filter(row => {
       if (row.kind !== 'segment' || row.segType !== 'aller') return true
-      return allerHasRetour.has(row.seg.id)
+      // Bouclage ECS : seulement les tronçons du bouclage (avec retour aval), pas les antennes
+      if (activeCalcId === 'bouclage-ecs') return allerHasRetour.has(row.seg.id)
+      // Alimentation ECS : tous les tronçons aller (bouclage + antennes)
+      return true
     })
-
-    // En alimentation : retirer aussi les tronçons retour et les jonctions
     if (activeCalcId === 'alimentation-ecs') {
-      finalRows = finalRows.filter(row => {
-        if (row.kind === 'segment' && row.segType === 'retour') return false
-        if (row.kind === 'junction') return false
-        return true
-      })
+      finalRows = finalRows.filter(row =>
+        !(row.kind === 'segment' && row.segType === 'retour') && row.kind !== 'junction')
     }
-
-    // Retirer les col-headers orphelins (non immédiatement suivis d'un segment)
     finalRows = finalRows.filter((row, i) => {
       if (row.kind !== 'col-header') return true
       return finalRows[i + 1]?.kind === 'segment'
@@ -312,9 +309,10 @@ export function buildFlowRows(segments, points, flowDirections, columns, columnX
   for (const row of finalRows) {
     if (row.kind === 'segment') {
       roleMap.set(row.seg.id,
-        row.collecteur === 'aller'  ? 'collecteur-aller'  :
-        row.collecteur === 'retour' ? 'collecteur-retour' :
-        row.segType === 'retour'    ? 'retour' : 'aller')
+        row.antenne                   ? 'antenne'          :
+        row.collecteur === 'aller'    ? 'collecteur-aller'  :
+        row.collecteur === 'retour'   ? 'collecteur-retour' :
+        row.segType === 'retour'      ? 'retour' : 'aller')
     }
   }
 
@@ -372,13 +370,13 @@ export function buildFlowRowsEF(segments, points, flowDirections, columns, colum
         return d?.fromId === nodeId && !globalVisited.has(s.id) && !visitedLocal.has(s.id)
       })
 
-    const xDist = (nodeId) => {
+    const xOf = (nodeId) => {
       const pt = points.find(p => p.id === nodeId)
-      return pt && srcPt ? Math.abs(pt.x - srcPt.x) : Infinity
+      return pt ? pt.x : Infinity
     }
 
     const sortSegs = (segs) => [...segs].sort((a, b) =>
-      xDist(flowDirections.get(a.id)?.toId) - xDist(flowDirections.get(b.id)?.toId))
+      xOf(flowDirections.get(a.id)?.toId) - xOf(flowDirections.get(b.id)?.toId))
 
     const findBranchColumn = (aSeg) => {
       let col = segColName(aSeg)

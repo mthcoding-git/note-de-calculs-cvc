@@ -85,6 +85,7 @@ export default function Toolbar({
   onAddArriveeEF,
   canvasDisplay, onCanvasDisplayToggle,
   activeFluidId, activeCalcId,
+  calcSubMode, pdcParams,
 }) {
   const [displayOpen, setDisplayOpen] = useState(false)
   const displayRef = useRef(null)
@@ -235,7 +236,7 @@ export default function Toolbar({
         ))}
 
         {activeCalcId === 'alimentation-ef' ? (
-          /* Arrivée EF — plusieurs autorisées */
+          /* Arrivée EF — plusieurs autorisées en alimentation-ef */
           <button
             className={`tb-btn ${placingEquipment?.type === 'arriveeEF' ? 'active' : ''}`}
             onClick={onAddArriveeEF}
@@ -292,7 +293,7 @@ export default function Toolbar({
       )}
 
       {/* Contextual hints */}
-      {(placingChaufferie || placingEquipment) && (
+      {placingChaufferie && (
         <span className="toolbar-hint">
           Cliquez sur le schéma pour placer · Échap pour annuler
         </span>

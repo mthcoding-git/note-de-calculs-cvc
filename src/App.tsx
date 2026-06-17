@@ -13,8 +13,10 @@ import { buildFlowRows, buildFlowRowsEF } from './utils/tableOrder'
 import { computeNetworkFlows } from './utils/flowCalc'
 import { computeThermal } from './utils/thermalCalc'
 import { computeAlimentationResults } from './utils/alimentationCalc'
-import { computeSegPdc, DEFAULT_PDC_PARAMS } from './utils/pdcCalc'
-import { computeCumDp } from './utils/pdcCumul'
+import { computeSegPdc, DEFAULT_PDC_PARAMS, DEFAULT_PDC_PARAMS_ALIM_ECS, waterDensity } from './utils/pdcCalc'
+import { getNodeCote } from './utils/coteCalc'
+import { computeCumDp, computeCumDpAlim } from './utils/pdcCumul'
+import { computeValveKvs } from './utils/valveKv'
 import ResultsTable from './components/ResultsTable'
 import './App.css'
 
@@ -338,6 +340,7 @@ function initProject() {
     globalParams: DEFAULT_GLOBAL_PARAMS,
     alimentationParams: DEFAULT_ALIMENTATION_PARAMS,
     pdcParams: DEFAULT_PDC_PARAMS,
+    pdcParamsAlimECS: DEFAULT_PDC_PARAMS_ALIM_ECS,
     materials: DEFAULT_MATERIALS,
     insulations: DEFAULT_INSULATIONS,
     levels: DEFAULT_LEVELS,
@@ -624,23 +627,37 @@ export default function App() {
 
   const pdcResults = useMemo(() => {
     const results = new Map()
-    if (activeCalcId !== 'bouclage-ecs') return results
-    const pdcParams = project.pdcParams ?? DEFAULT_PDC_PARAMS
+    const isBouclage = activeCalcId === 'bouclage-ecs'
+    const isAlimECS  = activeCalcId === 'alimentation-ecs'
+    if (!isBouclage && !isAlimECS) return results
+    const pdcParams = isBouclage
+      ? (project.pdcParams ?? DEFAULT_PDC_PARAMS)
+      : (project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS)
+    const prodECS = project.points.find(p => p.type === 'productionECS')
+    const _rawT = prodECS?.T_depart_override ?? project.globalParams.T_depart ?? 60
+    const T_depart_eff = typeof _rawT === 'number' && !isNaN(_rawT) ? _rawT : (parseFloat(String(_rawT)) || 60)
     for (const seg of project.segments) {
-      const flowData   = networkFlows.get(seg.id)
-      const thermalData = thermalResults.segResults.get(seg.id)
-      const T = thermalData
-        ? (thermalData.T_from + thermalData.T_to) / 2
-        : (project.globalParams.T_depart ?? 60)
+      if (isAlimECS && seg.type !== 'aller') continue
+      let flowRate: number | null
+      if (isAlimECS) {
+        const ar = alimentationResults.get(seg.id)
+        flowRate = (ar?.flowRateForPdc ?? 0) > 0 ? ar!.flowRateForPdc * 3.6 : null
+      } else {
+        flowRate = networkFlows.get(seg.id)?.flowRate ?? null
+      }
+      // En alimentation-ecs, pas de calcul thermique par tronçon → on prend T départ Production ECS
+      const T = isAlimECS
+        ? T_depart_eff
+        : (() => { const td = thermalResults.segResults.get(seg.id); return td ? (td.T_from + td.T_to) / 2 : T_depart_eff })()
       const mat   = project.materials.find(m => m.id === seg.materialId)
       const dnDef = mat?.dns.find(d => d.dn === seg.dn)
       const di_mm = seg.di_override ?? dnDef?.di ?? null
-      const result = computeSegPdc(seg, pdcParams, flowData?.flowRate ?? null, di_mm, T, mat)
+      const result = computeSegPdc(seg, pdcParams, flowRate, di_mm, T, mat)
       if (result) results.set(seg.id, result)
     }
     return results
-  }, [activeCalcId, project.segments, project.pdcParams, project.materials,
-      project.globalParams, networkFlows, thermalResults])
+  }, [activeCalcId, project.segments, project.pdcParams, project.pdcParamsAlimECS, project.materials,
+      project.globalParams, networkFlows, thermalResults, alimentationResults])
 
   const { rows: flowRows, roleMap } = useMemo(
     () => buildFlowRows(project.segments, project.points, flowDirections,
@@ -699,11 +716,50 @@ export default function App() {
   const [calcSubMode, setCalcSubMode] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
 
   const pdcCumResults = useMemo(
-    () => activeCalcId === 'bouclage-ecs' && calcSubMode === 'pdc'
+    () => activeCalcId === 'bouclage-ecs'
       ? computeCumDp(project.segments, project.points, flowDirections, pdcResults)
       : null,
-    [activeCalcId, calcSubMode, project.segments, project.points, flowDirections, pdcResults]
+    [activeCalcId, project.segments, project.points, flowDirections, pdcResults]
   )
+
+  const pdcCumAlimResults = useMemo(() => {
+    if (activeCalcId !== 'alimentation-ecs') return null
+    const T   = project.globalParams?.T_depart ?? 60
+    const rho = waterDensity(T)
+    const nodeCotes = new Map<string, number>()
+    for (const pt of project.points) {
+      nodeCotes.set(pt.id, getNodeCote(pt, project.levels, project.lineYs).value)
+    }
+    return computeCumDpAlim(
+      project.segments, project.points, flowDirections, pdcResults,
+      (project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS).pressionSourceDisponible,
+      nodeCotes, rho
+    )
+  }, [activeCalcId, project.segments, project.points, flowDirections, pdcResults,
+      project.pdcParamsAlimECS, project.globalParams, project.levels, project.lineYs])
+
+  const activePdcParams = activeCalcId === 'alimentation-ecs'
+    ? (project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS)
+    : (project.pdcParams ?? DEFAULT_PDC_PARAMS)
+
+  const valveKvResults = useMemo(
+    () => computeValveKvs(
+      project.valves ?? [], project.segments, project.points,
+      flowDirections, pdcCumResults, networkFlows,
+    ),
+    [project.valves, project.segments, project.points, flowDirections, pdcCumResults, networkFlows]
+  )
+
+  // Map segId → nom de colonne (depuis les col-headers de flowRows)
+  const segToCol = useMemo(() => {
+    const map = new Map<string, string | null>()
+    let currentCol: string | null = null
+    for (const row of (flowRows ?? [])) {
+      if (row.kind === 'col-header') currentCol = row.name
+      if (row.kind === 'segment') map.set(row.seg.id, currentCol)
+    }
+    return map
+  }, [flowRows])
 
   const [drawMode,           setDrawMode]           = useState('select')
   const [connHighlightIds,   setConnHighlightIds]   = useState([])
@@ -1280,9 +1336,9 @@ export default function App() {
                       onClick={() => setCalcSubMode('dimensionnement')}
                     >Dimensionnement</button>
                     <button
-                      className={`calc-sub-pill${activeCalcId === 'bouclage-ecs' && calcSubMode === 'pdc' ? ' active' : ''} soon`}
-                      disabled={activeCalcId !== 'bouclage-ecs'}
-                      onClick={() => activeCalcId === 'bouclage-ecs' && setCalcSubMode('pdc')}
+                      className={`calc-sub-pill${calcSubMode === 'pdc' ? ' active' : ''}`}
+                      disabled={activeCalcId !== 'bouclage-ecs' && activeCalcId !== 'alimentation-ecs'}
+                      onClick={() => setCalcSubMode('pdc')}
                     >Pertes de charge</button>
                   </div>
                 </>
@@ -1320,6 +1376,8 @@ export default function App() {
         onCanvasDisplayToggle={key => setCanvasDisplay(d => ({ ...d, [key]: !d[key] }))}
         activeFluidId={activeFluidId}
         activeCalcId={pendingSetup ? null : activeCalcId}
+        calcSubMode={calcSubMode}
+        pdcParams={activePdcParams}
       />
 
       <div className="app-body">
@@ -1341,6 +1399,8 @@ export default function App() {
               onAlimentationParamsChange={v => update('alimentationParams', v)}
               pdcParams={project.pdcParams ?? DEFAULT_PDC_PARAMS}
               onPdcParamsChange={v => update('pdcParams', v)}
+              pdcParamsAlimECS={project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS}
+              onPdcParamsAlimECSChange={v => update('pdcParamsAlimECS', v)}
               levels={project.levels}
               lineYs={project.lineYs}
               onLevelsChange={v => update('levels', v)}
@@ -1373,6 +1433,8 @@ export default function App() {
               groupesEditMode={groupesEditMode} onGroupesEditModeChange={setGroupesEditMode}
               showGroupeNames={showGroupeNames} onShowGroupeNamesChange={setShowGroupeNames}
               onAddGroupe={handleAddGroupe} onRemoveGroupe={handleRemoveGroupe}
+              selectedIds={selectedIds}
+              onUpdateSegment={(seg: any) => update('segments', (segs: any[]) => segs.map(s => s.id === seg.id ? seg : s))}
             />
           )}
         </aside>
@@ -1428,6 +1490,10 @@ export default function App() {
             onValvesChange={v => update('valves', typeof v === 'function' ? v(project.valves ?? []) : v)}
             selectedValveId={selectedValveId}
             onSelectedValveChange={id => { setSelectedValveId(id); if (id) setSelectedIds([]) }}
+            calcSubMode={calcSubMode}
+            pdcParams={activePdcParams}
+            segToCol={segToCol}
+            onExitSpecialMode={() => setDrawMode('select')}
           />
         </main>
 
@@ -1441,6 +1507,7 @@ export default function App() {
             roleMap={roleMap}
             efFlowRowsArr={efFlowRowsArr}
             activeCalcId={activeCalcId}
+            calcSubMode={calcSubMode}
             segments={project.segments}
             points={project.points}
             materials={project.materials}
@@ -1454,6 +1521,11 @@ export default function App() {
             networkFlows={networkFlows}
             thermalResults={thermalResults}
             alimentationResults={alimentationResults}
+            pdcResults={pdcResults}
+            pdcParams={activePdcParams}
+            pdcCumResults={pdcCumResults}
+            pdcCumAlimResults={pdcCumAlimResults}
+            segToCol={segToCol}
             globalParams={project.globalParams}
             selectedIds={selectedIds}
             onSelectIds={setSelectedIds}
@@ -1481,9 +1553,12 @@ export default function App() {
             insulations={project.insulations}
             activeCalcId={activeCalcId}
             alimentationParams={resolveAlimentationParams(project.alimentationParams)}
-            pdcParams={project.pdcParams ?? DEFAULT_PDC_PARAMS}
+            pdcParams={activePdcParams}
             pdcResults={pdcResults}
             pdcCumResults={pdcCumResults}
+            pdcCumAlimResults={pdcCumAlimResults}
+            segToCol={segToCol}
+            valveKvResults={valveKvResults}
             levels={project.levels}
             lineYs={project.lineYs}
             columns={project.columns}

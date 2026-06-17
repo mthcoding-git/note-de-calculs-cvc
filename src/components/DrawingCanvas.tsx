@@ -92,29 +92,21 @@ function positionFromT(vertices, t) {
   return { x: vertices[vertices.length-1].x, y: vertices[vertices.length-1].y, angle: 0 }
 }
 
-// Auto-name a valve from its canvas position — VE [colName] – [levelName]
-function nameValve(x, y, columns, columnXs, levels, lineYs, existingValves) {
-  let colName = null
-  for (let i = 0; i < (columns ?? []).length; i++) {
-    const xL = (columnXs ?? [])[i], xR = (columnXs ?? [])[i + 1] ?? Infinity
-    if (x >= xL && x < xR && !(columns[i]?.isGap)) { colName = columns[i]?.name ?? `C${i+1}`; break }
-  }
-  if (!colName) colName = '?'
-
-  let levelName = null
-  for (let i = 0; i < (levels ?? []).length; i++) {
-    const yBot = (lineYs ?? [])[i], yTop = (lineYs ?? [])[i + 1]
-    if (yTop !== undefined && y <= yBot && y >= yTop) { levelName = levels[i]?.name ?? `N${i+1}`; break }
-  }
-  if (!levelName) {
-    let ni = 0, nd = Infinity
-    ;(lineYs ?? []).forEach((ly, i) => { const d = Math.abs(ly - y); if (d < nd) { nd = d; ni = i } })
-    levelName = (levels ?? [])[ni]?.name ?? `N${ni+1}`
-  }
-
-  const base = `VE ${colName} – ${levelName}`
-  const count = (existingValves ?? []).filter(v => v.name === base || v.name.startsWith(`${base} (`)).length
-  return count === 0 ? base : `${base} (${count + 1})`
+// Auto-name a valve from its segment's column — VE [colName] n°1, VE [colName] n°2, …
+function nameValve(segId, segToCol, existingValves) {
+  const colName = segToCol?.get(segId) ?? '?'
+  const base    = `VE ${colName}`
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re      = new RegExp(`^${escaped} n°(\\d+)$`)
+  const used    = new Set(
+    (existingValves ?? []).flatMap(v => {
+      const m = v.name?.match(re)
+      return m ? [parseInt(m[1], 10)] : []
+    })
+  )
+  let n = 1
+  while (used.has(n)) n++
+  return `${base} n°${n}`
 }
 
 // Nearest point on any polyline segment, within HIT
@@ -826,6 +818,10 @@ export default function DrawingCanvas({
   onValvesChange,
   selectedValveId,
   onSelectedValveChange,
+  calcSubMode,
+  pdcParams,
+  segToCol,
+  onExitSpecialMode,
 }) {
   const svgRef    = useRef(null)
   const spaceRef  = useRef(false)
@@ -1008,7 +1004,7 @@ export default function DrawingCanvas({
       if (e.key === 'Escape') {
         if (placingEquipment !== null) { onPlacingDone(); return }
         if (placingChaufferie) { onPlacingChaufferieDone(); return }
-        if (drawing) commitDrawing()
+if (drawing) commitDrawing()
         else { onSelectIds([]); onSelectedValveChange?.(null) }
         return
       }
@@ -1059,7 +1055,7 @@ export default function DrawingCanvas({
     window.addEventListener('keydown', kd)
     window.addEventListener('keyup',   ku)
     return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku) }
-  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone, onRemoveGroupeById, selectedValveId, onSelectedValveChange, onValvesChange])
+  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone, onRemoveGroupeById, selectedValveId, onSelectedValveChange, onValvesChange, drawMode, onExitSpecialMode])
 
   // ── zoom ─────────────────────────────────────────────
   const onWheel = useCallback(e => {
@@ -1362,7 +1358,7 @@ export default function DrawingCanvas({
         if (r && r.dist < bestDist) { bestDist = r.dist; best = { ...r, segId: seg.id } }
       }
       if (best && bestDist < 18) {
-        const name = nameValve(best.x, best.y, columns, columnXs, levels, lineYs, valves ?? [])
+        const name = nameValve(best.segId, segToCol, valves ?? [])
         onValvesChange(vs => [...vs, { id: uid('vv'), segmentId: best.segId, t: best.t, name }])
       }
       return
@@ -1990,6 +1986,7 @@ export default function DrawingCanvas({
                 stroke={strokeColor} strokeWidth={strokeW}
                 strokeDasharray={segDash} fill="none"
                 style={{ pointerEvents: 'none' }} />
+
               {seg.showDN && seg.dn && (() => {
                 const vs = seg.vertices
                 if (vs.length < 2) return null
@@ -2080,7 +2077,7 @@ export default function DrawingCanvas({
                 // lines: [{text, red?}]
                 const lines = []
                 if (canvasDisplay?.nomTroncon) {
-                  const name = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, roleMap?.get(seg.id), activeCalcId)
+                  const name = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, roleMap?.get(seg.id), activeCalcId, roleMap)
                   if (name) lines.push({ text: name })
                 }
                 if (canvasDisplay?.length && seg.length_override != null) {

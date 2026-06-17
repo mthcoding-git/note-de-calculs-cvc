@@ -4,34 +4,61 @@
  */
 
 export const FITTING_TYPES = [
-  { id: 'coude90_court',  label: 'Coude 90° (court rayon, fileté)',        xi: 1.5  },
-  { id: 'coude90_long',   label: 'Coude 90° (long rayon, R=1,5D)',          xi: 0.35 },
-  { id: 'coude45',        label: 'Coude 45°',                               xi: 0.4  },
-  { id: 'te_passage',     label: 'Té — passage direct',                     xi: 0.3  },
-  { id: 'te_deviation',   label: 'Té — branchement/déviation',              xi: 1.3  },
-  { id: 'clapet_battant', label: 'Clapet anti-retour à battant',             xi: 2.0  },
-  { id: 'boisseaux',      label: 'Robinet à boisseau sphérique (ouvert)',    xi: 0.05 },
-  { id: 'opercule',       label: 'Vanne à opercule (ouverte)',               xi: 0.15 },
+  { id: 'coude90_long',   label: 'Coude 90° soudé (R=1,5D)',              xi: 0.35 },
+  { id: 'coude90_soude',  label: 'Coude 90° soudé (R=1D)',                xi: 0.5  },
+  { id: 'coude90_press',  label: 'Coude 90° à sertir / press',            xi: 1.0  },
+  { id: 'coude90_court',  label: 'Coude 90° fileté (court rayon)',        xi: 1.5  },
+  { id: 'coude45_soude',  label: 'Coude 45° soudé',                       xi: 0.2  },
+  { id: 'coude45',        label: 'Coude 45° fileté / à raccord',          xi: 0.4  },
+  { id: 'te_passage',     label: 'Té — passage direct',                    xi: 0.3  },
+  { id: 'te_deviation',   label: 'Té — dérivation / branchement',         xi: 1.5  },
+  { id: 'boisseaux',      label: 'Robinet à boisseau sphérique (ouvert)', xi: 0.05 },
+  { id: 'clapet_ressort', label: 'Clapet anti-retour à ressort',           xi: 4.0  },
+  { id: 'clapet_battant', label: 'Clapet anti-retour à battant',           xi: 2.0  },
 ]
 
 export const EQUIPMENT_TYPES = [
-  { id: 'filtre',        label: 'Filtre / débourbeur',             kvDefault: 10   },
-  { id: 'clapet_cv',     label: 'Clapet anti-retour (complexe)',    kvDefault: 4    },
-  { id: 'disconnecteur', label: 'Disconnecteur BA/CA',              kvDefault: 3    },
-  { id: 'echangeur',     label: 'Échangeur ECS',                    kvDefault: null },
+  { id: 'filtre',            label: 'Filtre / débourbeur',              kvDefault: 8    },
+  { id: 'disconnecteur',     label: 'Disconnecteur BA (EA)',             kvDefault: 3    },
+  { id: 'reducteur_pression',label: 'Réducteur de pression',            kvDefault: 5    },
+  { id: 'echangeur',         label: 'Échangeur ECS',                     kvDefault: null },
+  { id: 'vanne_regulation',  label: 'Vanne de régulation',              kvDefault: null },
+  { id: 'compteur_eau',      label: "Compteur d'eau",                    kvDefault: 5    },
 ]
 
 export const DEFAULT_PDC_PARAMS = {
-  methodeReg:       'darcy-colebrook' as 'darcy-colebrook' | 'dtu-approche',
-  dtuUnite:         'Pa'             as 'Pa' | 'mCE',
-  roughnessMode:    'global'          as 'global' | 'par-materiau',
-  roughnessGlobal:  0.0001,           // m — valeur DTU
-  methodeSing:      'pourcentage'     as 'pourcentage' | 'accessoires',
-  pourcentageSing:  20,               // %
+  methodeReg:        'darcy-colebrook' as 'darcy-colebrook' | 'dtu-approche',
+  dtuUnite:          'Pa'             as 'Pa' | 'mCE',
+  roughnessMode:     'global'          as 'global' | 'par-materiau',
+  roughnessGlobal:   0.0001,
+  methodeSing:       'pourcentage'     as 'pourcentage' | 'accessoires',
+  pourcentageSing:   20,
   equipementsActifs: false,
-  coefPompeActif:   false,
-  coefPompe:        10,               // % appliqué sur ΔP total pour dimensionnement pompe
-  uniteAffichage:   'Pa'             as 'Pa' | 'mmCE' | 'both',
+  coefPompeActif:    false,
+  coefPompe:         10,
+  uniteAffichage:    'Pa'             as 'Pa' | 'mmCE' | 'both',
+  fittingOverrides:  {} as Record<string, number>,   // ξ par défaut modifiés dans la bibliothèque
+  equipmentOverrides:{} as Record<string, number>,   // Kv par défaut modifiés dans la bibliothèque
+  customFittings:   [] as { id: string; label: string; xi: number }[],
+  customEquipments: [] as { id: string; label: string; kvDefault: number | null }[],
+}
+
+export const DEFAULT_PDC_PARAMS_ALIM_ECS = {
+  methodeReg:               'darcy-colebrook' as 'darcy-colebrook' | 'dtu-approche',
+  dtuUnite:                 'Pa'             as 'Pa' | 'mCE',
+  roughnessMode:            'global'          as 'global' | 'par-materiau',
+  roughnessGlobal:          0.0001,
+  methodeSing:              'pourcentage'     as 'pourcentage' | 'accessoires',
+  pourcentageSing:          20,
+  equipementsActifs:        false,
+  coefPompeActif:           false,
+  coefPompe:                10,
+  uniteAffichage:           'Pa'             as 'Pa' | 'mmCE' | 'both',
+  fittingOverrides:         {} as Record<string, number>,
+  equipmentOverrides:       {} as Record<string, number>,
+  customFittings:           [] as { id: string; label: string; xi: number }[],
+  customEquipments:         [] as { id: string; label: string; kvDefault: number | null }[],
+  pressionSourceDisponible: 300000,
 }
 
 /** Masse volumique de l'eau (kg/m³) — formule de Kell (0–100 °C). */
@@ -103,6 +130,7 @@ export function dtuJ(V: number, D: number, unite: 'Pa' | 'mCE' = 'Pa'): number {
   }
   return 5.65 * Math.pow(V, 1.896) / Math.pow(D, 1.276)
 }
+
 
 export interface SegPdcResult {
   // ── Propriétés physiques de l'eau ──────────────────────────────────────
@@ -205,7 +233,11 @@ export function computeSegPdc(
   } else {
     const fittings: any[] = seg.fittings ?? []
     dpSing = fittings.reduce((sum, f) => {
-      const xi = f.xiOverride ?? FITTING_TYPES.find(t => t.id === f.type)?.xi ?? 0
+      const xi = f.xiOverride
+        ?? pdcParams.fittingOverrides?.[f.type]
+        ?? FITTING_TYPES.find(t => t.id === f.type)?.xi
+        ?? (pdcParams.customFittings ?? []).find((t: any) => t.id === f.type)?.xi
+        ?? 0
       return sum + xi * (f.count ?? 1) * dynPressure
     }, 0)
   }
@@ -215,7 +247,10 @@ export function computeSegPdc(
   if (pdcParams.equipementsActifs) {
     const equipment: any[] = seg.equipment ?? []
     for (const e of equipment) {
-      const kv = e.kvOverride ?? EQUIPMENT_TYPES.find(t => t.id === e.type)?.kvDefault
+      const kv = e.kvOverride
+        ?? pdcParams.equipmentOverrides?.[e.type]
+        ?? EQUIPMENT_TYPES.find(t => t.id === e.type)?.kvDefault
+        ?? (pdcParams.customEquipments ?? []).find((t: any) => t.id === e.type)?.kvDefault
       if (!kv || kv <= 0) continue
       dpEquip += Math.pow(flowRate / kv, 2) * 100000  // (Q/Kv)² × 10⁵ Pa
     }

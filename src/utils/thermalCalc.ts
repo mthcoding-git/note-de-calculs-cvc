@@ -71,7 +71,7 @@ export function computeThermal(
   const prodECS = points.find(p => p.type === 'productionECS')
   if (!prodECS) return { segResults: new Map(), nodeTemps: new Map() }
 
-  const T_depart = globalParams.T_depart ?? 60
+  const T_depart = prodECS.T_depart_override ?? globalParams.T_depart ?? 60
   const he       = globalParams.he ?? 10
   // cp saisi en J/(kg·K) → conversion en Wh/(kg·K) pour cohérence avec Q[W] et q[m³/h]
   const cp_Wh  = (globalParams.cp ?? 4180) / 3600   // Wh/(kg·K)

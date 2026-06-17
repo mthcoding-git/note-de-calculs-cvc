@@ -65,6 +65,7 @@ export interface Point {
   name?: string
   size?: NodeSize
   isLocked?: boolean
+  cote_override?: number | null
 }
 
 export interface Level {
@@ -72,6 +73,7 @@ export interface Level {
   name: string
   isSousSol?: boolean
   y?: number
+  hauteur?: number
 }
 
 export interface Column {

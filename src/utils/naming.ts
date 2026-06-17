@@ -113,11 +113,76 @@ export function buildECSDistances(allSegs, specialPts) {
   return dist
 }
 
+// Retourne "NomColonne (Niveau)" si le vertex v est dans une colonne, sinon null.
+function getVertexColLoc(v, hint, levels, lineYs, columns, columnXs) {
+  if (!columns?.length || !columnXs?.length) return null
+  let levelName = '?', levelId = null
+  for (let i = 0; i < levels.length; i++) {
+    const yBot = lineYs[i], yTop = lineYs[i + 1]
+    if (yTop === undefined) continue
+    const goingIn = v.y === yTop && hint && hint.y > v.y
+    if ((v.y > yTop && v.y <= yBot) || goingIn) {
+      levelName = levels[i].name
+      levelId   = levels[i].id
+      break
+    }
+  }
+  for (let i = 0; i < columns.length; i++) {
+    const cx1 = columnXs[i], cx2 = columnXs[i + 1]
+    if (cx1 === undefined || cx2 === undefined) continue
+    if (v.x < cx1 || v.x > cx2) continue
+    const col = columns[i]
+    if (col.isGap) continue
+    const covers = col.levelIds === 'all' ||
+      (Array.isArray(col.levelIds) && levelId && col.levelIds.includes(levelId))
+    if (covers) return `${col.name} (${levelName})`
+  }
+  return null
+}
+
+// Remonte la chaîne des antennes parentes pour trouver la colonne d'une antenne.
+// Vérifie d'abord l'extrémité amont du tronçon courant, puis les antennes en amont.
+function findAntenneColLoc(seg, allSegs, roleMap, allerDist, levels, lineYs, columns, columnXs) {
+  if (!allSegs || !roleMap || !allerDist) return null
+  const verts = seg.vertices ?? []
+  if (!verts.length) return null
+
+  const s0 = verts[0], sN = verts[verts.length - 1]
+  const h0 = verts.length > 1 ? verts[1]                 : null
+  const hN = verts.length > 1 ? verts[verts.length - 2]  : null
+  const startDist = allerDist.get(seg.startPointId) ?? Infinity
+  const endDist   = allerDist.get(seg.endPointId)   ?? Infinity
+
+  const [fromV, fromHint, fromPtId] = startDist <= endDist
+    ? [s0, h0, seg.startPointId]
+    : [sN, hN, seg.endPointId]
+  const myMinDist = Math.min(startDist, endDist)
+
+  // Extrémité amont directement dans une colonne ?
+  const colLoc = getVertexColLoc(fromV, fromHint, levels, lineYs, columns, columnXs)
+  if (colLoc) return colLoc
+
+  // Sinon, remonter via les antennes parentes
+  for (const s of allSegs) {
+    if (s.id === seg.id || s.type !== 'aller') continue
+    if (roleMap.get(s.id) !== 'antenne') continue
+    if (s.startPointId !== fromPtId && s.endPointId !== fromPtId) continue
+    const sMinDist = Math.min(
+      allerDist.get(s.startPointId) ?? Infinity,
+      allerDist.get(s.endPointId)   ?? Infinity,
+    )
+    if (sMinDist >= myMinDist) continue  // pas en amont
+    const result = findAntenneColLoc(s, allSegs, roleMap, allerDist, levels, lineYs, columns, columnXs)
+    if (result) return result
+  }
+  return null
+}
+
 // Nom par défaut d'un tronçon, sans disambiguation.
 // allerDist : Map<ptId, px> depuis buildECSDistances ; retourDist : depuis buildRetourDistances.
 // Aller : l'extrémité la plus proche de l'ECS (allerDist min) en premier.
 // Retour : l'extrémité la plus loin de l'ECS (retourDist max) en premier (sens du fluide).
-export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null, role = null, activeCalcId = null) {
+export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null, role = null, activeCalcId = null, allSegs = null, roleMap = null) {
   const isEF = activeCalcId === 'alimentation-ef'
   const ecsDistances = allerDist
   if (!seg.vertices?.length) return ''
@@ -129,6 +194,7 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
   const prefix = isEF ? 'EF'
     : role === 'collecteur-aller'  ? 'Collecteur aller ECS'
     : role === 'collecteur-retour' ? 'Collecteur retour ECS'
+    : role === 'antenne'           ? 'Antenne ECS'
     : seg.type === 'retour' ? 'Retour ECS'
     : 'Aller ECS'
 
@@ -173,6 +239,13 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
     const endDist   = ecsDistances.get(seg.endPointId)   ?? Infinity
     const putStartFirst = startDist <= endDist
     const [firstL, secondL] = putStartFirst ? [startL, endL] : [endL, startL]
+
+    // Antenne en alimentation-ecs : chercher la colonne via la chaîne d'antennes parentes
+    if (role === 'antenne' && activeCalcId === 'alimentation-ecs') {
+      const colLoc = findAntenneColLoc(seg, allSegs, roleMap, ecsDistances, levels, lineYs, columns, columnXs)
+      if (colLoc) return `${prefix} – ${colLoc} → ${colLoc}`
+    }
+
     return `${prefix} – ${firstL} → ${secondL}`
   }
   return `${prefix} – ${startL} → ${endL}`
@@ -215,14 +288,28 @@ export function buildRetourDistances(allSegs, specialPts) {
 }
 
 // Nom d'affichage final (avec suffixe " - n°x" si doublons, triés par sens d'écoulement).
-export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts, role = null, activeCalcId = null) {
+export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts, role = null, activeCalcId = null, roleMap = null) {
   if (seg.name) return seg.name
   const allerDist  = buildECSDistances(allSegs, specialPts)
   const retourDist = buildRetourDistances(allSegs, specialPts)
-  const base      = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, role, activeCalcId)
-  const baseRoute = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId)
-  const dupes = allSegs.filter(s => !s.name &&
-    getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId) === baseRoute)
+  const base = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, role, activeCalcId, allSegs, roleMap)
+
+  // Pour les antennes en alimentation-ecs avec roleMap : comparer par nom complet (inclut colonne)
+  // afin que deux antennes de la même colonne soient bien groupées pour la numérotation.
+  // Pour tous les autres cas : comportement original (comparer par nom sans rôle).
+  const isAlimAntenne = role === 'antenne' && activeCalcId === 'alimentation-ecs' && roleMap != null
+
+  let dupes
+  if (isAlimAntenne) {
+    dupes = allSegs.filter(s => !s.name &&
+      getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist,
+        roleMap.get(s.id) ?? null, activeCalcId, allSegs, roleMap) === base)
+  } else {
+    const baseRoute = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId)
+    dupes = allSegs.filter(s => !s.name &&
+      getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId) === baseRoute)
+  }
+
   if (dupes.length <= 1) return base
 
   let sorted

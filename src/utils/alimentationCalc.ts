@@ -189,6 +189,19 @@ export function computeAlimentationResults(segments, points, alimentationParams,
       ? computeCollective(totalEquip, appareils, buildingType)
       : null
 
+    // Débit simultané total — tous appareils en fonctionnement (pour PDC méthode individuelle)
+    let Qs_all = 0
+    for (const a of appareils) {
+      if (!enabledIds.has(a.id)) continue
+      const cnt = totalEquip[a.id] ?? 0
+      if (cnt > 0) Qs_all += (a.qBase ?? 0) * cnt
+    }
+
+    // Débit retenu pour les pertes de charge (l/s)
+    const flowRateForPdc = method === 'collective'
+      ? (collective?.Qp ?? 0)
+      : Qs_all
+
     results.set(seg.id, {
       X, N, di_min,
       method, collectiveReason,
@@ -196,6 +209,8 @@ export function computeAlimentationResults(segments, points, alimentationParams,
       equipDetail: { ...totalEquip },
       nonDTUIds,
       collective,
+      Qs_all,
+      flowRateForPdc,
     })
   }
 

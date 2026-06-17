@@ -528,6 +528,8 @@
 .rt-result { background: transparent; color: #1e293b; font-weight: 600; }
 .rt-result-first { border-left: 2px solid #cbd5e1 !important; }
 .rt-th-result-first { border-left: 2px solid #cbd5e1 !important; }
+.rt-group-sep { border-left: 1px solid #e2e8f0 !important; }
+.acc-drop-item:hover { background: #f8fafc; }
 .rt-val-default { color: #9ca3af; font-style: italic; }
 .rt-val-override { color: #1e293b; font-weight: 600; }
 .rt-depth-marker { color: #cbd5e1; font-size: 9px; margin-right: 2px; }
@@ -599,7 +601,7 @@
   border-left:   none !important;
   border-right:  none !important;
 }
-.rt-badge-a, .rt-badge-r, .rt-badge-ca, .rt-badge-cr {
+.rt-badge-a, .rt-badge-r, .rt-badge-ca, .rt-badge-cr, .rt-badge-ant {
   display: inline-block;
   font-size: 8px;
   font-weight: 800;
@@ -609,10 +611,11 @@
   vertical-align: middle;
   letter-spacing: 0.4px;
 }
-.rt-badge-a  { background: #dc2626; color: #fff; }
-.rt-badge-r  { background: #ea580c; color: #fff; }
-.rt-badge-ca { background: #1d4ed8; color: #fff; }
-.rt-badge-cr { background: #047857; color: #fff; }
+.rt-badge-a   { background: #dc2626; color: #fff; }
+.rt-badge-r   { background: #ea580c; color: #fff; }
+.rt-badge-ca  { background: #1d4ed8; color: #fff; }
+.rt-badge-cr  { background: #047857; color: #fff; }
+.rt-badge-ant { background: #dc2626; color: #fff; }
 
 .rt-legend {
   flex-shrink: 0;
@@ -679,8 +682,9 @@ input[type="number"] { -moz-appearance: textfield; }
 .lp-level-toiture { padding: 4px 0; }
 .lp-level-badge { font-size: 11px; color: #94a3b8; }
 .lp-level-toiture-label { font-size: 12px; color: #94a3b8; font-weight: 600; font-style: italic; }
-.lp-level-name { flex: 1; padding: 4px 7px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; }
+.lp-level-name { flex: 1; min-width: 0; max-width: 170px; padding: 4px 5px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 11px; }
 .lp-level-btns { display: flex; gap: 2px; }
+.lp-level-h-input { width: 40px !important; padding: 1px 4px !important; font-size: 11px; }
 
 /* Materials / insulations */
 .lp-mat-block { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #f3f4f6; }
