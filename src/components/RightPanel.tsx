@@ -26,15 +26,18 @@ function Field({ label, unit = null, children }: { label: any, unit?: any, child
 }
 
 
-function CoteSection({ seg, points, levels, lineYs, onUpdate }: { seg: any, points: any[], levels: any[], lineYs: number[], onUpdate: any }) {
-  const startPt = points?.find(p => p.id === seg.startPointId) ?? null
-  const endPt   = points?.find(p => p.id === seg.endPointId)   ?? null
-  if (!startPt && !endPt) return null
-  const mkInput = (pt: any) => {
+function CoteSection({ seg, points, levels, lineYs, onUpdate, flowDirections }: { seg: any, points: any[], levels: any[], lineYs: number[], onUpdate: any, flowDirections?: Map<string, { fromId: string; toId: string }> }) {
+  const dir     = flowDirections?.get(seg.id)
+  const amontId = dir?.fromId ?? seg.startPointId
+  const avalId  = dir?.toId   ?? seg.endPointId
+  const amontPt = points?.find(p => p.id === amontId) ?? null
+  const avalPt  = points?.find(p => p.id === avalId)  ?? null
+  if (!amontPt && !avalPt) return null
+  const mkInput = (pt: any, label: string) => {
     if (!pt) return null
     const def = getNodeDefaultCote(pt, levels ?? [], lineYs ?? [])
     return (
-      <Field label={pt.id === seg.startPointId ? 'Cote amont' : 'Cote aval'} unit="m">
+      <Field label={label} unit="m">
         <input type="number" step="0.01"
           value={pt.cote_override != null ? pt.cote_override : ''}
           placeholder={`${def.toFixed(2)} (par défaut)`}
@@ -45,8 +48,8 @@ function CoteSection({ seg, points, levels, lineYs, onUpdate }: { seg: any, poin
   return (
     <>
       <SectionLabel>Cote</SectionLabel>
-      {mkInput(startPt)}
-      {mkInput(endPt)}
+      {mkInput(amontPt, 'Cote amont')}
+      {mkInput(avalPt, 'Cote aval')}
     </>
   )
 }
@@ -100,8 +103,9 @@ function SegNameField({ displayName, isDefault, value, onChange }) {
   )
 }
 
-function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, cumDp, postJunction = false, segCol = null, isOnCriticalPath = false, criticalCol = null,
-                         isAlimEcs = false, deltaH = null, dpStatic = null, pressionAval = null, pStatAval = null }) {
+function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentationData = null, cumDp, postJunction = false, segCol = null, isOnCriticalPath = false, criticalCol = null,
+                         isAlimEcs = false, deltaH = null, dpStatic = null, pressionAval = null, pStatAval = null,
+                         isTerminalGroupePuisage = false }) {
   const [showIter, setShowIter] = useState(false)
 
   const fmtPa = (v: number) => v >= 10000
@@ -110,6 +114,14 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, cumDp, post
   const pct = (v: number) => pdcResult && pdcResult.dpTotal > 0
     ? `${Math.round(v / pdcResult.dpTotal * 100)} %`
     : '—'
+
+  if (isAlimEcs && seg.type === 'retour') {
+    return (
+      <div style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>
+        Tronçon retour — le calcul des pertes de charge s'applique uniquement aux tronçons aller en Alimentation ECS.
+      </div>
+    )
+  }
 
   if (!pdcResult) {
     const L = seg.length_override
@@ -129,7 +141,10 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, cumDp, post
 
   const L     = seg.length_override
   const di_mm = seg.di_override ?? dnDef?.di
-  const Q     = flowData?.flowRate ?? null
+  const Q     = isAlimEcs
+    ? (alimentationData?.flowRateForPdc != null && alimentationData.flowRateForPdc > 0
+        ? alimentationData.flowRateForPdc * 3.6 : null)
+    : (flowData?.flowRate ?? null)
   const dynPressure = pdcResult.dynPressure ?? (pdcResult.rho * pdcResult.V ** 2 / 2)
 
   const unite = pdcParams?.uniteAffichage ?? 'Pa'
@@ -194,24 +209,33 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, cumDp, post
         <div style={{ display: 'flex', gap: 8 }}>
           {/* Pression disponible aval */}
           {(() => {
-            const neg = pressionAval != null && pressionAval < 0
+            const p = pressionAval
+            const isErr  = p != null && (p < 30000 || (isTerminalGroupePuisage && p < 100000))
+            const isWarn = p != null && !isErr && p < 100000
+            const valCol = isErr ? '#dc2626' : isWarn ? '#f97316' : '#0f172a'
+            const bg     = isErr ? '#fef2f2' : isWarn ? '#fff7ed' : '#fff'
+            const border = isErr ? '#fca5a5' : isWarn ? '#fed7aa' : '#e5e7eb'
+            const hint   = p == null ? null
+              : p < 0                                   ? 'Pression négative — eau n\'atteint pas ce point'
+              : p < 30000                               ? '< 0,3 bar — pression insuffisante'
+              : isTerminalGroupePuisage && p < 100000   ? '< 1 bar — insuffisant au point de puisage'
+              : !isTerminalGroupePuisage && p < 100000  ? '< 1 bar — risque d\'insuffisance aux puisages aval'
+              : '≥ 1 bar'
+            const hintCol = isErr ? '#dc2626' : isWarn ? '#f97316' : '#16a34a'
             return (
-              <div style={{ flex: 1, padding: '10px 12px', borderRadius: 8,
-                background: '#fff', border: '1px solid #e5e7eb' }}>
+              <div style={{ flex: 1, padding: '10px 12px', borderRadius: 8, background: bg, border: `1px solid ${border}`, textAlign: 'center' }}>
                 <div style={{ fontSize: 8.5, fontWeight: 700, color: '#6b7280',
                   textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
                   Pression disponible aval
                 </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
-                  <span style={{ fontSize: 22, fontWeight: 800, color: neg ? '#dc2626' : '#0f172a' }}>
-                    {pressionAval != null ? (pressionAval / 100000).toFixed(2) : '—'}
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 3, justifyContent: 'center' }}>
+                  <span style={{ fontSize: 22, fontWeight: 800, color: valCol }}>
+                    {p != null ? (p / 100000).toFixed(2) : '—'}
                   </span>
                   <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>bar</span>
                 </div>
-                {neg && (
-                  <div style={{ fontSize: 9, marginTop: 2, color: '#dc2626', fontWeight: 700 }}>
-                    Pression négative !
-                  </div>
+                {hint && (
+                  <div style={{ fontSize: 9, marginTop: 2, color: hintCol, fontWeight: 700, textAlign: 'center' }}>{hint}</div>
                 )}
               </div>
             )
@@ -221,20 +245,20 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, cumDp, post
             const over = pStatAval != null && pStatAval > 400000
             return (
               <div style={{ flex: 1, padding: '10px 12px', borderRadius: 8,
-                background: '#fff', border: '1px solid #e5e7eb' }}>
+                background: '#fff', border: '1px solid #e5e7eb', textAlign: 'center' }}>
                 <div style={{ fontSize: 8.5, fontWeight: 700, color: '#6b7280',
                   textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
                   Pression statique aval
                 </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 3, justifyContent: 'center' }}>
                   <span style={{ fontSize: 22, fontWeight: 800, color: over ? '#dc2626' : '#0f172a' }}>
                     {pStatAval != null ? (pStatAval / 100000).toFixed(2) : '—'}
                   </span>
                   <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>bar</span>
                 </div>
-                <div style={{ fontSize: 9, marginTop: 2,
+                <div style={{ fontSize: 9, marginTop: 2, textAlign: 'center',
                   color: over ? '#dc2626' : '#16a34a', fontWeight: over ? 700 : 600 }}>
-                  {over ? '> 4 bar — réducteur requis (DTU)' : '≤ 4 bar (DTU)'}
+                  {over ? '> 4 bar — réducteur de pression requis' : '≤ 4 bar'}
                 </div>
               </div>
             )
@@ -271,8 +295,8 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, cumDp, post
         )
       )}
 
-      {/* ── ΔP Total / ΔP pertes max ── */}
-      {(() => {
+      {/* ── Bouclage ECS : ΔP Total tronçon (carte principale) ── */}
+      {!isAlimEcs && (() => {
         const majoré = pdcResult.dpPompe != null
         const displayVal = majoré ? pdcResult.dpPompe! : pdcResult.dpTotal
         return (
@@ -280,7 +304,7 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, cumDp, post
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <div style={{ fontSize: 9, color: '#64748b', fontWeight: 700, textTransform: 'uppercase',
-                  letterSpacing: '0.06em', marginBottom: 4 }}>{isAlimEcs ? 'ΔP pertes max tronçon' : 'ΔP Total tronçon'}</div>
+                  letterSpacing: '0.06em', marginBottom: 4 }}>ΔP Total tronçon</div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 20, fontWeight: 800, color: '#0f172a' }}>
                     {unite === 'mmCE'
@@ -315,6 +339,41 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, cumDp, post
               {pdcParams?.equipementsActifs && pdcResult.dpEquip > 0 && (
                 <div style={{ flex: pdcResult.dpEquip, background: '#7c3aed', borderRadius: 3 }} />
               )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ── Séparateur "Détail" ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0' }}>
+        <div style={{ flex: 1, height: 1, background: '#e5e7eb' }} />
+        <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase',
+          letterSpacing: '0.06em' }}>Détail</span>
+        <div style={{ flex: 1, height: 1, background: '#e5e7eb' }} />
+      </div>
+
+      {/* ── Alimentation ECS : carte récap "Pertes du tronçon" (dans Détail) ── */}
+      {isAlimEcs && (() => {
+        const dpFriction = pdcResult.dpTotal
+        const dpStat     = dpStatic ?? 0
+        const total      = dpFriction + dpStat
+        const majoré     = pdcResult.dpPompe != null
+        return (
+          <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #2563eb', borderRadius: 8, overflow: 'hidden' }}>
+            {cardHeader('Pertes du tronçon', fmtPNode(total), '', '#0f172a', '#94a3b8')}
+            <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {/* Barre 4 couleurs */}
+              {total > 0 && (
+                <div style={{ height: 5, borderRadius: 3, overflow: 'hidden', display: 'flex', gap: 2, marginBottom: 4 }}>
+                  <div style={{ flex: pdcResult.dpReg, background: '#2563eb', borderRadius: 3 }} />
+                  <div style={{ flex: pdcResult.dpSing, background: '#c2562d', borderRadius: 3 }} />
+                  {pdcResult.dpEquip > 0 && <div style={{ flex: pdcResult.dpEquip, background: '#7c3aed', borderRadius: 3 }} />}
+                  {dpStat > 0 && <div style={{ flex: dpStat, background: '#94a3b8', borderRadius: 3 }} />}
+                </div>
+              )}
+              {row('ΔP frottement', fmtP(dpFriction))}
+              {row('ΔP hauteur statique', dpStatic != null ? fmtP(dpStat) : '—')}
+              {majoré && row(`ΔP frottement majoré (+${pdcParams?.coefPompe ?? 10} %)`, fmtP(pdcResult.dpPompe!))}
             </div>
           </div>
         )
@@ -434,37 +493,6 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, cumDp, post
         </div>
       </div>
 
-      {/* ── Hauteur statique (alimentation ECS uniquement) ── */}
-      {isAlimEcs && (dpStatic != null || deltaH != null) && (
-        <div style={{ border: '1px solid #d1fae5', borderLeft: '3px solid #059669', borderRadius: 8, overflow: 'hidden' }}>
-          <div style={{ padding: '8px 12px', background: '#ecfdf5',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: '#059669',
-              textTransform: 'uppercase', letterSpacing: '0.06em' }}>Hauteur statique</span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: '#059669',
-              fontFamily: 'ui-monospace, monospace' }}>
-              {dpStatic != null ? fmtPNode(dpStatic) : '—'}
-            </span>
-          </div>
-          <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: '#374151' }}>
-              <span style={{ color: '#6b7280' }}>Δh tronçon</span>
-              <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 600,
-                color: deltaH != null && deltaH !== 0 ? '#059669' : '#374151' }}>
-                {deltaH != null ? `${deltaH.toFixed(2)} m` : '—'}
-              </span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: '#374151' }}>
-              <span style={{ color: '#6b7280' }}>ΔP_stat = ρ × g × Δh</span>
-              <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 600,
-                color: dpStatic != null && dpStatic !== 0 ? '#059669' : '#374151' }}>
-                {dpStatic != null ? fmtPNode(dpStatic) : '—'}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── Équipements ── */}
       {pdcParams?.equipementsActifs && (
         <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #7c3aed', borderRadius: 8, overflow: 'hidden' }}>
@@ -489,17 +517,29 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, cumDp, post
         </div>
       )}
 
+      {/* ── Hauteur statique (alimentation ECS — après équipements) ── */}
+      {isAlimEcs && (dpStatic != null || deltaH != null) && (
+        <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #94a3b8', borderRadius: 8, overflow: 'hidden' }}>
+          {cardHeader('Hauteur statique', fmtPNode(dpStatic ?? 0), '—', '#64748b', '#94a3b8')}
+          <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {row('Δh  (cote aval − cote amont)', deltaH != null ? `${deltaH.toFixed(2)} m` : '—')}
+            {resultRow('ΔP_stat = ρ · g · Δh', dpStatic != null ? paStr(dpStatic) : '—', '#64748b')}
+          </div>
+        </div>
+      )}
+
       {/* ── Données techniques (bloc unifié) ── */}
       {techBox(<>
         <div>V = {pdcResult.V.toFixed(3)} m/s · di = {di_mm != null ? `${di_mm} mm` : '—'} · L = {L != null ? `${L.toFixed(1)} m` : '—'}</div>
         {(pdcResult.epsilon_used != null || pdcParams?.methodeReg === 'darcy-colebrook') && (
           <div>
             {pdcResult.epsilon_used != null && `ε = ${pdcResult.epsilon_used} m`}
-            {pdcResult.epsilon_used != null && pdcParams?.methodeReg === 'darcy-colebrook' ? ' · ' : ''}
-            {pdcParams?.methodeReg === 'darcy-colebrook' && `T = ${pdcResult.T_used.toFixed(1)} °C`}
+            {pdcResult.epsilon_used != null ? ' · ' : ''}
+            {`T = ${pdcResult.T_used.toFixed(1)} °C`}
           </div>
         )}
         {Q != null && <div>Q = {Q.toFixed(3)} m³/h</div>}
+        {isAlimEcs && <div>g = 9.81 m/s²</div>}
         {pdcParams?.equipementsActifs && (seg.equipment ?? []).length > 0 && (
           Array.from(new Map((seg.equipment ?? []).map((e: any) => [e.type, e])).values())
             .map((e: any) => {
@@ -763,7 +803,7 @@ function SegEquipPanel({ seg, set, pdcParams }) {
   )
 }
 
-function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, pdcParams, pdcResult, calcSubMode, pdcCumResults, pdcCumAlimResults, segToCol }) {
+function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, pdcParams, pdcResult, calcSubMode, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections }) {
   const [tab, setTab] = useState('params')
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
 
@@ -804,7 +844,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
       const ko = di_mm != null && di_min != null && di_mm < di_min
       return (
         <div style={{ flex: 1, padding: '8px 12px',
-          background: ok ? '#f0fdf4' : '#fff',
+          background: ko ? '#fef2f2' : ok ? '#f0fdf4' : '#fff',
           border: `1px solid ${ko ? '#fca5a5' : ok ? '#bbf7d0' : '#e5e7eb'}`,
           borderRadius: 6 }}>
           <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
@@ -817,7 +857,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
           </div>
           {di_mm != null && di_min != null && (
             <div style={{ fontSize: 9, marginTop: 2, color: ok ? '#16a34a' : '#dc2626', fontWeight: 600 }}>
-              {ok ? `✓ di=${di_mm} mm` : `✗ di=${di_mm} mm`}
+              {ok ? `✓ di=${di_mm} mm` : `✗ di=${di_mm} mm insuffisant`}
             </div>
           )}
           {di_mm == null && <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 2, fontStyle: 'italic' }}>Choisir un DN</div>}
@@ -888,185 +928,221 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
       <div className="rp-section">
         <h3 className="rp-title">Tronçon</h3>
 
-        {/* ── Identification ── */}
-        <SectionLabel>Identification</SectionLabel>
-        <SegNameField displayName={displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
-
-        <hr className="rp-divider" />
-        <CoteSection seg={seg} points={points} levels={levels} lineYs={lineYs} onUpdate={onUpdate} />
-        <hr className="rp-divider" />
-
-        {/* ── Canalisation ── */}
-        <SectionLabel>Canalisation</SectionLabel>
-
-        <Field label="Longueur" unit="m">
-          <input type="number" min="0"
-            value={seg.length_override ?? ''}
-            placeholder="saisie manuelle"
-            onChange={e => set('length_override', e.target.value === '' ? null : +e.target.value)} />
-        </Field>
-
-        <Field label="Matériau">
-          {enabledMats.length === 0
-            ? <p className="lp-hint">Aucun matériau activé.</p>
-            : <select value={seg.materialId || ''}
-                onChange={e => { set('materialId', e.target.value || null); set('dn', null) }}>
-                <option value="">— Choisir —</option>
-                {enabledMats.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
-          }
-        </Field>
-
-        {selMat && (<>
-          <Field label="DN">
-            <select value={seg.dn || ''}
-              onChange={e => { set('dn', e.target.value || null); set('di_override', null) }}>
-              <option value="">— Choisir —</option>
-              {selMat.dns.map(d => <option key={d.dn} value={d.dn}>{d.dn}</option>)}
-            </select>
-            {seg.dn && dnDef && selMat.minDi != null && dnDef.di < selMat.minDi && (
-              <Alert level="error"
-                msg={`di = ${dnDef.di} mm — diamètre intérieur inférieur au minimum prescrit par le NF DTU 60.11 (min. ${selMat.minDi} mm)`} />
-            )}
-          </Field>
-          {dnDef && (
-            <Field label="Di" unit="mm">
-              <input type="number"
-                value={seg.di_override ?? ''}
-                placeholder={`${dnDef.di} (par défaut)`}
-                onChange={e => set('di_override', e.target.value === '' ? null : +e.target.value)} />
-            </Field>
-          )}
-        </>)}
-
-        {/* ════ Bandeau Résultats ════ */}
-        <div style={{
-          margin: '14px -14px 12px', padding: '6px 14px',
-          background: 'linear-gradient(to right, #eef2ff, #f8fafc)',
-          borderTop: '1px solid #c7d2fe', borderBottom: '1px solid #e2e8f0',
-          fontSize: 10, fontWeight: 700, color: '#4338ca',
-          letterSpacing: '0.08em', textTransform: 'uppercase',
-        }}>
-          Résultats
+        {/* ── Onglets ── */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
+          {[['params', 'Paramètres'], ['results', 'Résultats']].map(([key, label]) => (
+            <button key={key} onClick={() => setTab(key)} style={{
+              flex: 1, padding: '5px 0', fontSize: 11, fontWeight: tab === key ? 700 : 500,
+              border: `1px solid ${tab === key ? '#6366f1' : '#e5e7eb'}`,
+              borderRadius: 5, cursor: 'pointer',
+              background: tab === key ? '#eef2ff' : '#f9fafb',
+              color: tab === key ? '#4338ca' : '#6b7280',
+            }}>{label}</button>
+          ))}
         </div>
 
+        {/* ── Paramètres ── */}
+        {tab === 'params' && (<>
+          <SectionLabel>Identification</SectionLabel>
+          <SegNameField displayName={displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
 
-        {ad ? (() => {
-          const isCollective = ad.method === 'collective'
-          const c = isCollective ? ad.collective : null
+          <hr className="rp-divider" />
+          <CoteSection seg={seg} points={points} levels={levels} lineYs={lineYs} onUpdate={onUpdate} flowDirections={flowDirections} />
+          <hr className="rp-divider" />
 
-          const methodReason = isCollective
-            ? ad.collectiveReason === 'N > 5'
-              ? `N = ${ad.N} > 5`
-              : `N = ${ad.N} ≤ 5 et X = ${sf(ad.X, 1)} > 15`
-            : `N = ${ad.N} ≤ 5 et X = ${sf(ad.X, 1)} ≤ 15`
+          <SectionLabel>Canalisation</SectionLabel>
 
-          const Cell = ({ label, value, unit }) => (
-            <div style={{ padding: '7px 5px', background: '#fff', textAlign: 'center' }}>
-              <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
-                textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 3 }}>{label}</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#111827', lineHeight: 1.2 }}>{value}</div>
-              {unit && <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 1 }}>{unit}</div>}
-            </div>
-          )
+          <Field label="Longueur" unit="m">
+            <input type="number" min="0"
+              value={seg.length_override ?? ''}
+              placeholder="saisie manuelle"
+              onChange={e => set('length_override', e.target.value === '' ? null : +e.target.value)} />
+          </Field>
 
-          return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <Field label="Matériau">
+            {enabledMats.length === 0
+              ? <p className="lp-hint">Aucun matériau activé.</p>
+              : <select value={seg.materialId || ''}
+                  onChange={e => { set('materialId', e.target.value || null); set('dn', null) }}>
+                  <option value="">— Choisir —</option>
+                  {enabledMats.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+            }
+          </Field>
 
-              {/* Méthode */}
-              <div style={{ fontSize: 10, color: '#3b82f6', fontWeight: 500 }}>
-                Méthode {isCollective ? 'collective' : 'individuelle'} — {methodReason}
-              </div>
-
-              {/* ── Collective ── */}
-              {isCollective && c && (<>
-                <DiMinCard di_min={c.di_min} di_mm={di_mm} label="Diamètre intérieur minimum requis" />
-
-                {c.N_for_y > 0 ? (
-                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr' }}>
-                      <Cell label="N Appareils en aval" value={String(c.N_for_y)} unit="" />
-                      <div style={{ background: '#e5e7eb' }} />
-                      <Cell label="Débit de base" value={sf(c.Qs_for_y, 3)} unit="l/s" />
-                    </div>
-                    <div style={{ height: 1, background: '#e5e7eb' }} />
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr' }}>
-                      <Cell label="Coeff. de simultanéité y" value={sf(c.y, 3)} unit="" />
-                      <div style={{ background: '#e5e7eb' }} />
-                      <Cell label="Débit probable" value={sf(c.Qp, 3)} unit="l/s" />
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ padding: '6px 10px', background: '#f9fafb',
-                    border: '1px solid #e5e7eb', borderRadius: 5, fontSize: 10, color: '#6b7280', fontStyle: 'italic' }}>
-                    Débit calculé intégralement depuis les WC robinets de chasse — aucun appareil soumis au coefficient y
-                  </div>
-                )}
-
-                {c.isEnseignement && c.N_sim > 0 && (
-                  <div style={{ padding: '6px 10px', background: '#eff6ff',
-                    border: '1px solid #bfdbfe', borderRadius: 5, fontSize: 10, color: '#1e40af' }}>
-                    <span style={{ fontWeight: 700 }}>Enseignement</span>
-                    {' — lavabos et douches en simultané : '}
-                    {c.N_sim} app. → {sf(c.Qs_sim, 3)} l/s (plein débit, y = 1)
-                  </div>
-                )}
-                {c.N_wcc > 0 && (
-                  <div style={{ padding: '6px 10px', background: '#fff7ed',
-                    border: '1px solid #fed7aa', borderRadius: 5, fontSize: 10, color: '#374151' }}>
-                    <span style={{ fontWeight: 700, color: '#c2410c' }}>WC robinets de chasse</span>
-                    {' — '}{c.N_wcc} installé{c.N_wcc > 1 ? 's' : ''}
-                    {' → '}{c.N_wcc_eff} simultané{c.N_wcc_eff > 1 ? 's' : ''}
-                    {' → '}{sf(c.Qp_wcc, 3)} l/s
-                  </div>
-                )}
-                {c.machineLingeLimited && (
-                  <div style={{ padding: '6px 10px', background: '#f0fdf4',
-                    border: '1px solid #bbf7d0', borderRadius: 5, fontSize: 10, color: '#166534' }}>
-                    <span style={{ fontWeight: 700 }}>Machine à laver le linge</span>
-                    {` — ${c.machineLinge_total} installées — 1 seule prise en compte dans le débit de base Qs (§3.2.2)`}
-                  </div>
-                )}
-              </>)}
-
-              {/* ── Individuelle ── */}
-              {!isCollective && (<>
-                <DiMinCard di_min={ad.di_min} di_mm={di_mm} label="Diamètre intérieur minimum requis" />
-                {di_mm != null && ad.di_min != null && di_mm < ad.di_min && (
-                  <Alert level="error"
-                    msg={`di = ${di_mm} mm insuffisant — minimum requis : ${sf(ad.di_min, 1)} mm`} />
-                )}
-                <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr' }}>
-                    <Cell label="N appareils en aval" value={String(ad.N)} unit="" />
-                    <div style={{ background: '#e5e7eb' }} />
-                    <Cell label="Coeff. d'usage X" value={sf(ad.X, 1)} unit="" />
-                  </div>
-                </div>
-                <div style={{ padding: '8px 10px', background: '#f9fafb',
-                  border: '1px solid #e5e7eb', borderRadius: 6 }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: '#6b7280',
-                    textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
-                    Abaque — Figure 1
-                  </div>
-                  <AbaqueChart X={ad.X} di_min={ad.di_min} />
-                </div>
-              </>)}
-
-              {ad.nonDTUIds.length > 0 && (
-                <div style={{ padding: '6px 10px', background: '#fff7ed',
-                  border: '1px solid #fed7aa', borderRadius: 5, fontSize: 10, color: '#374151' }}>
-                  <span style={{ fontWeight: 700, color: '#c2410c' }}>Appareils hors tableau :</span>
-                  {' '}dimensionnement sur données fabricant (débit, di min, pression min).
-                </div>
+          {selMat && (<>
+            <Field label="DN">
+              <select value={seg.dn || ''}
+                onChange={e => { set('dn', e.target.value || null); set('di_override', null) }}>
+                <option value="">— Choisir —</option>
+                {selMat.dns.map(d => <option key={d.dn} value={d.dn}>{d.dn}</option>)}
+              </select>
+              {seg.dn && dnDef && selMat.minDi != null && dnDef.di < selMat.minDi && (
+                <Alert level="error"
+                  msg={`di = ${dnDef.di} mm — diamètre intérieur inférieur au minimum prescrit par le NF DTU 60.11 (min. ${selMat.minDi} mm)`} />
               )}
+            </Field>
+            {dnDef && (
+              <Field label="Di" unit="mm">
+                <input type="number"
+                  value={seg.di_override ?? ''}
+                  placeholder={`${dnDef.di} (par défaut)`}
+                  onChange={e => set('di_override', e.target.value === '' ? null : +e.target.value)} />
+              </Field>
+            )}
+          </>)}
+        </>)}
 
-            </div>
-          )
-        })() : (
-          <p className="lp-hint" style={{ padding: '4px 0' }}>
-            Aucun groupe de puisage en aval, ou aucun appareil activé.
-          </p>
+        {/* ── Résultats ── */}
+        {tab === 'results' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {ad ? (() => {
+              const isCollective = ad.method === 'collective'
+              const c = isCollective ? ad.collective : null
+
+              const methodReason = isCollective
+                ? ad.collectiveReason === 'N > 5'
+                  ? `N = ${ad.N} > 5`
+                  : `N = ${ad.N} ≤ 5 et X = ${sf(ad.X, 1)} > 15`
+                : `N = ${ad.N} ≤ 5 et X = ${sf(ad.X, 1)} ≤ 15`
+
+              const Cell = ({ label, value, unit }) => (
+                <div style={{ padding: '7px 5px', background: '#fff', textAlign: 'center' }}>
+                  <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
+                    textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 3 }}>{label}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#111827', lineHeight: 1.2 }}>{value}</div>
+                  {unit && <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 1 }}>{unit}</div>}
+                </div>
+              )
+
+              const velocity = (isCollective && c?.Qp != null && di_mm != null && di_mm > 0)
+                ? (c.Qp * 1e-3) / (Math.PI * Math.pow(di_mm / 2000, 2))
+                : null
+              const velErr  = velocity != null && velocity > 2.0
+              const velWarn = velocity != null && velocity > 1.5 && !velErr
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+                  <div style={{ fontSize: 10, color: '#3b82f6', fontWeight: 500 }}>
+                    Méthode {isCollective ? 'collective' : 'individuelle'} — {methodReason}
+                  </div>
+
+                  {/* ── Collective ── */}
+                  {isCollective && c && (<>
+                    {/* Vitesse */}
+                    {velocity != null && (
+                      <div style={{ padding: '8px 12px', borderRadius: 6,
+                        background: velErr ? '#fef2f2' : velWarn ? '#fff7ed' : '#f0fdf4',
+                        border: `1px solid ${velErr ? '#fca5a5' : velWarn ? '#fed7aa' : '#bbf7d0'}` }}>
+                        <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
+                          textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Vitesse</div>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                          <span style={{ fontSize: 18, fontWeight: 700,
+                            color: velErr ? '#dc2626' : velWarn ? '#f97316' : '#111827' }}>
+                            {velocity.toFixed(2)}
+                          </span>
+                          <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
+                        </div>
+                        <div style={{ fontSize: 9, marginTop: 2, fontWeight: 600,
+                          color: velErr ? '#dc2626' : velWarn ? '#f97316' : '#16a34a' }}>
+                          {velErr
+                            ? '> 2,0 m/s — risque d\'érosion et bruit'
+                            : velWarn
+                            ? '> 1,5 m/s — dépasse la vitesse recommandée'
+                            : '≤ 1,5 m/s — vitesse conforme'}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Diamètre intérieur minimum requis */}
+                    <DiMinCard di_min={c.di_min} di_mm={di_mm} label="Diamètre intérieur min. requis" />
+
+                    {c.N_for_y > 0 ? (
+                      <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr' }}>
+                          <Cell label="N appareils en aval" value={String(c.N_for_y)} unit="" />
+                          <div style={{ background: '#e5e7eb' }} />
+                          <Cell label="Débit de base" value={sf(c.Qs_for_y, 3)} unit="l/s" />
+                        </div>
+                        <div style={{ height: 1, background: '#e5e7eb' }} />
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr' }}>
+                          <Cell label="Coeff. de simultanéité y" value={sf(c.y, 3)} unit="" />
+                          <div style={{ background: '#e5e7eb' }} />
+                          <Cell label="Débit probable" value={sf(c.Qp, 3)} unit="l/s" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ padding: '6px 10px', background: '#f9fafb',
+                        border: '1px solid #e5e7eb', borderRadius: 5, fontSize: 10, color: '#6b7280', fontStyle: 'italic' }}>
+                        Débit calculé intégralement depuis les WC robinets de chasse — aucun appareil soumis au coefficient y
+                      </div>
+                    )}
+
+                    {c.isEnseignement && c.N_sim > 0 && (
+                      <div style={{ padding: '6px 10px', background: '#eff6ff',
+                        border: '1px solid #bfdbfe', borderRadius: 5, fontSize: 10, color: '#1e40af' }}>
+                        <span style={{ fontWeight: 700 }}>Enseignement</span>
+                        {' — lavabos et douches en simultané : '}
+                        {c.N_sim} app. → {sf(c.Qs_sim, 3)} l/s (plein débit, y = 1)
+                      </div>
+                    )}
+                    {c.N_wcc > 0 && (
+                      <div style={{ padding: '6px 10px', background: '#fff7ed',
+                        border: '1px solid #fed7aa', borderRadius: 5, fontSize: 10, color: '#374151' }}>
+                        <span style={{ fontWeight: 700, color: '#c2410c' }}>WC robinets de chasse</span>
+                        {' — '}{c.N_wcc} installé{c.N_wcc > 1 ? 's' : ''}
+                        {' → '}{c.N_wcc_eff} simultané{c.N_wcc_eff > 1 ? 's' : ''}
+                        {' → '}{sf(c.Qp_wcc, 3)} l/s
+                      </div>
+                    )}
+                    {c.machineLingeLimited && (
+                      <div style={{ padding: '6px 10px', background: '#f0fdf4',
+                        border: '1px solid #bbf7d0', borderRadius: 5, fontSize: 10, color: '#166534' }}>
+                        <span style={{ fontWeight: 700 }}>Machine à laver le linge</span>
+                        {` — ${c.machineLinge_total} installées — 1 seule prise en compte dans le débit de base Qs (§3.2.2)`}
+                      </div>
+                    )}
+                  </>)}
+
+                  {/* ── Individuelle ── */}
+                  {!isCollective && (<>
+                    <DiMinCard di_min={ad.di_min} di_mm={di_mm} label="Diamètre intérieur minimum requis" />
+                    <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr' }}>
+                        <Cell label="N appareils en aval" value={String(ad.N)} unit="" />
+                        <div style={{ background: '#e5e7eb' }} />
+                        <Cell label="Coeff. d'usage X" value={sf(ad.X, 1)} unit="" />
+                      </div>
+                    </div>
+                    <div style={{ padding: '8px 10px', background: '#f9fafb',
+                      border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: '#6b7280',
+                        textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                        Abaque — Figure 1
+                      </div>
+                      <AbaqueChart X={ad.X} di_min={ad.di_min} />
+                    </div>
+                  </>)}
+
+                  {ad.nonDTUIds.length > 0 && (
+                    <div style={{ padding: '6px 10px', background: '#fff7ed',
+                      border: '1px solid #fed7aa', borderRadius: 5, fontSize: 10, color: '#374151' }}>
+                      <span style={{ fontWeight: 700, color: '#c2410c' }}>Appareils hors tableau :</span>
+                      {' '}dimensionnement sur données fabricant (débit, di min, pression min).
+                    </div>
+                  )}
+
+                </div>
+              )
+            })() : (
+              <p className="lp-hint" style={{ padding: '4px 0' }}>
+                {seg.type === 'retour'
+                  ? 'Tronçon retour — le dimensionnement s\'applique uniquement aux tronçons aller en Alimentation ECS.'
+                  : 'Aucun groupe de puisage en aval, ou aucun appareil activé.'}
+              </p>
+            )}
+          </div>
         )}
       </div>
     )
@@ -1097,22 +1173,32 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
       {tab === 'results' && (
         <div>
           {calcSubMode === 'pdc' ? (
-            <PdcSegResults pdcResult={pdcResult} pdcParams={pdcParams} seg={seg} dnDef={dnDef} flowData={flowData}
-              cumDp={activeCalcId === 'alimentation-ecs'
-                ? pdcCumAlimResults?.segCumDp?.get(seg.id)
-                : pdcCumResults?.segCumDp.get(seg.id)}
-              postJunction={activeCalcId === 'alimentation-ecs' ? false : (pdcCumResults?.segPostJunction.get(seg.id) ?? false)}
-              segCol={segToCol?.get(seg.id) ?? null}
-              isOnCriticalPath={activeCalcId === 'alimentation-ecs'
-                ? (pdcCumAlimResults?.criticalSegIds?.has(seg.id) ?? false)
-                : (pdcCumResults?.criticalSegIds?.has(seg.id) ?? false)}
-              criticalCol={activeCalcId === 'alimentation-ecs' ? null : (segToCol?.get(pdcCumResults?.criticalLeafSegId ?? '') ?? null)}
-              isAlimEcs={activeCalcId === 'alimentation-ecs'}
-              deltaH={pdcCumAlimResults?.segDeltaH?.get(seg.id) ?? null}
-              dpStatic={pdcCumAlimResults?.segDpStatic?.get(seg.id) ?? null}
-              pressionAval={pdcCumAlimResults?.segPressionAval?.get(seg.id) ?? null}
-              pStatAval={pdcCumAlimResults?.segPStatAval?.get(seg.id) ?? null}
-            />
+            (() => {
+              const isAlimEcs = activeCalcId === 'alimentation-ecs'
+              const toId = flowDirections?.get(seg.id)?.toId
+              const isTerminal = isAlimEcs && toId != null
+                && points.find(p => p.id === toId)?.type === 'groupe'
+              return (
+                <PdcSegResults pdcResult={pdcResult} pdcParams={pdcParams} seg={seg} dnDef={dnDef} flowData={flowData}
+                  alimentationData={isAlimEcs ? alimentationData : null}
+                  cumDp={isAlimEcs
+                    ? pdcCumAlimResults?.segCumDp?.get(seg.id)
+                    : pdcCumResults?.segCumDp.get(seg.id)}
+                  postJunction={isAlimEcs ? false : (pdcCumResults?.segPostJunction.get(seg.id) ?? false)}
+                  segCol={segToCol?.get(seg.id) ?? null}
+                  isOnCriticalPath={isAlimEcs
+                    ? (pdcCumAlimResults?.criticalSegIds?.has(seg.id) ?? false)
+                    : (pdcCumResults?.criticalSegIds?.has(seg.id) ?? false)}
+                  criticalCol={isAlimEcs ? null : (segToCol?.get(pdcCumResults?.criticalLeafSegId ?? '') ?? null)}
+                  isAlimEcs={isAlimEcs}
+                  deltaH={pdcCumAlimResults?.segDeltaH?.get(seg.id) ?? null}
+                  dpStatic={pdcCumAlimResults?.segDpStatic?.get(seg.id) ?? null}
+                  pressionAval={pdcCumAlimResults?.segPressionAval?.get(seg.id) ?? null}
+                  pStatAval={pdcCumAlimResults?.segPStatAval?.get(seg.id) ?? null}
+                  isTerminalGroupePuisage={isTerminal}
+                />
+              )
+            })()
           ) : thermalData ? (() => {
             const { Q, deltaT, T_from, T_to, T_amb } = thermalData
             const velocity = flowData?.velocity
@@ -1325,7 +1411,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
           )}
 
           <hr className="rp-divider" />
-          {activeCalcId === 'alimentation-ecs' && <CoteSection seg={seg} points={points} levels={levels} lineYs={lineYs} onUpdate={onUpdate} />}
+          {activeCalcId === 'alimentation-ecs' && <CoteSection seg={seg} points={points} levels={levels} lineYs={lineYs} onUpdate={onUpdate} flowDirections={flowDirections} />}
           <hr className="rp-divider" />
 
           {activeCalcId !== 'alimentation-ecs' && <>
@@ -1735,7 +1821,7 @@ function TempBadge({ temp, T_depart }) {
   )
 }
 
-function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, points = [], calcSubMode, pdcCumResults, pdcParams, levels = [], lineYs = [] }) {
+function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [] }) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
   const T_depart = globalParams?.T_depart ?? null
   const [showDims, setShowDims] = useState(false)
@@ -1928,6 +2014,76 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
           })}
         </>)}
         <TempBadge temp={activeCalcId === 'alimentation-ecs' ? null : nodeTemp} T_depart={T_depart} />
+
+        {activeCalcId === 'alimentation-ecs' && calcSubMode === 'pdc' && (() => {
+          const segId = inSegs[0]?.id
+          if (!segId) return null
+          const p      = pdcCumAlimResults?.segPressionAval?.get(segId) ?? null
+          const pStat  = pdcCumAlimResults?.segPStatAval?.get(segId) ?? null
+          if (p == null && pStat == null) return null
+
+          const isErrP  = p != null && (p < 30000 || p < 100000)
+          const isWarnP = false
+          const valColP = isErrP ? '#dc2626' : '#0f172a'
+          const bgP     = isErrP ? '#fef2f2' : '#fff'
+          const borderP = isErrP ? '#fca5a5' : '#e5e7eb'
+          const hintP   = p == null ? null
+            : p < 0       ? 'Pression négative — eau n\'atteint pas ce point'
+            : p < 30000   ? '< 0,3 bar — pression insuffisante'
+            : p < 100000  ? '< 1 bar — insuffisant au point de puisage'
+            : '≥ 1 bar'
+          const hintColP = isErrP ? '#dc2626' : '#16a34a'
+
+          const overStat = pStat != null && pStat > 400000
+          const bgS      = overStat ? '#fef2f2' : '#fff'
+          const borderS  = overStat ? '#fca5a5' : '#e5e7eb'
+
+          return (
+            <>
+              <hr className="rp-divider" />
+              <SectionLabel>Pression au point de puisage</SectionLabel>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {p != null && (
+                  <div style={{ flex: 1, padding: '10px 12px', borderRadius: 8, background: bgP,
+                    border: `1px solid ${borderP}`, textAlign: 'center' }}>
+                    <div style={{ fontSize: 8.5, fontWeight: 700, color: '#6b7280',
+                      textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                      Pression disponible
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 3, justifyContent: 'center' }}>
+                      <span style={{ fontSize: 22, fontWeight: 800, color: valColP }}>
+                        {(p / 100000).toFixed(2)}
+                      </span>
+                      <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>bar</span>
+                    </div>
+                    {hintP && (
+                      <div style={{ fontSize: 9, marginTop: 2, color: hintColP, fontWeight: 700 }}>{hintP}</div>
+                    )}
+                  </div>
+                )}
+                {pStat != null && (
+                  <div style={{ flex: 1, padding: '10px 12px', borderRadius: 8, background: bgS,
+                    border: `1px solid ${borderS}`, textAlign: 'center' }}>
+                    <div style={{ fontSize: 8.5, fontWeight: 700, color: '#6b7280',
+                      textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                      Pression statique
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 3, justifyContent: 'center' }}>
+                      <span style={{ fontSize: 22, fontWeight: 800, color: overStat ? '#dc2626' : '#0f172a' }}>
+                        {(pStat / 100000).toFixed(2)}
+                      </span>
+                      <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>bar</span>
+                    </div>
+                    <div style={{ fontSize: 9, marginTop: 2, fontWeight: 700,
+                      color: overStat ? '#dc2626' : '#16a34a' }}>
+                      {overStat ? '> 4 bar — réducteur de pression requis' : '≤ 4 bar'}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )
+        })()}
 
       </div>
     )
@@ -2138,8 +2294,79 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
         </>
       )}
 
+      {/* Pression au nœud — alimentation ECS PDC */}
+      {activeCalcId === 'alimentation-ecs' && calcSubMode === 'pdc' && (() => {
+        const segId = inSegs[0]?.id
+        if (!segId) return null
+        const p     = pdcCumAlimResults?.segPressionAval?.get(segId) ?? null
+        const pStat = pdcCumAlimResults?.segPStatAval?.get(segId) ?? null
+        if (p == null && pStat == null) return null
+
+        const isErrP  = p != null && p < 30000
+        const isWarnP = p != null && !isErrP && p < 100000
+        const valColP = isErrP ? '#dc2626' : isWarnP ? '#f97316' : '#0f172a'
+        const bgP     = isErrP ? '#fef2f2' : isWarnP ? '#fff7ed' : '#fff'
+        const borderP = isErrP ? '#fca5a5' : isWarnP ? '#fed7aa' : '#e5e7eb'
+        const hintP   = p == null ? null
+          : p < 0      ? 'Pression négative — eau n\'atteint pas ce point'
+          : p < 30000  ? '< 0,3 bar — pression insuffisante'
+          : p < 100000 ? '< 1 bar — risque d\'insuffisance aux puisages aval'
+          : '≥ 1 bar'
+        const hintColP = isErrP ? '#dc2626' : isWarnP ? '#f97316' : '#16a34a'
+
+        const overStat = pStat != null && pStat > 400000
+        const bgS      = overStat ? '#fef2f2' : '#fff'
+        const borderS  = overStat ? '#fca5a5' : '#e5e7eb'
+
+        return (
+          <>
+            <hr className="rp-divider" />
+            <SectionLabel>Pression au nœud</SectionLabel>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {p != null && (
+                <div style={{ flex: 1, padding: '10px 12px', borderRadius: 8, background: bgP,
+                  border: `1px solid ${borderP}`, textAlign: 'center' }}>
+                  <div style={{ fontSize: 8.5, fontWeight: 700, color: '#6b7280',
+                    textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                    Pression disponible
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 3, justifyContent: 'center' }}>
+                    <span style={{ fontSize: 22, fontWeight: 800, color: valColP }}>
+                      {(p / 100000).toFixed(2)}
+                    </span>
+                    <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>bar</span>
+                  </div>
+                  {hintP && (
+                    <div style={{ fontSize: 9, marginTop: 2, color: hintColP, fontWeight: 700 }}>{hintP}</div>
+                  )}
+                </div>
+              )}
+              {pStat != null && (
+                <div style={{ flex: 1, padding: '10px 12px', borderRadius: 8, background: bgS,
+                  border: `1px solid ${borderS}`, textAlign: 'center' }}>
+                  <div style={{ fontSize: 8.5, fontWeight: 700, color: '#6b7280',
+                    textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                    Pression statique
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 3, justifyContent: 'center' }}>
+                    <span style={{ fontSize: 22, fontWeight: 800, color: overStat ? '#dc2626' : '#0f172a' }}>
+                      {(pStat / 100000).toFixed(2)}
+                    </span>
+                    <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>bar</span>
+                  </div>
+                  <div style={{ fontSize: 9, marginTop: 2, fontWeight: 700,
+                    color: overStat ? '#dc2626' : '#16a34a' }}>
+                    {overStat ? '> 4 bar — réducteur de pression requis' : '≤ 4 bar'}
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )
+      })()}
+
       {/* Tronçons arrivants */}
-      {inSegs.length > 0 && (
+      {inSegs.length > 0 && activeCalcId !== 'alimentation-ecs' && (
         <div style={{ marginTop: 8 }}>
           {inSegs.length > 1 && (
             <SectionLabel>Tronçons arrivants ({inSegs.length})</SectionLabel>
@@ -2206,7 +2433,7 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
         </div>
       )}
 
-      {inSegs.length === 0 && nodeTemp == null && calcSubMode !== 'pdc' && (
+      {inSegs.length === 0 && nodeTemp == null && calcSubMode !== 'pdc' && activeCalcId !== 'alimentation-ecs' && (
         <p className="lp-hint">Aucune propriété modifiable.</p>
       )}
     </div>
@@ -2417,6 +2644,7 @@ export default function RightPanel({
       pdcCumResults={pdcCumResults}
       pdcCumAlimResults={pdcCumAlimResults}
       segToCol={segToCol}
+      flowDirections={flowDirections}
     />
   )
   if (pt) {
@@ -2432,15 +2660,17 @@ export default function RightPanel({
     return (
       <PointPanel
         pt={pt} onUpdate={onUpdate}
-        nodeTemp={calcSubMode === 'pdc' ? null : thermalResults?.nodeTemps.get(pt.id)}
+        nodeTemp={calcSubMode === 'pdc' || activeCalcId === 'alimentation-ecs' ? null : thermalResults?.nodeTemps.get(pt.id)}
         inSegs={inSegs}
         globalParams={globalParams}
         activeCalcId={activeCalcId}
         alimentationParams={alimentationParams}
+        alimentationResults={alimentationResults}
         points={points}
         calcSubMode={calcSubMode}
         pdcCumResults={pdcCumResults}
         pdcParams={pdcParams}
+        pdcCumAlimResults={pdcCumAlimResults}
         levels={levels}
         lineYs={lineYs}
       />

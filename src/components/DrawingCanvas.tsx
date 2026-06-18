@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import { getDisplayName } from '../utils/naming'
+import { getDisplayName, getNodeLocation } from '../utils/naming'
 import { sf } from '../utils/fmt'
 
 const PT_R       = 4
@@ -93,8 +93,19 @@ function positionFromT(vertices, t) {
 }
 
 // Auto-name a valve from its segment's column — VE [colName] n°1, VE [colName] n°2, …
-function nameValve(segId, segToCol, existingValves) {
-  const colName = segToCol?.get(segId) ?? '?'
+function nameValve(segId, segToCol, existingValves, segments?, points?, levels?, lineYs?, columns?, columnXs?, chaufferie?) {
+  const col = segToCol?.get(segId)
+  let colName: string
+  if (col != null) {
+    colName = col
+  } else {
+    const seg = segments?.find(s => s.id === segId)
+    const ptId = seg?.startPointId
+    const pt   = ptId ? points?.find(p => p.id === ptId) : null
+    colName = pt
+      ? getNodeLocation(pt, levels ?? [], lineYs ?? [], columns ?? [], columnXs ?? [], chaufferie, null, points ?? [])
+      : 'ECS'
+  }
   const base    = `VE ${colName}`
   const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const re      = new RegExp(`^${escaped} n°(\\d+)$`)
@@ -1358,7 +1369,7 @@ if (drawing) commitDrawing()
         if (r && r.dist < bestDist) { bestDist = r.dist; best = { ...r, segId: seg.id } }
       }
       if (best && bestDist < 18) {
-        const name = nameValve(best.segId, segToCol, valves ?? [])
+        const name = nameValve(best.segId, segToCol, valves ?? [], segments, points, levels, lineYs, columns, columnXs, chaufferie)
         onValvesChange(vs => [...vs, { id: uid('vv'), segmentId: best.segId, t: best.t, name }])
       }
       return

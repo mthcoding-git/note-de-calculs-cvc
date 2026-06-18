@@ -176,6 +176,8 @@ export interface CumDpAlimResult {
   segCumDpFriction: Map<string, number>  // cumulatif frottement seul en Pa
   segDpStatic:      Map<string, number>  // ΔP hauteur du tronçon en Pa
   segDeltaH:        Map<string, number>  // Δh du tronçon en m
+  segCoteAmont:     Map<string, number>  // cote nœud amont (m)
+  segCoteAval:      Map<string, number>  // cote nœud aval (m)
   segPressionAval:  Map<string, number>  // pression disponible aval en Pa
   segPStatAval:     Map<string, number>  // pression statique aval en Pa (DTU ≤ 4 bar)
   criticalDp:       number | null
@@ -208,6 +210,8 @@ export function computeCumDpAlim(
   const segCumDpFriction   = new Map<string, number>()
   const segDpStatic        = new Map<string, number>()
   const segDeltaH          = new Map<string, number>()
+  const segCoteAmont       = new Map<string, number>()
+  const segCoteAval        = new Map<string, number>()
   const segPressionAval    = new Map<string, number>()
   const segPStatAval       = new Map<string, number>()
 
@@ -241,6 +245,8 @@ export function computeCumDpAlim(
       segCumDpFriction.set(seg.id, cumDpFrictionAfter)
       segDpStatic.set(seg.id, dpStatic)
       segDeltaH.set(seg.id, deltaH)
+      segCoteAmont.set(seg.id, nodeCotes.get(nodeId) ?? 0)
+      segCoteAval.set(seg.id, coteAval)
       segPressionAval.set(seg.id, presAval)
       segPStatAval.set(seg.id, pStatAval)
 
@@ -294,5 +300,5 @@ export function computeCumDpAlim(
 
   const criticalDp = minPression !== null ? pressionSource - minPression : null
 
-  return { segCumDp, segCumDpFriction, segDpStatic, segDeltaH, segPressionAval, segPStatAval, criticalDp, criticalSegIds }
+  return { segCumDp, segCumDpFriction, segDpStatic, segDeltaH, segCoteAmont, segCoteAval, segPressionAval, segPStatAval, criticalDp, criticalSegIds }
 }

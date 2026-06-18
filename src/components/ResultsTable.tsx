@@ -323,8 +323,8 @@ function SegRowAlim({ row, segments, points, materials, insulations,
 
 function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, columnXs,
                      chaufferie, networkFlows, alimentationResults, pdcResult, pdcParams, cumDp, postJunction, pressionAval,
-                     dpStatic, deltaH, pStatAval,
-                     needsSingTot, needsEquipTot,
+                     dpStatic, deltaH, pStatAval, coteAmont, coteAval,
+                     needsSingTot, needsEquipTot, isTerminalGroupePuisage = false,
                      selectedIds, onSelectIds, rowRef, roleMap, activeCalcId }) {
   const { seg, depth, segType } = row
 
@@ -488,20 +488,33 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
           <td className="rt-cell rt-result rt-group-sep" {...rs({ fontWeight: 600 })}>{pdcResult?.dpTotal != null ? fmtDp(pdcResult.dpTotal) : '—'}</td>
           {hasCoef && <td className="rt-cell rt-result" {...rs({ fontWeight: 700 })}>{pdcResult?.dpPompe != null ? fmtDp(pdcResult.dpPompe) : '—'}</td>}
           {isAlimEcs ? (<>
-            {/* ── Hauteur (rowspan) ── */}
-            <td className="rt-cell rt-result rt-group-sep" {...rs({ color: deltaH != null && deltaH !== 0 ? '#0369a1' : undefined })}>
+            {/* ── Hauteur statique (rowspan) ── */}
+            <td className="rt-cell rt-result rt-group-sep" {...rs()}>
+              {coteAmont != null ? fmt(coteAmont, 2) : '—'}
+            </td>
+            <td className="rt-cell rt-result" {...rs()}>
+              {coteAval != null ? fmt(coteAval, 2) : '—'}
+            </td>
+            <td className="rt-cell rt-result" {...rs()}>
               {deltaH != null ? fmt(deltaH, 2) : '—'}
             </td>
-            <td className="rt-cell rt-result" {...rs({ color: dpStatic != null && dpStatic !== 0 ? '#0369a1' : undefined })}>
+            <td className="rt-cell rt-result" {...rs()}>
               {dpStatic != null ? fmtDp(dpStatic) : '—'}
             </td>
-            {/* ── Nœud aval (rowspan) ── */}
-            <td className="rt-cell rt-result rt-group-sep" {...rs({
-              fontWeight: pressionAval != null ? 600 : undefined,
-              color: pressionAval != null && pressionAval < 0 ? '#dc2626' : undefined,
-            })}>
-              {pressionAval != null ? `${(pressionAval / 100000).toFixed(2)}` : '—'}
-            </td>
+            {/* ── Pression aval (rowspan) ── */}
+            {(() => {
+              const p = pressionAval
+              const isErr  = p != null && (p < 30000 || (isTerminalGroupePuisage && p < 100000))
+              const isWarn = p != null && !isErr && p < 100000
+              return (
+                <td className="rt-cell rt-result rt-group-sep" {...rs({
+                  fontWeight: p != null ? 600 : undefined,
+                  color: isErr ? '#dc2626' : isWarn ? '#f97316' : undefined,
+                })}>
+                  {p != null ? `${(p / 100000).toFixed(2)}` : '—'}
+                </td>
+              )
+            })()}
             <td className="rt-cell rt-result" {...rs({
               fontWeight: pStatAval != null ? 600 : undefined,
               color: pStatAval != null && pStatAval > 400000 ? '#dc2626' : undefined,
@@ -628,7 +641,7 @@ export default function ResultsTable({
     const singCols  = isAccessoires ? (4 + (needsSingTot ? 1 : 0)) : 1
     const equipCols = hasEquip ? (3 + (needsEquipTot ? 1 : 0)) : 0
     const totalCols = isAlimEcsPdc
-      ? 5 + (hasCoef ? 1 : 0)   // ΔP pertes + majoré + Δh + ΔP hauteur + Pression dispo + Pression stat
+      ? 7 + (hasCoef ? 1 : 0)   // ΔP frottement + majoré + Cote amont + Cote aval + Δh + ΔP stat + P dispo + P stat
       : 3 + (hasCoef ? 1 : 0)   // ΔP total + majoré + ΔP depuis prod. ECS
     const nPdcCols  = fixedCols + singCols + equipCols + totalCols
 
@@ -650,8 +663,8 @@ export default function ResultsTable({
                 <th colSpan={isAccessoires ? (4 + (needsSingTot ? 1 : 0)) : 1} className="rt-thg rt-thg-result">Pertes singulières</th>
                 {hasEquip && <th colSpan={3 + (needsEquipTot ? 1 : 0)} className="rt-thg rt-thg-result">Équipements</th>}
                 {isAlimEcsPdc ? (<>
-                  <th colSpan={1 + (hasCoef ? 1 : 0)} className="rt-thg rt-thg-result">Pertes de charge</th>
-                  <th colSpan={2} className="rt-thg rt-thg-result">Hauteur statique</th>
+                  <th colSpan={1 + (hasCoef ? 1 : 0)} className="rt-thg rt-thg-result">Total frottement</th>
+                  <th colSpan={4} className="rt-thg rt-thg-result">Hauteur statique</th>
                   <th colSpan={2} className="rt-thg rt-thg-result">Pression aval</th>
                 </>) : (
                   <th colSpan={3 + (hasCoef ? 1 : 0)} className="rt-thg rt-thg-result">Total</th>
@@ -693,13 +706,15 @@ export default function ResultsTable({
                   <th className="rt-th rt-th-result">ΔP ({dpUnit})</th>
                   {needsEquipTot && <th className="rt-th rt-th-result">ΔP équip tot ({dpUnit})</th>}
                 </>}
-                <th className="rt-th rt-th-result rt-group-sep">{isAlimEcsPdc ? `ΔP pertes max (${dpUnit})` : `ΔP total (${dpUnit})`}</th>
+                <th className="rt-th rt-th-result rt-group-sep">{isAlimEcsPdc ? `ΔP frottement (${dpUnit})` : `ΔP total (${dpUnit})`}</th>
                 {hasCoef && <th className="rt-th rt-th-result">ΔP majoré ({dpUnit})</th>}
                 {isAlimEcsPdc ? (<>
-                  <th className="rt-th rt-th-result rt-group-sep">Δh tronçon (m)</th>
-                  <th className="rt-th rt-th-result">ΔP hauteur statique ({dpUnit})</th>
-                  <th className="rt-th rt-th-result rt-group-sep">Pression disponible aval (bar)</th>
-                  <th className="rt-th rt-th-result">Pression statique aval (bar)</th>
+                  <th className="rt-th rt-th-result rt-group-sep">Cote amont (m)</th>
+                  <th className="rt-th rt-th-result">Cote aval (m)</th>
+                  <th className="rt-th rt-th-result">Δh (m)</th>
+                  <th className="rt-th rt-th-result">ΔP stat. ({dpUnit})</th>
+                  <th className="rt-th rt-th-result rt-group-sep">P disponible (bar)</th>
+                  <th className="rt-th rt-th-result">P statique (bar)</th>
                 </>) : (
                   <th className="rt-th rt-th-result">ΔP depuis prod. ECS ({dpUnit})</th>
                 )}
@@ -756,15 +771,26 @@ export default function ResultsTable({
                 const deltaH       = isAlimEcsPdc
                   ? (pdcCumAlimResults?.segDeltaH?.get(row.seg.id) ?? null)
                   : undefined
+                const coteAmont    = isAlimEcsPdc
+                  ? (pdcCumAlimResults?.segCoteAmont?.get(row.seg.id) ?? null)
+                  : undefined
+                const coteAval     = isAlimEcsPdc
+                  ? (pdcCumAlimResults?.segCoteAval?.get(row.seg.id) ?? null)
+                  : undefined
                 const pStatAval    = isAlimEcsPdc
                   ? (pdcCumAlimResults?.segPStatAval?.get(row.seg.id) ?? null)
                   : undefined
                 const postJunc     = isAlimEcsPdc ? false : (pdcCumResults?.segPostJunction?.get(row.seg.id) ?? false)
+                const toId         = flowDirections?.get(row.seg.id)?.toId
+                const isTerminalGP = isAlimEcsPdc
+                  ? (toId != null && points.find(p => p.id === toId)?.type === 'groupe')
+                  : false
                 const isSelected   = selectedIds?.includes(row.seg.id)
                 return (
                   <SegRowPdc key={row.seg.id} row={row}
                     pdcResult={pdcResult} cumDp={cumDp} postJunction={postJunc} pressionAval={pressionAval}
-                    dpStatic={dpStatic} deltaH={deltaH} pStatAval={pStatAval}
+                    dpStatic={dpStatic} deltaH={deltaH} coteAmont={coteAmont} coteAval={coteAval} pStatAval={pStatAval}
+                    isTerminalGroupePuisage={isTerminalGP}
                     selectedIds={selectedIds}
                     rowRef={isSelected ? selectedRowRef : null}
                     {...sharedPdc} />

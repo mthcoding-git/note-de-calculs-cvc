@@ -636,6 +636,34 @@ export default function App() {
     const prodECS = project.points.find(p => p.type === 'productionECS')
     const _rawT = prodECS?.T_depart_override ?? project.globalParams.T_depart ?? 60
     const T_depart_eff = typeof _rawT === 'number' && !isNaN(_rawT) ? _rawT : (parseFloat(String(_rawT)) || 60)
+    // Pour alimentation ECS : map nœud → tronçon qui l'alimente (remontée upstream)
+    const parentSegOfNode = new Map<string, string>()
+    if (isAlimECS) {
+      for (const s of project.segments) {
+        const dir = flowDirections.get(s.id)
+        if (dir) parentSegOfNode.set(dir.toId, s.id)
+      }
+    }
+
+    // Trouve la température au nœud amont d'un tronçon alimentation ECS.
+    // Remonte l'arbre jusqu'au premier nœud avec une température bouclage connue.
+    const getTAlimECS = (segId: string): number => {
+      const dir = flowDirections.get(segId)
+      if (!dir) return T_depart_eff
+      let nodeId: string | undefined = dir.fromId
+      const visited = new Set<string>()
+      while (nodeId && !visited.has(nodeId)) {
+        visited.add(nodeId)
+        const T = thermalResults.nodeTemps.get(nodeId)
+        if (T != null) return T
+        const parentId = parentSegOfNode.get(nodeId)
+        if (!parentId) break
+        const parentDir = flowDirections.get(parentId)
+        nodeId = parentDir?.fromId
+      }
+      return T_depart_eff
+    }
+
     for (const seg of project.segments) {
       if (isAlimECS && seg.type !== 'aller') continue
       let flowRate: number | null
@@ -645,9 +673,8 @@ export default function App() {
       } else {
         flowRate = networkFlows.get(seg.id)?.flowRate ?? null
       }
-      // En alimentation-ecs, pas de calcul thermique par tronçon → on prend T départ Production ECS
       const T = isAlimECS
-        ? T_depart_eff
+        ? getTAlimECS(seg.id)
         : (() => { const td = thermalResults.segResults.get(seg.id); return td ? (td.T_from + td.T_to) / 2 : T_depart_eff })()
       const mat   = project.materials.find(m => m.id === seg.materialId)
       const dnDef = mat?.dns.find(d => d.dn === seg.dn)
