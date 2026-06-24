@@ -95,7 +95,7 @@ export function buildProjectFromConfig({
 }
 
 // ── Wizard UI ────────────────────────────────────────────
-const DEFAULT_GLOBAL_PARAMS = { T_depart: 60, rho: 985, cp: 4180, T_amb_ss: 10, T_amb_other: 20, he: 10 }
+const DEFAULT_GLOBAL_PARAMS = { T_depart: 60 }
 
 const STEP_LABELS = ['Paramètres', 'Matériaux', 'Isolants', 'Configuration', 'Groupes']
 
@@ -150,31 +150,18 @@ function NavButtons({ onPrev, onNext, nextLabel, prevDisabled }) {
 
 // Step 1
 function StepParams({ params, onChange }) {
-  const set = (k, v) => onChange({ ...params, [k]: v })
-  const rows = [
-    ['T° de départ', 'T_depart', '°C', 1],
-    ['Masse volumique ρ', 'rho', 'kg/m³', 1],
-    ['Chaleur spécifique cp', 'cp', 'J/kg·K', 1],
-    ['Coef. transfert he', 'he', 'W/m²·K', 0.1],
-    ['T° ambiante sous-sol', 'T_amb_ss', '°C', 1],
-    ['T° ambiante autres niveaux', 'T_amb_other', '°C', 1],
-  ]
   return (
     <div>
-      <h2 style={TITLE_S}>Paramètres généraux</h2>
-      <p style={SUBTITLE_S}>Ces valeurs s'appliquent à l'ensemble du réseau ECS.</p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        {rows.map(([label, key, unit, step]) => (
-          <div key={key}>
-            <label style={FIELD_LABEL_S}>{label}</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-              <input type="number" value={params[key]} step={step}
-                onChange={e => set(key, +e.target.value)}
-                style={INPUT_S} />
-              <span style={{ fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' }}>{unit}</span>
-            </div>
-          </div>
-        ))}
+      <h2 style={TITLE_S}>Température de départ</h2>
+      <p style={SUBTITLE_S}>Température de l'eau en sortie de production ECS.</p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+        <label style={FIELD_LABEL_S}>T° de départ</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input type="number" value={params.T_depart} step={1}
+            onChange={e => onChange({ ...params, T_depart: +e.target.value })}
+            style={{ ...INPUT_S, width: 70 }} />
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>°C</span>
+        </div>
       </div>
     </div>
   )

@@ -43,6 +43,41 @@ export const DEFAULT_PDC_PARAMS = {
   customEquipments: [] as { id: string; label: string; kvDefault: number | null }[],
 }
 
+export interface TronconAmontEF {
+  id:              string
+  length:          number | null   // m
+  materialId:      string | null
+  dn:              string | null
+  di_override:     number | null   // di direct si pas de matériau/DN
+  coteAmont:       number | null   // m (null = 0 par défaut)
+  coteAval:        number | null   // m (null = 0 par défaut)
+  pourcentageSing: number          // % (défaut 20)
+  fittings?:       { type: string; count: number; xiOverride?: number }[]
+  equipment?:      { type: string; count: number; kvOverride?: number }[]
+}
+
+export interface TronconAmontResult {
+  di_mm:         number | null
+  V:             number
+  J:             number
+  Re?:           number
+  lambda?:       number
+  regime?:       'laminar' | 'transition' | 'turbulent'
+  dpFric:        number
+  dpSing:        number
+  dpEquip:       number
+  dpStatic:      number
+  dpTotal:       number
+  presIn:        number
+  presOut:       number
+  rho:           number
+  mu?:           number
+  nu?:           number
+  T_used:        number
+  dynPressure?:  number
+  epsilon_used?: number
+}
+
 export const DEFAULT_PDC_PARAMS_ALIM_ECS = {
   methodeReg:               'darcy-colebrook' as 'darcy-colebrook' | 'dtu-approche',
   dtuUnite:                 'Pa'             as 'Pa' | 'mCE',
@@ -58,7 +93,11 @@ export const DEFAULT_PDC_PARAMS_ALIM_ECS = {
   equipmentOverrides:       {} as Record<string, number>,
   customFittings:           [] as { id: string; label: string; xi: number }[],
   customEquipments:         [] as { id: string; label: string; kvDefault: number | null }[],
-  pressionSourceDisponible: 300000,
+  pressionSourceDisponible: null             as number | null,   // null → 3 bar par défaut
+  modePresSource:           'depart-ecs'     as 'depart-ecs' | 'arrivee-ef',
+  pressionArriveeEF:        null             as number | null,   // null → 3 bar par défaut
+  T_ef:                     null             as number | null,   // null → 10 °C par défaut
+  tronçonsAmont:            [] as TronconAmontEF[],   // coteAmont/coteAval en m, length en m
 }
 
 /** Masse volumique de l'eau (kg/m³) — formule de Kell (0–100 °C). */
@@ -118,15 +157,18 @@ export function darcyLambda(Re: number, epsilon: number, D: number): number {
 
 /**
  * Gradient de pression linéaire (Pa/m) — formule approchée DTU 60.11.
- * Variante Pa  : J [Pa/m]   = 5,65 × V^1,896 / D^1,276  (V en m/s, D en m)
- * Variante mCE : J [mCE/m]  = 3,80 × V^1,896 / D^1,276  (V en m/s, D en mm) → converti en Pa/m
+ * ECS : J = 5,65 × V^1,896 / D^1,276 (Pa) | 3,80 × V^1,896 / D_mm^1,276 (mCE)
+ * EF  : J = 6    × V^1,848 / D^1,279 (Pa) | 4,12 × V^1,848 / D_mm^1,279 (mCE)
  */
-export function dtuJ(V: number, D: number, unite: 'Pa' | 'mCE' = 'Pa'): number {
+export function dtuJ(V: number, D: number, unite: 'Pa' | 'mCE' = 'Pa', fluid: 'ecs' | 'ef' = 'ecs'): number {
   if (V <= 0 || D <= 0) return 0
+  if (fluid === 'ef') {
+    if (unite === 'mCE') return 4.12 * Math.pow(V, 1.848) / Math.pow(D * 1000, 1.279) * 9810
+    return 6 * Math.pow(V, 1.848) / Math.pow(D, 1.279)
+  }
   if (unite === 'mCE') {
-    const D_mm = D * 1000
-    const J_mCE = 3.80 * Math.pow(V, 1.896) / Math.pow(D_mm, 1.276)
-    return J_mCE * 9810   // 1 mCE = 9 810 Pa
+    const J_mCE = 3.80 * Math.pow(V, 1.896) / Math.pow(D * 1000, 1.276)
+    return J_mCE * 9810
   }
   return 5.65 * Math.pow(V, 1.896) / Math.pow(D, 1.276)
 }
@@ -271,4 +313,131 @@ export function computeSegPdc(
     dpTotal,
     dpPompe,
   }
+}
+
+/**
+ * Calcule les pertes de charge de chaque tronçon amont EF → Production ECS.
+ * Retourne une Map<trId, TronconAmontResult> dans l'ordre amont → aval.
+ */
+export function computeAmontResults(
+  params:      any,
+  totalQpM3h:  number,
+  materials:   any[] = []
+): Map<string, TronconAmontResult> {
+  const results = new Map<string, TronconAmontResult>()
+  if ((params.modePresSource ?? 'depart-ecs') !== 'arrivee-ef') return results
+
+  const T       = params.T_ef ?? 10
+  const rho     = waterDensity(T)
+  const mu      = waterViscosity(T)
+  const nu      = mu / rho
+  const epsilon = params.roughnessGlobal ?? 0.0001
+  const isdc    = (params.methodeReg ?? 'darcy-colebrook') !== 'dtu-approche'
+  let presIn    = params.pressionArriveeEF ?? 300000
+
+  for (const tr of (params.tronçonsAmont ?? []) as TronconAmontEF[]) {
+    const di_mm: number | null = tr.di_override != null
+      ? tr.di_override
+      : (tr.materialId && tr.dn
+          ? (materials.find((m: any) => m.id === tr.materialId)
+              ?.dns.find((d: any) => d.dn === tr.dn)?.di ?? null)
+          : null)
+
+    const deltaH   = (tr.coteAval ?? 0) - (tr.coteAmont ?? 0)
+    const dpStatic = rho * 9.81 * deltaH
+    let dpFric = 0, dpSing = 0, V = 0, J = 0
+    let Re: number | undefined, lambda: number | undefined
+    let regime: 'laminar' | 'transition' | 'turbulent' | undefined
+    let dynPressure: number | undefined
+
+    let dpEquip = 0
+    if (di_mm && di_mm > 0 && tr.length && tr.length > 0 && totalQpM3h > 0) {
+      const D = di_mm / 1000
+      const A = Math.PI * D * D / 4
+      V = (totalQpM3h / 3600) / A
+      dynPressure = 0.5 * rho * V * V
+      if (!isdc) {
+        J = dtuJ(V, D, params.dtuUnite ?? 'Pa', 'ef')
+      } else {
+        Re = V * D / nu
+        lambda = darcyLambda(Re, epsilon, D)
+        J = (lambda / D) * dynPressure
+        regime = Re < 2300 ? 'laminar' : Re > 4000 ? 'turbulent' : 'transition'
+      }
+      dpFric = J * tr.length
+      if ((params.methodeSing ?? 'pourcentage') === 'accessoires') {
+        const customFittings: any[] = params.customFittings ?? []
+        const allFittings = [
+          ...FITTING_TYPES,
+          ...customFittings.map((t: any) => ({ id: t.id, xi: t.xi })),
+        ]
+        for (const f of (tr.fittings ?? [])) {
+          const xi = f.xiOverride
+            ?? params.fittingOverrides?.[f.type]
+            ?? allFittings.find(t => t.id === f.type)?.xi
+            ?? 0
+          dpSing += xi * dynPressure * (f.count ?? 1)
+        }
+      } else {
+        dpSing = dpFric * ((params.pourcentageSing ?? 20) / 100)
+      }
+    }
+
+    if (params.equipementsActifs) {
+      const customEquipments: any[] = params.customEquipments ?? []
+      const allEquipments = [
+        ...EQUIPMENT_TYPES,
+        ...customEquipments.map((t: any) => ({ id: t.id, kvDefault: t.kvDefault })),
+      ]
+      for (const e of (tr.equipment ?? [])) {
+        const kv = e.kvOverride
+          ?? params.equipmentOverrides?.[e.type]
+          ?? allEquipments.find(t => t.id === e.type)?.kvDefault
+        if (!kv || kv <= 0) continue
+        dpEquip += Math.pow((totalQpM3h / kv), 2) * 100000
+      }
+    }
+
+    const dpTotal = dpFric + dpSing + dpEquip + dpStatic
+    const presOut = presIn - dpTotal
+    results.set(tr.id, {
+      di_mm, V, J, Re, lambda, regime,
+      dpFric, dpSing, dpEquip, dpStatic, dpTotal, presIn, presOut,
+      rho, mu, nu, T_used: T, dynPressure,
+      epsilon_used: isdc ? epsilon : undefined,
+    })
+    presIn = presOut
+  }
+  return results
+}
+
+/**
+ * Pression statique (débit nul, frottements=0) au nœud Production ECS.
+ * Uniquement la composante hydrostatique entre l'arrivée EF et la Production ECS.
+ */
+export function computePresSourceECSStatic(params: any, materials: any[] = []): number {
+  if ((params.modePresSource ?? 'depart-ecs') !== 'arrivee-ef')
+    return params.pressionSourceDisponible ?? 300000
+  const T   = params.T_ef ?? 10
+  const rho = waterDensity(T)
+  const tronçons: TronconAmontEF[] = params.tronçonsAmont ?? []
+  if (tronçons.length === 0) return params.pressionArriveeEF ?? 300000
+  let pres = params.pressionArriveeEF ?? 300000
+  for (const tr of tronçons) {
+    const deltaH = (tr.coteAval ?? 0) - (tr.coteAmont ?? 0)
+    pres -= rho * 9.81 * deltaH
+  }
+  return pres
+}
+
+/**
+ * Pression disponible au nœud Production ECS après pertes de charge amont.
+ */
+export function computePresSourceECS(params: any, totalQpM3h: number, materials: any[] = []): number {
+  if ((params.modePresSource ?? 'depart-ecs') !== 'arrivee-ef')
+    return params.pressionSourceDisponible ?? 300000
+  const tronçons: TronconAmontEF[] = params.tronçonsAmont ?? []
+  if (tronçons.length === 0) return params.pressionArriveeEF ?? 300000
+  const results = computeAmontResults(params, totalQpM3h, materials)
+  return results.get(tronçons[tronçons.length - 1].id)?.presOut ?? (params.pressionArriveeEF ?? 300000)
 }

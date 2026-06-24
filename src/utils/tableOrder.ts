@@ -316,6 +316,16 @@ export function buildFlowRows(segments, points, flowDirections, columns, columnX
     }
   }
 
+  // En bouclage-ecs, les antennes sont filtrées du tableau (finalRows) mais doivent
+  // quand même figurer dans roleMap pour la détection UI (nommage, masquage Hydraulique…)
+  if (activeCalcId === 'bouclage-ecs') {
+    for (const row of rows) {
+      if (row.kind === 'segment' && row.antenne && !roleMap.has(row.seg.id)) {
+        roleMap.set(row.seg.id, 'antenne')
+      }
+    }
+  }
+
   return { rows: finalRows, roleMap }
 }
 

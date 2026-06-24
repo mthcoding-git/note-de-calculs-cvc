@@ -1,6 +1,12 @@
 /**
  * Calcul thermique du réseau ECS bouclé (NF DTU 60.11 P1-2).
  */
+import { waterDensity } from './pdcCalc'
+
+const HE_DEFAULT = 10      // W/(m²·K) — convection extérieure (cste pour isolant standard)
+const CP_EAU     = 4180    // J/(kg·K) — chaleur spécifique eau
+const T_AMB_SS   = 10      // °C — T° ambiante par défaut sous-sol
+const T_AMB_STD  = 20      // °C — T° ambiante par défaut autres niveaux
 
 /**
  * UI — coefficient de transfert thermique linéaire (W/(m·K)).
@@ -41,19 +47,19 @@ export function computeSegUI(seg, materials, insulations, he) {
  * Température ambiante du tronçon selon le niveau dans lequel il se trouve.
  * Les tronçons sont toujours entièrement dans une zone (frontières auto-découpées).
  */
-export function getSegAmbTemp(seg, levels, lineYs, globalParams) {
+export function getSegAmbTemp(seg, levels, lineYs) {
   if (seg.t_amb_override != null) return seg.t_amb_override
   const midY = seg.vertices.reduce((s, v) => s + v.y, 0) / seg.vertices.length
   for (let i = 0; i < levels.length; i++) {
     const yBot = lineYs[i]
     const yTop = lineYs[i + 1]
     if (yTop !== undefined && midY >= yTop && midY <= yBot) {
-      return levels[i].isSousSol
-        ? (globalParams.T_amb_ss  ?? 10)
-        : (globalParams.T_amb_other ?? 20)
+      const lvl = levels[i]
+      if (lvl.t_amb_override != null) return lvl.t_amb_override
+      return lvl.isSousSol ? T_AMB_SS : T_AMB_STD
     }
   }
-  return globalParams.T_amb_other ?? 20
+  return T_AMB_STD
 }
 
 /**
@@ -71,11 +77,9 @@ export function computeThermal(
   const prodECS = points.find(p => p.type === 'productionECS')
   if (!prodECS) return { segResults: new Map(), nodeTemps: new Map() }
 
-  const T_depart = prodECS.T_depart_override ?? globalParams.T_depart ?? 60
-  const he       = globalParams.he ?? 10
-  // cp saisi en J/(kg·K) → conversion en Wh/(kg·K) pour cohérence avec Q[W] et q[m³/h]
-  const cp_Wh  = (globalParams.cp ?? 4180) / 3600   // Wh/(kg·K)
-  const factor = (globalParams.rho ?? 1000) * cp_Wh  // Wh/(m³·K)
+  const T_depart = prodECS.T_depart_override ?? globalParams?.T_depart ?? 60
+  const cp_Wh  = CP_EAU / 3600                   // Wh/(kg·K)
+  const factor = waterDensity(T_depart) * cp_Wh  // Wh/(m³·K)
 
   const nodeTemps  = new Map()
   const segResults = new Map()
@@ -96,13 +100,13 @@ export function computeThermal(
       const T_from = nodeTemps.get(dir.fromId)
       if (T_from == null) continue
 
-      const UI     = computeSegUI(seg, materials, insulations, he)
+      const UI     = computeSegUI(seg, materials, insulations, HE_DEFAULT)
       const L      = seg.length_override
       const q      = networkFlows.get(seg.id)?.flowRate
 
       if (UI == null || L == null || q == null || q <= 0) continue
 
-      const T_amb  = getSegAmbTemp(seg, levels, lineYs, globalParams)
+      const T_amb  = getSegAmbTemp(seg, levels, lineYs)
       const Q      = UI * L * (T_from - T_amb)
       const deltaT = Q / (q * factor)
       const T_to   = T_from - deltaT

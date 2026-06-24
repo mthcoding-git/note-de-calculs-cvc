@@ -816,6 +816,7 @@ export default function DrawingCanvas({
   groupesEditMode,
   onRemoveGroupeById,
   showGroupeNames,
+  groupDisplayNames,
   canvasDisplay,
   roleMap,
   materials,
@@ -1952,15 +1953,20 @@ if (drawing) commitDrawing()
                 editStyle = seg.length_override != null ? 'match' : 'missing'
               }
             } else if (paramType === 'flowVelocity') {
-              const hasAny = seg.flowRate != null || seg.velocity != null
-              if (flowVelocityValue != null) {
-                const storedMatch = flowVelocityMode === 'flowRate'
-                  ? seg.flowRate === flowVelocityValue
-                  : seg.velocity === flowVelocityValue
-                editStyle = storedMatch ? 'match'
-                  : hasAny ? 'other' : 'missing'
+              // Antennes bouclage-ecs : toujours grisées, non assignables
+              if (activeCalcId === 'bouclage-ecs' && roleMap?.get(seg.id) === 'antenne') {
+                editStyle = 'other'
               } else {
-                editStyle = hasAny ? 'match' : 'missing'
+                const hasAny = seg.flowRate != null || seg.velocity != null
+                if (flowVelocityValue != null) {
+                  const storedMatch = flowVelocityMode === 'flowRate'
+                    ? seg.flowRate === flowVelocityValue
+                    : seg.velocity === flowVelocityValue
+                  editStyle = storedMatch ? 'match'
+                    : hasAny ? 'other' : 'missing'
+                } else {
+                  editStyle = hasAny ? 'match' : 'missing'
+                }
               }
             }
           }
@@ -1988,7 +1994,13 @@ if (drawing) commitDrawing()
                 onClick={ev => {
                   if (drawMode === 'delete') return
                   ev.stopPropagation()
-                  if (editParam) { onAssignParam(seg.id); return }
+                  if (editParam) {
+                    const isLockedAntenne = activeCalcId === 'bouclage-ecs'
+                      && editParam.paramType === 'flowVelocity'
+                      && roleMap?.get(seg.id) === 'antenne'
+                    if (!isLockedAntenne) onAssignParam(seg.id)
+                    return
+                  }
                   onSelectIds(ids => ev.shiftKey
                     ? ids.includes(seg.id) ? ids.filter(i => i !== seg.id) : [...ids, seg.id]
                     : [seg.id])
@@ -2363,8 +2375,9 @@ if (drawing) commitDrawing()
             const w = 60
             const col = sel || dragged ? '#2563eb' : '#0369a1'
             const bg  = sel || dragged ? '#dbeafe' : '#f0f9ff'
-            const showName = pt.name
-            const label = showName ? pt.name : 'PP'
+            const autoName = showGroupeNames ? (groupDisplayNames?.get(pt.id) ?? null) : null
+            const showName = pt.name || autoName
+            const label = pt.name ?? autoName ?? 'PP'
             const labelCol = sel || dragged ? '#2563eb' : showName ? '#0c4a6e' : '#7dd3fc'
             const equipLines = []
             if (canvasDisplay?.equipment && pt.equipements) {

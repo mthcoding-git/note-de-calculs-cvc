@@ -124,14 +124,6 @@ export default function Toolbar({
   return (
     <div className="toolbar">
 
-      {/* Panel toggle */}
-      <button
-        className="tb-btn tb-panel-toggle"
-        onClick={onTogglePanel}
-        title={isEditParams ? 'Quitter Attribuer et ouvrir le panneau Paramètres' : panelOpen ? 'Masquer le panneau' : 'Afficher le panneau'}>
-        {isEditParams ? '▼ Paramètres' : panelOpen ? '◀ Paramètres' : '▶ Paramètres'}
-      </button>
-
       <div className="toolbar-sep" />
 
       {/* Select mode */}

@@ -10,14 +10,17 @@ import { DEFAULT_MATERIALS } from './data/materials'
 import { DEFAULT_INSULATIONS } from './data/insulations'
 import { computeFlowDirections, computeFlowDirectionsEF } from './utils/flowDirection'
 import { buildFlowRows, buildFlowRowsEF } from './utils/tableOrder'
+import { buildECSDistances, getDisplayGroupNames } from './utils/naming'
 import { computeNetworkFlows } from './utils/flowCalc'
 import { computeThermal } from './utils/thermalCalc'
 import { computeAlimentationResults } from './utils/alimentationCalc'
-import { computeSegPdc, DEFAULT_PDC_PARAMS, DEFAULT_PDC_PARAMS_ALIM_ECS, waterDensity } from './utils/pdcCalc'
+import { computeSegPdc, computePresSourceECS, computePresSourceECSStatic, computeAmontResults, DEFAULT_PDC_PARAMS, DEFAULT_PDC_PARAMS_ALIM_ECS, waterDensity } from './utils/pdcCalc'
 import { getNodeCote } from './utils/coteCalc'
 import { computeCumDp, computeCumDpAlim } from './utils/pdcCumul'
 import { computeValveKvs } from './utils/valveKv'
 import ResultsTable from './components/ResultsTable'
+import { Building2 } from 'lucide-react'
+import { PipeIcon, InsulatedPipeIcon, FaucetIcon, FaucetsGroupIcon, GaugeIcon } from './components/icons'
 import './App.css'
 
 let _uid = 0
@@ -242,8 +245,7 @@ function removeGroupeBranch(points, segments, groupePtId, lineYs?: number[]) {
 }
 
 const DEFAULT_GLOBAL_PARAMS = {
-  T_depart: 60, rho: 985, cp: 4180,
-  T_amb_ss: 10, T_amb_other: 20, he: 10,
+  T_depart: 60,
 }
 
 const DEFAULT_ALIMENTATION_PARAMS = {
@@ -712,6 +714,16 @@ export default function App() {
     return merged
   }, [activeCalcId, efFlowRowsArr, roleMap])
 
+  const groupDisplayNames = useMemo(() => {
+    if (activeCalcId === 'alimentation-ef') return new Map<string, string>()
+    const allerDist = buildECSDistances(project.segments, project.points)
+    return getDisplayGroupNames(
+      project.points, project.segments, flowDirections, allerDist, effectiveRoleMap,
+      project.levels, project.lineYs, project.columns ?? [], project.columnXs ?? []
+    )
+  }, [activeCalcId, project.points, project.segments, flowDirections, effectiveRoleMap,
+      project.levels, project.lineYs, project.columns, project.columnXs])
+
   const errorCount = useMemo(() => {
     const ptCount = new Map()
     for (const s of project.segments) {
@@ -741,12 +753,43 @@ export default function App() {
   }, [project.segments, project.points, networkFlows, activeCalcId])
 
   const [calcSubMode, setCalcSubMode] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
+  const [selectedAmontId, setSelectedAmontId] = useState<string | null>(null)
 
   const pdcCumResults = useMemo(
     () => activeCalcId === 'bouclage-ecs'
       ? computeCumDp(project.segments, project.points, flowDirections, pdcResults)
       : null,
     [activeCalcId, project.segments, project.points, flowDirections, pdcResults]
+  )
+
+  const totalQpAlimM3h = useMemo(() => {
+    if (activeCalcId !== 'alimentation-ecs') return 0
+    const prodECS = project.points.find(p => p.type === 'productionECS')
+    if (!prodECS) return 0
+    let total = 0
+    for (const seg of project.segments) {
+      const dir = flowDirections.get(seg.id)
+      if (dir?.fromId === prodECS.id) {
+        const ar = alimentationResults.get(seg.id)
+        if (ar?.flowRateForPdc) total += ar.flowRateForPdc
+      }
+    }
+    return total * 3.6  // L/s → m³/h
+  }, [activeCalcId, project.points, project.segments, flowDirections, alimentationResults])
+
+  const pressionSourceAlimECS = useMemo(
+    () => computePresSourceECS(project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS, totalQpAlimM3h, project.materials),
+    [project.pdcParamsAlimECS, totalQpAlimM3h, project.materials]
+  )
+
+  const pressionSourceAlimECSStatic = useMemo(
+    () => computePresSourceECSStatic(project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS, project.materials),
+    [project.pdcParamsAlimECS, project.materials]
+  )
+
+  const amontTronconResults = useMemo(
+    () => computeAmontResults(project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS, totalQpAlimM3h, project.materials),
+    [project.pdcParamsAlimECS, totalQpAlimM3h, project.materials]
   )
 
   const pdcCumAlimResults = useMemo(() => {
@@ -759,11 +802,11 @@ export default function App() {
     }
     return computeCumDpAlim(
       project.segments, project.points, flowDirections, pdcResults,
-      (project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS).pressionSourceDisponible,
+      pressionSourceAlimECS,
       nodeCotes, rho
     )
   }, [activeCalcId, project.segments, project.points, flowDirections, pdcResults,
-      project.pdcParamsAlimECS, project.globalParams, project.levels, project.lineYs])
+      pressionSourceAlimECS, project.globalParams, project.levels, project.lineYs])
 
   const activePdcParams = activeCalcId === 'alimentation-ecs'
     ? (project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS)
@@ -800,9 +843,8 @@ export default function App() {
   const [pipeType,           setPipeType]           = useState('aller')
   const [selectedIds,        setSelectedIds]        = useState([])
   const [selectedValveId,    setSelectedValveId]    = useState(null)
-  const [panelOpen,          setPanelOpen]          = useState(false)
-  const [editLevelsEnabled,    setEditLevelsEnabled]    = useState(false)
-  const [editColumnsEnabled,   setEditColumnsEnabled]   = useState(false)
+  const [activeSection,      setActiveSection]      = useState<string | null>(null)
+  const [editLinesEnabled,     setEditLinesEnabled]     = useState(false)
   const [editChaufferie,       setEditChaufferie]       = useState(false)
   const [placingEquipment,     setPlacingEquipment]     = useState(null)  // null | { type, name, rotation?, size }
 
@@ -919,12 +961,11 @@ export default function App() {
       })
       setActiveCalcId(resolvedCalcId)
       setPendingSetup(false)
-      setPanelOpen(true)
+      setActiveSection(s => s ?? 'niveaux')
     } else {
       // Tout premier fluide — la grille est déjà prévisualisée dans le canvas, on garde l'état courant
       setActiveCalcId(resolvedCalcId)
       setPendingSetup(true)
-      setPanelOpen(false)
     }
 
     setActiveFluidId(fluidId)
@@ -949,7 +990,7 @@ export default function App() {
 
   const handleSetupComplete = useCallback(() => {
     setPendingSetup(false)
-    setPanelOpen(true)
+    setActiveSection('niveaux')
     setFitViewRequest(r => r + 1)
   }, [])
 
@@ -969,13 +1010,12 @@ export default function App() {
         setActiveFluidId(fallbackId)
         setActiveCalcId(stashed.calcId)
         setPendingSetup(false)
-        setPanelOpen(true)
+        setActiveSection(s => s ?? 'niveaux')
       } else {
         // Aucun autre réseau — retour à l'écran de lancement
         setActiveFluidId(null)
         setActiveCalcId(null)
         setPendingSetup(true)
-        setPanelOpen(false)
       }
 
       setSelectedIds([])
@@ -984,7 +1024,7 @@ export default function App() {
   }, [deleteBaseVariant, activeFluidId, loadState, projectName])
 
   const handleCalcChange = useCallback((id) => {
-    if (!activeCalcId && !pendingSetup) setPanelOpen(true)
+    if (!activeCalcId && !pendingSetup) setActiveSection(s => s ?? 'niveaux')
     setActiveCalcId(id)
     setCalcSubMode('dimensionnement')
     setCanvasDisplay(CANVAS_DISPLAY_RESET)
@@ -1383,13 +1423,13 @@ export default function App() {
       <Toolbar
         drawMode={drawMode} setDrawMode={setDrawMode}
         pipeType={pipeType} setPipeType={setPipeType}
-        panelOpen={!pendingSetup && (panelOpen || drawMode === 'editParams')}
+        panelOpen={!pendingSetup && (activeSection !== null || drawMode === 'editParams')}
         onTogglePanel={() => {
-          if (drawMode === 'editParams') { setDrawMode('select'); setPanelOpen(true) }
-          else setPanelOpen(o => !o)
+          if (drawMode === 'editParams') { setDrawMode('select'); setActiveSection(s => s ?? 'niveaux') }
+          else setActiveSection(s => s ? null : 'niveaux')
         }}
         errorCount={errorCount}
-        onShowErrors={() => { setDrawMode('errors'); setPanelOpen(true) }}
+        onShowErrors={() => { setDrawMode('errors') }}
         chaufferie={project.chaufferie}
         editChaufferie={editChaufferie} onEditChaufferieChange={setEditChaufferie}
         onAddChaufferie={handleAddChaufferie}
@@ -1408,7 +1448,34 @@ export default function App() {
       />
 
       <div className="app-body">
-        <aside className={`sidebar-left${pendingSetup || (!pendingSetup && (panelOpen || drawMode === 'editParams')) ? '' : ' sidebar-closed'}${pendingSetup ? ' sidebar-no-transition' : ''}`}>
+        {!pendingSetup && (
+          <nav className="icon-sidebar">
+            {([
+              ['niveaux',     'Niveaux & Colonnes',  <Building2 size={36} />],
+              ['groupes',     'Groupes de points de puisage', <FaucetsGroupIcon size={36} />],
+              ['materiaux',   'Matériaux des canalisations', <PipeIcon size={36} />],
+              ['isolation',   'Isolants (calorifugeage)',    <InsulatedPipeIcon size={36} />],
+              ['equipements', 'Équipements',        <FaucetIcon size={36} />],
+              ['pdc',         'Pertes de charge',   <GaugeIcon size={36} />],
+            ] as [string, string, React.ReactNode][]).map(([key, label, icon]) => (
+              <button
+                key={key}
+                className={`icon-sidebar-btn${activeSection === key ? ' active' : ''}`}
+                onClick={() => {
+                  if (drawMode === 'editParams') setDrawMode('select')
+                  setActiveSection(s => s === key ? null : key)
+                }}
+                data-tooltip={label}
+                title={label}
+              >
+                {icon}
+              </button>
+            ))}
+          </nav>
+        )}
+
+        <div className="content-area">
+        <aside className={`sidebar-left${(pendingSetup || (!pendingSetup && (activeSection !== null || drawMode === 'editParams' || drawMode === 'errors'))) ? '' : ' sidebar-closed'}${pendingSetup ? ' sidebar-no-transition' : ''}`}>
           {pendingSetup ? (
             <NetworkSetupCard
               fluidLabel={activeFluidId ? getFluidLabel(activeFluidId) : null}
@@ -1416,24 +1483,28 @@ export default function App() {
               onPreview={handlePreviewUpdate}
               onComplete={handleSetupComplete}
             />
-          ) : (!pendingSetup && (panelOpen || drawMode === 'editParams')) && (
+          ) : (!pendingSetup && (activeSection !== null || drawMode === 'editParams' || drawMode === 'errors')) && (
             <LeftPanel
+              activeSection={activeSection}
               activeCalcId={activeCalcId}
               calcSubMode={calcSubMode}
-              globalParams={project.globalParams}
-              onGlobalParamsChange={v => update('globalParams', v)}
               alimentationParams={resolveAlimentationParams(project.alimentationParams)}
               onAlimentationParamsChange={v => update('alimentationParams', v)}
               pdcParams={project.pdcParams ?? DEFAULT_PDC_PARAMS}
               onPdcParamsChange={v => update('pdcParams', v)}
               pdcParamsAlimECS={project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS}
               onPdcParamsAlimECSChange={v => update('pdcParamsAlimECS', v)}
+              totalQpAlimM3h={totalQpAlimM3h}
+              selectedAmontId={selectedAmontId}
+              onSelectAmontId={(id: string | null) => { setSelectedAmontId(id); setSelectedIds([]) }}
+              amontTronconResults={amontTronconResults}
+              pressionSourceAlimECSStatic={pressionSourceAlimECSStatic}
               levels={project.levels}
               lineYs={project.lineYs}
               onLevelsChange={v => update('levels', v)}
               onLineYsChange={v => update('lineYs', v)}
-              editLevelsEnabled={editLevelsEnabled}
-              onEditLevelsChange={setEditLevelsEnabled}
+              editLinesEnabled={editLinesEnabled}
+              onEditLinesChange={setEditLinesEnabled}
               materials={project.materials}
               onMaterialsChange={v => update('materials', typeof v === 'function' ? v(project.materials) : v)}
               insulations={project.insulations}
@@ -1446,8 +1517,6 @@ export default function App() {
               onAddColumn={handleAddColumn}
               onAddGap={handleAddGap}
               onMoveGaine={handleMoveGaine}
-              editColumnsEnabled={editColumnsEnabled}
-              onEditColumnsChange={setEditColumnsEnabled}
               chaufferie={project.chaufferie}
               segments={project.segments}
               points={project.points}
@@ -1482,8 +1551,8 @@ export default function App() {
             pipeType={pipeType}
             selectedIds={selectedIds}
             onSelectIds={handleSelectIds}
-            editLevelsEnabled={editLevelsEnabled}
-            editColumnsEnabled={editColumnsEnabled}
+            editLevelsEnabled={editLinesEnabled}
+            editColumnsEnabled={editLinesEnabled}
             columns={project.columns}
             columnXs={project.columnXs}
             onColumnXsChange={handleColumnXsChange}
@@ -1504,6 +1573,7 @@ export default function App() {
             groupesEditMode={groupesEditMode}
             onRemoveGroupeById={handleRemoveGroupeById}
             showGroupeNames={showGroupeNames}
+            groupDisplayNames={groupDisplayNames}
             canvasDisplay={canvasDisplay}
             roleMap={effectiveRoleMap}
             materials={project.materials}
@@ -1569,7 +1639,7 @@ export default function App() {
 
         </div>{/* canvas-col */}
 
-        <aside className={`sidebar-right${(pendingSetup || (selectedIds.length === 0 && !editChaufferie && !selectedValveId)) ? ' sidebar-right-closed' : ''}`}>
+        <aside className={`sidebar-right${(pendingSetup || (selectedIds.length === 0 && !editChaufferie && !selectedValveId && !selectedAmontId)) ? ' sidebar-right-closed' : ''}`}>
           <RightPanel
             calcSubMode={calcSubMode}
             selectedIds={selectedIds}
@@ -1604,8 +1674,26 @@ export default function App() {
             selectedValveId={selectedValveId}
             valves={project.valves ?? []}
             onValveUpdate={handleValveUpdate}
+            selectedAmontId={selectedAmontId}
+            tronçonsAmont={project.pdcParamsAlimECS?.tronçonsAmont ?? []}
+            onUpdateAmontTroncon={(tr: any) => {
+              const p = project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS
+              update('pdcParamsAlimECS', { ...p, tronçonsAmont: (p.tronçonsAmont ?? []).map((t: any) => t.id === tr.id ? tr : t) })
+            }}
+            onRemoveAmontTroncon={(id: string) => {
+              const p = project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS
+              update('pdcParamsAlimECS', { ...p, tronçonsAmont: (p.tronçonsAmont ?? []).filter((t: any) => t.id !== id) })
+              setSelectedAmontId(null)
+            }}
+            amontTronconResults={amontTronconResults}
+            totalQpAlimM3h={totalQpAlimM3h}
+            pressionSourceAlimECS={pressionSourceAlimECS}
+            pressionSourceAlimECSStatic={pressionSourceAlimECSStatic}
+            pdcParamsAlimECS={project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS}
+            groupDisplayNames={groupDisplayNames}
           />
         </aside>
+        </div>{/* content-area */}
       </div>
     </div>
   )

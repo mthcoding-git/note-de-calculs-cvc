@@ -1,19 +1,22 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { getDisplayName } from '../utils/naming'
 import { EQUIPMENT_TYPES, FITTING_TYPES } from '../utils/pdcCalc'
+import { NumInput } from './NumInput'
 
 let _uid = 0
 const uid = (p = 'x') => `${p}-${Date.now()}-${++_uid}`
 
-function Section({ title, children, defaultOpen = true, noPad = false }) {
-  const [open, setOpen] = useState(defaultOpen)
+const asNum = (v: any): number | null => {
+  if (v == null || v === '') return null
+  const n = Number(v)
+  return isNaN(n) ? null : n
+}
+
+function Section({ title, children, noPad = false }) {
   return (
     <div className="lp-section">
-      <button className="lp-section-header" onClick={() => setOpen(o => !o)}>
-        <span>{title}</span>
-        <span className="lp-chevron">{open ? '▾' : '▸'}</span>
-      </button>
-      {open && <div className={noPad ? 'lp-section-body-nopad' : 'lp-section-body'}>{children}</div>}
+      {title && <div className="lp-section-subtitle">{title}</div>}
+      <div className={noPad ? 'lp-section-body-nopad' : 'lp-section-body'}>{children}</div>
     </div>
   )
 }
@@ -29,38 +32,15 @@ function Field({ label, unit, children }) {
   )
 }
 
-// ── Global params ──────────────────────────────────────
-function GlobalParamsSection({ params, onChange }) {
-  const set = (k, v) => onChange({ ...params, [k]: v })
-  return (
-    <Section title="Paramètres généraux" defaultOpen={false}>
-      <Field label="T° départ" unit="°C">
-        <input type="number" value={params.T_depart} onChange={e => set('T_depart', parseFloat(e.target.value))} />
-      </Field>
-      <Field label="Masse volumique ρ" unit="kg/m³">
-        <input type="number" value={params.rho} onChange={e => set('rho', e.target.value)} />
-      </Field>
-      <Field label="Chaleur spécifique cp" unit="J/kg·K">
-        <input type="number" value={params.cp} onChange={e => set('cp', e.target.value)} />
-      </Field>
-      <Field label="T° ambiante sous-sol" unit="°C">
-        <input type="number" value={params.T_amb_ss} onChange={e => set('T_amb_ss', e.target.value)} />
-      </Field>
-      <Field label="T° ambiante autre niveau" unit="°C">
-        <input type="number" value={params.T_amb_other} onChange={e => set('T_amb_other', e.target.value)} />
-      </Field>
-      <Field label="Coef. transfert he" unit="W/m²·K">
-        <input type="number" value={params.he} onChange={e => set('he', e.target.value)} />
-      </Field>
-    </Section>
-  )
-}
 
 // ── Levels ─────────────────────────────────────────────
-function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLevelsEnabled, onEditLevelsChange }) {
-  const rename        = (id, name)    => onLevelsChange(levels.map(l => l.id === id ? { ...l, name } : l))
-  const setHauteur    = (id, h)       => onLevelsChange(levels.map(l => l.id === id ? { ...l, hauteur: h } : l))
-  const toggleSousSol = (id)          => onLevelsChange(levels.map(l => l.id === id ? { ...l, isSousSol: !l.isSousSol } : l))
+function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  const rename        = (id, name)  => onLevelsChange(levels.map(l => l.id === id ? { ...l, name } : l))
+  const setHauteur    = (id, h)     => onLevelsChange(levels.map(l => l.id === id ? { ...l, hauteur: h } : l))
+  const setTAmb       = (id, v)     => onLevelsChange(levels.map(l => l.id === id ? { ...l, t_amb_override: v } : l))
+  const toggleSousSol = (id)        => onLevelsChange(levels.map(l => l.id === id ? { ...l, isSousSol: !l.isSousSol } : l))
 
   const moveUp = (i) => {
     if (i >= levels.length - 1) return
@@ -80,8 +60,8 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLev
     const newYs  = [...lineYs]
     const topY   = newYs[newYs.length - 1]
     const prevY  = newYs[newYs.length - 2]
-    const h      = prevY - topY   // hauteur du niveau supérieur actuel
-    newYs.push(topY - h)          // la toiture monte d'une hauteur de niveau
+    const h      = prevY - topY
+    newYs.push(topY - h)
     onLevelsChange([...levels, newLvl])
     onLineYsChange(newYs)
   }
@@ -95,9 +75,11 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLev
   }
 
   const displayOrder = [...levels].reverse()
+  const tAmbSS    = 10
+  const tAmbOther = 20
 
   return (
-    <Section title="Niveaux" defaultOpen={false}>
+    <Section title="Niveaux">
       <div className="lp-levels-list">
         <div className="lp-level-row lp-level-toiture">
           <span className="lp-level-badge">▲</span>
@@ -105,55 +87,72 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, editLev
         </div>
         {displayOrder.map((lvl) => {
           const origIdx = levels.indexOf(lvl)
+          const isOpen  = expandedId === lvl.id
+          const tDefault = lvl.isSousSol ? tAmbSS : tAmbOther
           return (
-            <div key={lvl.id} className="lp-level-row">
-              <button
-                className={`lp-icon-btn lp-ss-btn ${lvl.isSousSol ? 'lp-ss-active' : ''}`}
-                onClick={() => toggleSousSol(lvl.id)}
-                title={lvl.isSousSol ? 'Sous-sol (cliquer pour désactiver)' : 'Marquer comme sous-sol'}
-              >SS</button>
-              <input
-                className="lp-level-name"
-                value={lvl.name}
-                onChange={e => rename(lvl.id, e.target.value)}
-              />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-                <span style={{ fontSize: 10, color: '#6b7280' }}>H</span>
+            <div key={lvl.id}>
+              <div className="lp-level-row">
+                <button
+                  className="lp-icon-btn"
+                  style={{ flexShrink: 0 }}
+                  onClick={() => setExpandedId(x => x === lvl.id ? null : lvl.id)}
+                  title={isOpen ? 'Réduire' : 'Modifier hauteur et température'}
+                >{isOpen ? '▾' : '▸'}</button>
+                <button
+                  className={`lp-icon-btn lp-ss-btn ${lvl.isSousSol ? 'lp-ss-active' : ''}`}
+                  onClick={() => toggleSousSol(lvl.id)}
+                  title={lvl.isSousSol ? 'Sous-sol (cliquer pour désactiver)' : 'Marquer comme sous-sol'}
+                >SS</button>
                 <input
-                  type="number" min="0" step="0.1"
-                  className="lp-level-h-input"
-                  value={lvl.hauteur ?? ''}
-                  placeholder="2,70"
-                  onChange={e => setHauteur(lvl.id, e.target.value === '' ? undefined : parseFloat(e.target.value))}
+                  className="lp-level-name"
+                  value={lvl.name}
+                  onChange={e => rename(lvl.id, e.target.value)}
                 />
-                <span style={{ fontSize: 10, color: '#9ca3af' }}>m</span>
+                <div className="lp-level-btns">
+                  <button className="lp-icon-btn" onClick={() => moveUp(origIdx)} title="Monter" disabled={origIdx >= levels.length - 1}>▲</button>
+                  <button className="lp-icon-btn" onClick={() => moveDown(origIdx)} title="Descendre" disabled={origIdx <= 0}>▼</button>
+                  <button className="lp-icon-btn danger" onClick={() => removeLevel(origIdx)} title="Supprimer">✕</button>
+                </div>
               </div>
-              <div className="lp-level-btns">
-                <button className="lp-icon-btn" onClick={() => moveUp(origIdx)} title="Monter" disabled={origIdx >= levels.length - 1}>▲</button>
-                <button className="lp-icon-btn" onClick={() => moveDown(origIdx)} title="Descendre" disabled={origIdx <= 0}>▼</button>
-                <button className="lp-icon-btn danger" onClick={() => removeLevel(origIdx)} title="Supprimer">✕</button>
-              </div>
+              {isOpen && (
+                <div className="lp-level-expanded">
+                  <div className="lp-level-expanded-row">
+                    <span className="lp-level-expanded-label">Hauteur</span>
+                    <NumInput
+                      min={0} step={0.1}
+                      className="lp-level-exp-input"
+                      value={lvl.hauteur ?? null}
+                      placeholder={`2,70 (par défaut)`}
+                      allowEmpty
+                      onChange={v => setHauteur(lvl.id, v ?? undefined)}
+                    />
+                    <span className="lp-level-expanded-unit">m</span>
+                  </div>
+                  <div className="lp-level-expanded-row">
+                    <span className="lp-level-expanded-label">T° ambiante</span>
+                    <NumInput
+                      step={0.5}
+                      className="lp-level-exp-input"
+                      value={lvl.t_amb_override ?? null}
+                      placeholder={`${tDefault} (par défaut)`}
+                      allowEmpty
+                      onChange={v => setTAmb(lvl.id, v)}
+                    />
+                    <span className="lp-level-expanded-unit">°C</span>
+                  </div>
+                </div>
+              )}
             </div>
           )
         })}
       </div>
       <button className="lp-add-btn" onClick={addLevel}>+ Ajouter un niveau</button>
-      <div className="lp-field" style={{ marginTop: 8, marginBottom: 0 }}>
-        <label className="lp-checkbox-label">
-          <input type="checkbox" checked={editLevelsEnabled}
-            onChange={e => onEditLevelsChange(e.target.checked)} />
-          <span>Déplacer les lignes de niveaux</span>
-        </label>
-      </div>
-      {editLevelsEnabled && (
-        <p className="lp-hint">Glissez les lignes horizontales sur le plan pour ajuster la hauteur.</p>
-      )}
     </Section>
   )
 }
 
 // ── Columns ────────────────────────────────────────────
-function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, onRemoveColumn, onAddColumn, onAddGap, onMoveGaine, levels, editColumnsEnabled, onEditColumnsChange }) {
+function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, onRemoveColumn, onAddColumn, onAddGap, onMoveGaine, levels }) {
   const [expanded, setExpanded] = useState(null)
 
   const setName = (id, name) =>
@@ -194,7 +193,7 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
   const addGap = () => onAddGap()
 
   return (
-    <Section title="Colonnes" defaultOpen={false}>
+    <Section title="Colonnes">
       <div className="lp-levels-list">
         {columns.map((col, i) => (
           <div key={col.id}>
@@ -264,16 +263,6 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
         <button className="lp-add-btn" style={{ flex: 1 }} onClick={onAddColumn}>+ Ajouter une colonne</button>
         <button className="lp-add-btn" style={{ flex: 1 }} onClick={addGap}>+ Ajouter une gaine</button>
       </div>
-      <div className="lp-field" style={{ marginTop: 8, marginBottom: 0 }}>
-        <label className="lp-checkbox-label">
-          <input type="checkbox" checked={editColumnsEnabled}
-            onChange={e => onEditColumnsChange(e.target.checked)} />
-          <span>Déplacer les colonnes</span>
-        </label>
-      </div>
-      {editColumnsEnabled && (
-        <p className="lp-hint">Glissez les lignes verticales sur le plan pour ajuster la largeur.</p>
-      )}
     </Section>
   )
 }
@@ -294,7 +283,7 @@ function AlimentationParamsSection({ params, onChange }) {
   })
 
   return (
-    <Section title="Débits de base par équipement" defaultOpen={false}>
+    <Section>
       <div className="lp-field" style={{ marginBottom: 8 }}>
         <label className="lp-label">Type de bâtiment</label>
         <div style={{ display: 'flex', gap: 4 }}>
@@ -331,9 +320,9 @@ function AlimentationParamsSection({ params, onChange }) {
             </label>
             {editMode ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-                <input type="number" step="0.01" min="0"
-                  value={a.qBase}
-                  onChange={e => setQBase(a.id, e.target.value)}
+                <NumInput step={0.01} min={0}
+                  value={asNum(a.qBase)}
+                  onChange={v => { if (v != null) setQBase(a.id, v) }}
                   style={{ width: 60, fontSize: 11 }} />
                 <span style={{ fontSize: 10, color: '#374151' }}>l/s</span>
               </div>
@@ -368,7 +357,7 @@ function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon 
   const removeMat   = id      => onChange(m => m.filter(x => x.id !== id))
   const setDnField  = (mid, idx, key, v) => onChange(m => m.map(x => {
     if (x.id !== mid) return x
-    const dns = x.dns.map((d, i) => i === idx ? { ...d, [key]: key === 'dn' ? v : (parseFloat(v) || 0) } : d)
+    const dns = x.dns.map((d, i) => i === idx ? { ...d, [key]: key === 'dn' ? v : (typeof v === 'number' ? v : parseFloat(v) || 0) } : d)
     return { ...x, dns }
   }))
   const addDnRow    = id      => onChange(m => m.map(x => x.id === id ? { ...x, dns: [...x.dns, { dn: '', di: 0, de: 0 }] } : x))
@@ -376,7 +365,7 @@ function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon 
   const addCustom   = ()      => onChange(m => [...m, { id: uid('mat'), name: '', enabled: true, lambda: '', dns: [], custom: true }])
 
   return (
-    <Section title="Matériaux des canalisations" defaultOpen={false}>
+    <Section>
       {materials.map(mat => (
         <div key={mat.id} className="lp-mat-block">
           <div className="lp-mat-header">
@@ -402,8 +391,8 @@ function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon 
           {mat.enabled && showLambda && !compact && (
             <div className="lp-mat-lambda">
               <span>λ =</span>
-              <input type="number" step="0.001" value={mat.lambda}
-                onChange={e => setLambda(mat.id, e.target.value)} />
+              <NumInput step={0.001} value={asNum(mat.lambda)}
+                onChange={v => { if (v != null) setLambda(mat.id, v) }} />
               <span className="lp-unit">W/m·K</span>
             </div>
           )}
@@ -434,8 +423,8 @@ function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon 
                         ? <input type="text" value={d.dn} onChange={e => setDnField(mat.id, i, 'dn', e.target.value)} />
                         : d.dn}
                       </td>
-                      <td><input type="number" value={d.di} onChange={e => setDnField(mat.id, i, 'di', e.target.value)} /></td>
-                      <td><input type="number" value={d.de} onChange={e => setDnField(mat.id, i, 'de', e.target.value)} /></td>
+                      <td><NumInput value={asNum(d.di)} onChange={v => { if (v != null) setDnField(mat.id, i, 'di', v) }} /></td>
+                      <td><NumInput value={asNum(d.de)} onChange={v => { if (v != null) setDnField(mat.id, i, 'de', v) }} /></td>
                       {mat.custom && (
                         <td><button className="lp-icon-btn danger" onClick={() => removeDnRow(mat.id, i)}>✕</button></td>
                       )}
@@ -457,13 +446,14 @@ function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon 
 
 // ── Insulations ────────────────────────────────────────
 function InsulationsSection({ insulations, onChange }) {
+  const [expanded, setExpanded] = useState(null)
   const toggle      = id      => onChange(ins => ins.map(x => x.id === id ? { ...x, enabled: !x.enabled } : x))
   const setLambda   = (id, v) => onChange(ins => ins.map(x => x.id === id ? { ...x, lambda: v } : x))
   const setName     = (id, v) => onChange(ins => ins.map(x => x.id === id ? { ...x, name: v } : x))
   const removeIns   = id      => onChange(ins => ins.filter(x => x.id !== id))
   const setThick    = (id, idx, v) => onChange(ins => ins.map(x => {
     if (x.id !== id) return x
-    const t = [...x.thicknesses]; t[idx] = parseFloat(v) || 0
+    const t = [...x.thicknesses]; t[idx] = typeof v === 'number' ? v : (parseFloat(String(v)) || 0)
     return { ...x, thicknesses: t }
   }))
   const addThick    = id      => onChange(ins => ins.map(x => x.id === id ? { ...x, thicknesses: [...x.thicknesses, ''] } : x))
@@ -473,7 +463,7 @@ function InsulationsSection({ insulations, onChange }) {
   const addCustom   = ()      => onChange(ins => [...ins, { id: uid('ins'), name: '', enabled: true, lambda: '', thicknesses: [], custom: true }])
 
   return (
-    <Section title="Isolants (calorifugeage)" defaultOpen={false}>
+    <Section>
       {insulations.map(ins => (
         <div key={ins.id} className="lp-mat-block">
           <div className="lp-mat-header">
@@ -485,18 +475,27 @@ function InsulationsSection({ insulations, onChange }) {
                 : <span>{ins.name}</span>
               }
             </label>
-            {ins.custom && (
-              <button className="lp-icon-btn danger" onClick={() => removeIns(ins.id)} title="Supprimer">✕</button>
-            )}
+            <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+              {ins.enabled && (
+                <button className="lp-icon-btn" onClick={() => setExpanded(x => x === ins.id ? null : ins.id)}>
+                  {expanded === ins.id ? '▾' : '▸'}
+                </button>
+              )}
+              {ins.custom && (
+                <button className="lp-icon-btn danger" onClick={() => removeIns(ins.id)} title="Supprimer">✕</button>
+              )}
+            </div>
           </div>
           {ins.enabled && (
+            <div className="lp-mat-lambda">
+              <span>λ =</span>
+              <NumInput step={0.001} value={asNum(ins.lambda)}
+                onChange={v => { if (v != null) setLambda(ins.id, v) }} />
+              <span className="lp-unit">W/m·K</span>
+            </div>
+          )}
+          {ins.enabled && expanded === ins.id && (
             <>
-              <div className="lp-mat-lambda">
-                <span>λ =</span>
-                <input type="number" step="0.001" value={ins.lambda}
-                  onChange={e => setLambda(ins.id, e.target.value)} />
-                <span className="lp-unit">W/m·K</span>
-              </div>
               <div className="lp-thicknesses">
                 <label className="lp-label">Épaisseurs disponibles (mm) :</label>
                 {ins.thicknesses.length === 0 && (
@@ -504,8 +503,8 @@ function InsulationsSection({ insulations, onChange }) {
                 )}
                 {ins.thicknesses.map((t, i) => (
                   <div key={i} className="lp-thickness-row">
-                    <input type="number" value={t}
-                      onChange={e => setThick(ins.id, i, e.target.value)} />
+                    <NumInput value={asNum(t)}
+                      onChange={v => { if (v != null) setThick(ins.id, i, v) }} />
                     <span className="lp-unit">mm</span>
                     <button className="lp-icon-btn danger" onClick={() => removeThick(ins.id, i)}>✕</button>
                   </div>
@@ -702,8 +701,8 @@ function EditParamsPanel({
                 {selIns.thicknesses.map(t => <option key={t} value={t}>{t} mm</option>)}
               </select>
             ) : (
-              <input type="number" placeholder="mm" value={thickness ?? ''}
-                onChange={e => set({ thickness: e.target.value === '' ? null : +e.target.value })} />
+              <NumInput placeholder="mm" value={thickness ?? null} allowEmpty
+                onChange={v => set({ thickness: v })} />
             )}
           </div>
         )}
@@ -713,9 +712,9 @@ function EditParamsPanel({
         <div className="lp-field">
           <label className="lp-label">Valeur à appliquer</label>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <input type="number" min="0" step="0.1" style={{ flex: 1 }}
-              value={length ?? ''} placeholder="m"
-              onChange={e => set({ length: e.target.value === '' ? null : +e.target.value })} />
+            <NumInput min={0} step={0.1} style={{ flex: 1 }}
+              value={length ?? null} placeholder="m" allowEmpty
+              onChange={v => set({ length: v })} />
             <span style={{ fontSize: 11, color: '#6b7280' }}>m</span>
           </div>
         </div>
@@ -736,11 +735,12 @@ function EditParamsPanel({
               </button>
             ))}
           </div>
-          <input type="number" min="0"
-            step={flowVelocityMode === 'flowRate' ? '0.001' : '0.001'}
-            value={flowVelocityValue ?? ''}
+          <NumInput min={0}
+            step={flowVelocityMode === 'flowRate' ? 0.001 : 0.001}
+            value={flowVelocityValue ?? null}
             placeholder={flowVelocityMode === 'flowRate' ? 'm³/h' : 'm/s'}
-            onChange={e => set({ flowVelocityValue: e.target.value === '' ? null : +e.target.value })} />
+            allowEmpty
+            onChange={v => set({ flowVelocityValue: v })} />
         </div>
       )}
 
@@ -996,202 +996,160 @@ function BtnRow({ options, value, onSelect, activeColor, activeBg, activeBorder 
 }
 function FormulaHint({ children }) {
   return (
-    <div style={{ marginTop: 5, fontSize: 10, color: '#6b7280', lineHeight: 1.6, paddingLeft: 2 }}>
+    <div style={{ marginTop: 3, fontSize: 10, color: '#6b7280', lineHeight: 1.3, paddingLeft: 2 }}>
       {children}
     </div>
   )
 }
 
-// ── Pertes de charge — Alimentation ECS ───────────────
-function PdcParamsAlimECSSection({ params, onChange }) {
+// ── Pertes de charge — commun Bouclage + Alimentation ECS ────────────
+function PdcParamsSection({ params, onChange,
+  isAlimECS = false,
+  totalQpAlimM3h = 0,
+  selectedAmontId = null, onSelectAmontId, amontTronconResults,
+  pressionSourceAlimECSStatic = null,
+}: {
+  params: any, onChange: (p: any) => void,
+  isAlimECS?: boolean,
+  totalQpAlimM3h?: number,
+  selectedAmontId?: string | null, onSelectAmontId?: (id: string | null) => void,
+  amontTronconResults?: Map<string, any>,
+  pressionSourceAlimECSStatic?: number | null,
+}) {
   const set = (k, v) => onChange({ ...params, [k]: v })
+  const mode = params.modePresSource ?? 'depart-ecs'
+  const presAtECS = useMemo(() => {
+    const tronçons = params.tronçonsAmont ?? []
+    if (tronçons.length === 0) return params.pressionArriveeEF ?? 300000
+    const lastId = tronçons[tronçons.length - 1].id
+    return amontTronconResults?.get(lastId)?.presOut ?? (params.pressionArriveeEF ?? 300000)
+  }, [params, amontTronconResults])
 
   return (
-    <Section title="Paramètres PDC — Alimentation ECS">
+    <Section title={isAlimECS ? 'Paramètres PDC — Alimentation ECS' : 'Paramètres PDC — Bouclage ECS'}>
       <>
-        {/* ── Pression disponible au départ ECS ── */}
-        <div className="lp-field" style={{ marginBottom: 12 }}>
-          <label className="lp-label">
-            Pression disponible au départ ECS <span className="lp-unit">(bar)</span>
-          </label>
-          <input type="number" min="0" step="0.1"
-            value={((params.pressionSourceDisponible ?? 300000) / 100000).toFixed(2)}
-            onChange={e => set('pressionSourceDisponible', (parseFloat(e.target.value) || 0) * 100000)} />
-          <div style={{ fontSize: 9.5, color: '#9ca3af', marginTop: 3, lineHeight: 1.5 }}>
-            Pression minimale disponible à l'arrivée EF du site, prise comme pression de départ au nœud Production ECS dans le calcul des pertes de charge.
-          </div>
-        </div>
+        {/* ── Source de pression (alimentation ECS uniquement) ── */}
+        {isAlimECS && (
+          <>
+            <div className="lp-field" style={{ marginBottom: 10 }}>
+              <label className="lp-label">Source de pression</label>
+              <BtnRow
+                value={mode}
+                onSelect={v => set('modePresSource', v)}
+                activeColor="#374151" activeBg="#f3f4f6" activeBorder="#9ca3af"
+                options={[
+                  { value: 'depart-ecs', label: 'Départ ECS' },
+                  { value: 'arrivee-ef', label: 'Arrivée EF → ECS' },
+                ]}
+              />
+            </div>
 
-        {/* ── Unité d'affichage (compact) ── */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 10 }}>
-          <span style={{ fontSize: 10, color: '#9ca3af' }}>Unité :</span>
-          {([['Pa', 'Pa'], ['mmCE', 'mmCE'], ['both', 'Pa/mmCE']] as [string, string][]).map(([val, lbl]) => {
-            const active = (params.uniteAffichage ?? 'Pa') === val
-            return (
-              <button key={val} onClick={() => set('uniteAffichage', val)}
-                style={{
-                  padding: '2px 7px', fontSize: 9.5, borderRadius: 3, cursor: 'pointer',
-                  border: `1px solid ${active ? '#94a3b8' : '#e5e7eb'}`,
-                  background: active ? '#f1f5f9' : '#fff',
-                  color: active ? '#374151' : '#9ca3af',
-                  fontWeight: active ? 600 : 400,
-                }}>
-                {lbl}
-              </button>
-            )
-          })}
-        </div>
+            {mode === 'depart-ecs' ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+                <label style={{ fontSize: 11, color: '#374151', fontWeight: 500, flex: 1, marginBottom: 0 }}>
+                  Pression dispo. départ ECS
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+                  <NumInput min={0} step={0.1}
+                    value={params.pressionSourceDisponible != null ? params.pressionSourceDisponible / 100000 : null}
+                    placeholder="3,00 (par défaut)"
+                    allowEmpty
+                    style={{ width: 105 }}
+                    onChange={v => set('pressionSourceDisponible', v != null ? v * 100000 : null)} />
+                  <span style={{ fontSize: 10.5, color: '#9ca3af', fontWeight: 400 }}>bar</span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                  <div className="lp-field" style={{ flex: 1, marginBottom: 0 }}>
+                    <label className="lp-label">Pression arrivée EF <span className="lp-unit">(bar)</span></label>
+                    <NumInput step={0.1}
+                      value={params.pressionArriveeEF != null ? params.pressionArriveeEF / 100000 : null}
+                      placeholder="3,00 (par défaut)"
+                      allowEmpty
+                      onChange={v => set('pressionArriveeEF', v != null ? v * 100000 : null)} />
+                  </div>
+                  <div className="lp-field" style={{ flex: 1, marginBottom: 0 }}>
+                    <label className="lp-label">T° EF <span className="lp-unit">(°C)</span></label>
+                    <NumInput step={1}
+                      value={params.T_ef ?? null}
+                      placeholder="10 (par défaut)"
+                      allowEmpty
+                      onChange={v => set('T_ef', v)} />
+                  </div>
+                </div>
 
-        {/* ── Pertes linéaires ── */}
-        <Block color="#3b82f6">
-          <BlockTitle color="#1d4ed8">Pertes de charge linéaires</BlockTitle>
-          <div className="lp-field" style={{ marginBottom: 0 }}>
-            <label className="lp-label">Méthode de calcul</label>
-            <BtnRow
-              value={params.methodeReg}
-              onSelect={v => set('methodeReg', v)}
-              activeColor="#1d4ed8" activeBg="#dbeafe" activeBorder="#93c5fd"
-              options={[
-                { value: 'darcy-colebrook', label: 'Darcy-Weisbach' },
-                { value: 'dtu-approche',    label: 'Simplifiée DTU 60.11' },
-              ]}
-            />
-            {params.methodeReg === 'darcy-colebrook' && (
-              <FormulaHint>
-                <span style={{ fontFamily: 'ui-monospace, monospace', color: '#1e40af' }}>J = λ/D × ρV²/2</span>
-                <br /><span style={{ color: '#94a3b8' }}>Darcy-Weisbach — λ par Colebrook-White itératif</span>
-              </FormulaHint>
-            )}
-          </div>
-          {params.methodeReg === 'dtu-approche' && (
-            <div className="lp-field" style={{ marginBottom: 0, marginTop: 8 }}>
-              <label className="lp-label">Formule</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {[
-                  { value: 'Pa',  formula: 'J = 5,65 × V¹·⁸⁹⁶ / D¹·²⁷⁶', units: 'J en Pa/m · V en m/s · D en m' },
-                  { value: 'mCE', formula: 'J = 3,80 × V¹·⁸⁹⁶ / D¹·²⁷⁶', units: 'J en mCE/m · V en m/s · D en mm' },
-                ].map(opt => {
-                  const active = (params.dtuUnite ?? 'Pa') === opt.value
-                  return (
-                    <div key={opt.value}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                        <input type="radio" name="dtuUniteAlim"
-                          checked={active}
-                          onChange={() => set('dtuUnite', opt.value)} />
-                        <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11,
-                          fontWeight: active ? 600 : 400,
-                          color: active ? '#1e40af' : '#6b7280' }}>
-                          {opt.formula}
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#374151',
+                      textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Tronçons arrivée EF
+                    </span>
+                    <button onClick={() => {
+                      const tr = { id: uid('tr'), length: null, materialId: null, dn: null, di_override: null, coteAmont: null, coteAval: null, pourcentageSing: 20 }
+                      set('tronçonsAmont', [...(params.tronçonsAmont ?? []), tr])
+                    }} style={{ fontSize: 9.5, padding: '2px 8px', borderRadius: 3,
+                      border: '1px solid #d1d5db', background: '#f9fafb', cursor: 'pointer', color: '#374151' }}>
+                      + Ajouter
+                    </button>
+                  </div>
+                  {(params.tronçonsAmont ?? []).length === 0 ? (
+                    <div style={{ fontSize: 9.5, color: '#9ca3af', fontStyle: 'italic', padding: '2px 0 6px' }}>
+                      Aucun tronçon — pression arrivée EF = pression au départ ECS.
+                    </div>
+                  ) : (params.tronçonsAmont ?? []).map((tr: any, i: number) => {
+                    const res = amontTronconResults?.get(tr.id)
+                    const active = selectedAmontId === tr.id
+                    return (
+                      <div key={tr.id}
+                        onClick={() => onSelectAmontId?.(tr.id)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 7,
+                          padding: '6px 8px', borderRadius: 5, cursor: 'pointer', marginBottom: 4,
+                          background: active ? '#eff6ff' : '#f9fafb',
+                          border: `1px solid ${active ? '#93c5fd' : '#e5e7eb'}`,
+                          transition: 'all 0.1s',
+                        }}>
+                        <span style={{ fontSize: 8.5, fontWeight: 700, color: '#2563eb',
+                          background: '#dbeafe', padding: '1px 5px', borderRadius: 3, flexShrink: 0 }}>EF</span>
+                        <span style={{ fontSize: 10, flex: 1, color: '#374151', fontWeight: active ? 600 : 400 }}>
+                          {`Tronçon arrivée EF n°${i + 1}`}
                         </span>
-                      </label>
+                        {res && res.V > 0 && (
+                          <span style={{ fontSize: 9, color: '#6b7280' }}>{res.V.toFixed(2)} m/s</span>
+                        )}
+                        <button
+                          onClick={e => { e.stopPropagation(); set('tronçonsAmont', (params.tronçonsAmont ?? []).filter((_: any, j: number) => j !== i)) }}
+                          style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer',
+                            fontSize: 13, lineHeight: 1, padding: '0 1px', flexShrink: 0 }}>×</button>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {(() => {
+                  const p   = presAtECS
+                  const err = p < 30000
+                  return (
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                      borderTop: '1px solid #f3f4f6', paddingTop: 7, marginBottom: 12,
+                    }}>
+                      <span style={{ fontSize: 10, color: '#6b7280' }}>P. disponible au départ ECS</span>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: err ? '#dc2626' : '#374151',
+                        fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>
+                        {(p / 100000).toFixed(2)} bar
+                      </span>
                     </div>
                   )
-                })}
-              </div>
-            </div>
-          )}
-        </Block>
-
-        {/* ── Singulières ── */}
-        <Block color="#c2562d">
-          <BlockTitle color="#c2562d">Pertes de charge singulières</BlockTitle>
-          <div className="lp-field" style={{ marginBottom: 0 }}>
-            <label className="lp-label">Méthode de calcul</label>
-            <BtnRow
-              value={params.methodeSing}
-              onSelect={v => set('methodeSing', v)}
-              activeColor="#c2562d" activeBg="#fef0ea" activeBorder="#fbd5c5"
-              options={[
-                { value: 'pourcentage', label: 'Forfaitaire (%)' },
-                { value: 'accessoires', label: 'Accessoires (ξ)' },
-              ]}
-            />
-            {params.methodeSing === 'pourcentage' && (
-              <FormulaHint>
-                <span style={{ fontFamily: 'ui-monospace, monospace', color: '#c2562d' }}>ΔP_sing = ΔP_rég × x %</span>
-                <br />Majoration forfaitaire appliquée sur les ΔP régulières
-              </FormulaHint>
+                })()}
+              </>
             )}
-          </div>
-          {params.methodeSing === 'pourcentage' && (
-            <div className="lp-field" style={{ marginTop: 8, marginBottom: 0 }}>
-              <label className="lp-label">Majoration <span className="lp-unit">(%)</span></label>
-              <input type="number" min="0" max="100" step="1"
-                value={params.pourcentageSing != null && !isNaN(params.pourcentageSing) ? params.pourcentageSing : ''}
-                onChange={e => set('pourcentageSing', e.target.value === '' ? null : parseFloat(e.target.value))} />
-            </div>
-          )}
-        </Block>
 
-        {/* ── Équipements ── */}
-        <Block color="#7c3aed">
-          <label className="lp-checkbox-label" style={{ margin: 0, cursor: 'pointer' }}>
-            <input type="checkbox" checked={!!params.equipementsActifs}
-              onChange={e => set('equipementsActifs', e.target.checked)} />
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#7c3aed',
-              textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              Pertes de charge des équipements
-            </span>
-          </label>
-        </Block>
-
-        {/* ── Coefficient de sécurité ── */}
-        <div className="lp-field" style={{ marginBottom: 4 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-            <label className="lp-checkbox-label" style={{ margin: 0 }}>
-              <input type="checkbox" checked={!!params.coefPompeActif}
-                onChange={e => set('coefPompeActif', e.target.checked)} />
-              <span style={{ color: '#6b7280', fontSize: 11 }}>Coefficient de sécurité</span>
-            </label>
-            {params.coefPompeActif && (<>
-              <input type="number" min="0" max="50" step="1"
-                style={{ width: 44 }}
-                value={params.coefPompe != null && !isNaN(params.coefPompe) ? params.coefPompe : ''}
-                onChange={e => set('coefPompe', e.target.value === '' ? null : parseFloat(e.target.value))} />
-              <span className="lp-unit">%</span>
-            </>)}
-          </div>
-          {params.coefPompeActif && (
-            <div style={{ fontSize: 9.5, color: '#94a3b8', marginTop: 4, paddingLeft: 20, lineHeight: 1.5 }}>
-              <span style={{ fontFamily: 'ui-monospace, monospace', color: '#6b7280' }}>
-                ΔP_majoré = ΔP_pertes × (1 + x %)
-              </span>
-              <br />Marge appliquée sur le ΔP pertes max
-            </div>
-          )}
-        </div>
-      </>
-    </Section>
-  )
-}
-
-// ── Pertes de charge — Bouclage ECS ───────────────────
-function PdcParamsSection({ params, onChange }) {
-  const set = (k, v) => onChange({ ...params, [k]: v })
-
-  return (
-    <Section title="Paramètres PDC — Bouclage ECS">
-      <>
-
-        {/* ── Unité d'affichage (compact) ── */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 10 }}>
-          <span style={{ fontSize: 10, color: '#9ca3af' }}>Unité :</span>
-          {([['Pa', 'Pa'], ['mmCE', 'mmCE'], ['both', 'Pa/mmCE']] as [string, string][]).map(([val, lbl]) => {
-            const active = (params.uniteAffichage ?? 'Pa') === val
-            return (
-              <button key={val} onClick={() => set('uniteAffichage', val)}
-                style={{
-                  padding: '2px 7px', fontSize: 9.5, borderRadius: 3, cursor: 'pointer',
-                  border: `1px solid ${active ? '#94a3b8' : '#e5e7eb'}`,
-                  background: active ? '#f1f5f9' : '#fff',
-                  color: active ? '#374151' : '#9ca3af',
-                  fontWeight: active ? 600 : 400,
-                }}>
-                {lbl}
-              </button>
-            )
-          })}
-        </div>
+            <hr style={{ border: 'none', borderTop: '1px solid #e5e7eb', margin: '12px 0' }} />
+          </>
+        )}
 
         {/* ── Pertes linéaires ── */}
         <Block color="#3b82f6">
@@ -1218,21 +1176,21 @@ function PdcParamsSection({ params, onChange }) {
             <div className="lp-field" style={{ marginBottom: 0, marginTop: 8 }}>
               <label className="lp-label">Formule</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {[
-                  { value: 'Pa',  formula: 'J = 5,65 × V¹·⁸⁹⁶ / D¹·²⁷⁶', units: 'J en Pa/m · V en m/s · D en m' },
-                  { value: 'mCE', formula: 'J = 3,80 × V¹·⁸⁹⁶ / D¹·²⁷⁶', units: 'J en mCE/m · V en m/s · D en mm' },
-                ].map(opt => {
+                {([
+                  { value: 'Pa',  coef: '5,65', units: 'J en Pa/m · V en m/s · D en m' },
+                  { value: 'mCE', coef: '3,80', units: 'J en mCE/m · V en m/s · D en mm' },
+                ] as { value: string; coef: string; units: string }[]).map(opt => {
                   const active = (params.dtuUnite ?? 'Pa') === opt.value
                   return (
                     <div key={opt.value}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                        <input type="radio" name="dtuUnite"
+                        <input type="radio" name={`dtuUnite-${isAlimECS ? 'alim' : 'boucl'}`}
                           checked={active}
                           onChange={() => set('dtuUnite', opt.value)} />
-                        <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11,
+                        <span style={{ fontSize: 11,
                           fontWeight: active ? 600 : 400,
                           color: active ? '#1e40af' : '#6b7280' }}>
-                          {opt.formula}
+                          J = {opt.coef} × V<sup>1,896</sup> / D<sup>1,276</sup>
                         </span>
                       </label>
                       {active && (
@@ -1279,11 +1237,14 @@ function PdcParamsSection({ params, onChange }) {
             )}
           </div>
           {params.methodeSing === 'pourcentage' && (
-            <div className="lp-field" style={{ marginTop: 8, marginBottom: 0 }}>
-              <label className="lp-label">Majoration <span className="lp-unit">(%)</span></label>
-              <input type="number" min="0" max="100" step="1"
-                value={params.pourcentageSing != null && !isNaN(params.pourcentageSing) ? params.pourcentageSing : ''}
-                onChange={e => set('pourcentageSing', e.target.value === '' ? null : parseFloat(e.target.value))} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 8, marginBottom: 0 }}>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>Majoration</span>
+              <NumInput min={0} max={100} step={1}
+                value={params.pourcentageSing ?? null}
+                allowEmpty
+                style={{ width: 44 }}
+                onChange={v => set('pourcentageSing', v)} />
+              <span className="lp-unit">%</span>
             </div>
           )}
         </Block>
@@ -1309,10 +1270,11 @@ function PdcParamsSection({ params, onChange }) {
               <span style={{ color: '#6b7280', fontSize: 11 }}>Coefficient de sécurité</span>
             </label>
             {params.coefPompeActif && (<>
-              <input type="number" min="0" max="50" step="1"
+              <NumInput min={0} max={50} step={1}
                 style={{ width: 44 }}
-                value={params.coefPompe != null && !isNaN(params.coefPompe) ? params.coefPompe : ''}
-                onChange={e => set('coefPompe', e.target.value === '' ? null : parseFloat(e.target.value))} />
+                value={params.coefPompe ?? null}
+                allowEmpty
+                onChange={v => set('coefPompe', v)} />
               <span className="lp-unit">%</span>
             </>)}
           </div>
@@ -1343,7 +1305,7 @@ function GroupesSection({
   const displayLevels = [...(levels ?? [])].reverse()
 
   return (
-    <Section title="Groupes de points de puisage" defaultOpen={false}>
+    <Section>
       <>
           <div className="lp-label" style={{ marginBottom: 4 }}>Groupes par niveau :</div>
           <div style={{ overflowX: 'auto', marginBottom: 8 }}>
@@ -1403,16 +1365,11 @@ function FittingLibrarySection({ pdcParams, onChange }) {
   const showE = !!pdcParams?.equipementsActifs
   if (!showF && !showE) return null
 
-  const title = showF && showE ? 'Accessoires & Équipements'
-    : showF ? 'Accessoires'
-    : 'Équipements'
-
   // ── Accessoires ──────────────────────────────────────
-  const setFxi = (id: string, val: string) => {
-    const num = val === '' ? undefined : parseFloat(val)
+  const setFxi = (id: string, val: number | null) => {
     const next = { ...fOverrides }
-    if (num == null || isNaN(num)) delete next[id]
-    else next[id] = num
+    if (val == null) delete next[id]
+    else next[id] = val
     onChange({ ...pdcParams, fittingOverrides: next })
   }
   const addCustomF = () => {
@@ -1429,11 +1386,10 @@ function FittingLibrarySection({ pdcParams, onChange }) {
   }
 
   // ── Équipements ──────────────────────────────────────
-  const setEkv = (id: string, val: string) => {
-    const num = val === '' ? undefined : parseFloat(val)
+  const setEkv = (id: string, val: number | null) => {
     const next = { ...eOverrides }
-    if (num == null || isNaN(num)) delete next[id]
-    else next[id] = num
+    if (val == null) delete next[id]
+    else next[id] = val
     onChange({ ...pdcParams, equipmentOverrides: next })
   }
   const addCustomE = () => {
@@ -1458,25 +1414,29 @@ function FittingLibrarySection({ pdcParams, onChange }) {
                   letterSpacing: '0.06em', marginBottom: 7, marginTop: 2 }}>{label}</div>
   )
 
+  const title = showF && showE ? 'Accessoires & Équipements'
+    : showF ? 'Accessoires'
+    : 'Équipements'
+
   return (
     <Section title={title}>
       <>
         {showF && (
           <>
-            {(showF && showE) && subHeader('Accessoires', '#c2562d')}
+            {showE && subHeader('Accessoires', '#c2562d')}
             {FITTING_TYPES.map(t => {
               const ov  = fOverrides[t.id]
               const val = ov ?? t.xi
               return (
                 <div key={t.id} style={row}>
                   <span style={{ flex: 1, fontSize: 10, color: '#374151', lineHeight: 1.3 }}>{t.label}</span>
-                  <input type="number" min="0" step="0.01" value={val ?? ''}
-                    onChange={e => setFxi(t.id, e.target.value)}
+                  <NumInput min={0} step={0.01} value={val ?? null} allowEmpty
+                    onChange={v => setFxi(t.id, v)}
                     style={{ width: 50, fontSize: 10, padding: '2px 4px', textAlign: 'center', borderRadius: 4,
                              border: `1px solid ${ov != null ? '#fbd5c5' : '#e5e7eb'}`,
                              color: ov != null ? '#c2562d' : '#374151' }} />
                   {ov != null && (
-                    <button onClick={() => setFxi(t.id, '')} title={`Rétablir (${t.xi})`}
+                    <button onClick={() => setFxi(t.id, null)} title={`Rétablir (${t.xi})`}
                       style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11, padding: 0 }}>
                       ↺
                     </button>
@@ -1515,21 +1475,21 @@ function FittingLibrarySection({ pdcParams, onChange }) {
 
         {showE && (
           <>
-            {(showF && showE) && subHeader('Équipements', '#7c3aed')}
+            {showF && subHeader('Équipements', '#7c3aed')}
             {EQUIPMENT_TYPES.map(t => {
               const ov  = eOverrides[t.id]
               const val = ov ?? t.kvDefault
               return (
                 <div key={t.id} style={row}>
                   <span style={{ flex: 1, fontSize: 10, color: '#374151', lineHeight: 1.3 }}>{t.label}</span>
-                  <input type="number" min="0" step="0.1" value={val ?? ''}
+                  <NumInput min={0} step={0.1} value={val ?? null} allowEmpty
                     placeholder={t.kvDefault == null ? 'à saisir' : undefined}
-                    onChange={e => setEkv(t.id, e.target.value)}
+                    onChange={v => setEkv(t.id, v)}
                     style={{ width: 50, fontSize: 10, padding: '2px 4px', textAlign: 'center', borderRadius: 4,
                              border: `1px solid ${ov != null ? '#ddd6fe' : '#e5e7eb'}`,
                              color: ov != null ? '#7c3aed' : '#374151' }} />
                   {ov != null && (
-                    <button onClick={() => setEkv(t.id, '')} title={`Rétablir (${t.kvDefault ?? '—'})`}
+                    <button onClick={() => setEkv(t.id, null)} title={`Rétablir (${t.kvDefault ?? '—'})`}
                       style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11, padding: 0 }}>
                       ↺
                     </button>
@@ -1571,18 +1531,18 @@ function FittingLibrarySection({ pdcParams, onChange }) {
 
 
 export default function LeftPanel({
+  activeSection,
   activeCalcId,
   calcSubMode,
-  globalParams, onGlobalParamsChange,
   alimentationParams, onAlimentationParamsChange,
   pdcParams, onPdcParamsChange,
-  pdcParamsAlimECS, onPdcParamsAlimECSChange,
+  pdcParamsAlimECS, onPdcParamsAlimECSChange, totalQpAlimM3h = 0,
+  selectedAmontId, onSelectAmontId, amontTronconResults, pressionSourceAlimECSStatic = null,
   levels, lineYs, onLevelsChange, onLineYsChange,
-  editLevelsEnabled, onEditLevelsChange,
+  editLinesEnabled, onEditLinesChange,
   materials, onMaterialsChange,
   insulations, onInsulationsChange,
   columns, columnXs, onColumnsChange, onColumnXsChange, onRemoveColumn, onAddColumn, onAddGap, onMoveGaine,
-  editColumnsEnabled, onEditColumnsChange,
   chaufferie,
   segments, points, networkFlows,
   drawMode, editParam, onEditParamChange,
@@ -1594,18 +1554,8 @@ export default function LeftPanel({
   if (drawMode === 'editParams') {
     return (
       <div className="left-panel">
+        <div className="lp-panel-title">Attribution des paramètres</div>
         <div className="lp-section">
-          <div className="lp-section-header" style={{ pointerEvents: 'none' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <svg width={13} height={13} viewBox="0 0 13 13" style={{ flexShrink: 0 }}>
-                <rect x={1} y={1} width={11} height={11} rx={1.5} fill="none" stroke="currentColor" strokeWidth={1.2} />
-                <line x1={3.5} y1={4}   x2={9.5} y2={4}   stroke="currentColor" strokeWidth={1.1} strokeLinecap="round" />
-                <line x1={3.5} y1={6.5} x2={9.5} y2={6.5} stroke="currentColor" strokeWidth={1.1} strokeLinecap="round" />
-                <line x1={3.5} y1={9}   x2={7}   y2={9}   stroke="currentColor" strokeWidth={1.1} strokeLinecap="round" />
-              </svg>
-              Attribution des paramètres
-            </span>
-          </div>
           <div className="lp-section-body">
             <EditParamsPanel
               segments={segments} points={points}
@@ -1639,121 +1589,126 @@ export default function LeftPanel({
     )
   }
 
-  if (activeCalcId === 'alimentation-ecs' && calcSubMode === 'pdc') {
-    return (
-      <div className="left-panel">
-        <PdcParamsAlimECSSection params={pdcParamsAlimECS} onChange={onPdcParamsAlimECSChange} />
-        <AlimentationParamsSection params={alimentationParams} onChange={onAlimentationParamsChange} />
-        <FittingLibrarySection pdcParams={pdcParamsAlimECS} onChange={onPdcParamsAlimECSChange} />
-        <MaterialsSection materials={materials} onChange={onMaterialsChange} compact showEpsilon />
-        <LevelsSection
-          levels={levels} lineYs={lineYs}
-          onLevelsChange={onLevelsChange} onLineYsChange={onLineYsChange}
-          editLevelsEnabled={editLevelsEnabled} onEditLevelsChange={onEditLevelsChange}
-        />
-        <ColumnsSection
-          columns={columns} columnXs={columnXs}
-          onColumnsChange={onColumnsChange} onColumnXsChange={onColumnXsChange}
-          onRemoveColumn={onRemoveColumn} onAddColumn={onAddColumn} onAddGap={onAddGap} onMoveGaine={onMoveGaine}
-          levels={levels}
-          editColumnsEnabled={editColumnsEnabled} onEditColumnsChange={onEditColumnsChange}
-        />
-        <GroupesSection
-          groupesEditMode={groupesEditMode} onGroupesEditModeChange={onGroupesEditModeChange}
-          showGroupeNames={showGroupeNames} onShowGroupeNamesChange={onShowGroupeNamesChange}
-          onAddGroupe={onAddGroupe} onRemoveGroupe={onRemoveGroupe}
-          columns={columns} levels={levels} points={points}
-        />
-      </div>
-    )
-  }
-
-  if (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') {
-    const tree = (
-      <>
-        <LevelsSection
-          levels={levels} lineYs={lineYs}
-          onLevelsChange={onLevelsChange} onLineYsChange={onLineYsChange}
-          editLevelsEnabled={editLevelsEnabled} onEditLevelsChange={onEditLevelsChange}
-        />
-        <ColumnsSection
-          columns={columns} columnXs={columnXs}
-          onColumnsChange={onColumnsChange} onColumnXsChange={onColumnXsChange}
-          onRemoveColumn={onRemoveColumn} onAddColumn={onAddColumn} onAddGap={onAddGap} onMoveGaine={onMoveGaine}
-          levels={levels}
-          editColumnsEnabled={editColumnsEnabled} onEditColumnsChange={onEditColumnsChange}
-        />
-        <GroupesSection
-          groupesEditMode={groupesEditMode} onGroupesEditModeChange={onGroupesEditModeChange}
-          showGroupeNames={showGroupeNames} onShowGroupeNamesChange={onShowGroupeNamesChange}
-          onAddGroupe={onAddGroupe} onRemoveGroupe={onRemoveGroupe}
-          columns={columns} levels={levels} points={points}
-        />
-      </>
-    )
-    if (calcSubMode === 'pdc') {
-      return <div className="left-panel">{tree}</div>
-    }
-    return (
-      <div className="left-panel">
-        <AlimentationParamsSection params={alimentationParams} onChange={onAlimentationParamsChange} />
-        <MaterialsSection materials={materials} onChange={onMaterialsChange} showLambda={false} />
-        {tree}
-      </div>
-    )
-  }
-
-  if (activeCalcId === 'bouclage-ecs' && calcSubMode === 'pdc') {
-    return (
-      <div className="left-panel">
-        <PdcParamsSection params={pdcParams} onChange={onPdcParamsChange} />
-        <FittingLibrarySection pdcParams={pdcParams} onChange={onPdcParamsChange} />
-        <MaterialsSection materials={materials} onChange={onMaterialsChange} compact showEpsilon />
-        <LevelsSection
-          levels={levels} lineYs={lineYs}
-          onLevelsChange={onLevelsChange} onLineYsChange={onLineYsChange}
-          editLevelsEnabled={editLevelsEnabled} onEditLevelsChange={onEditLevelsChange}
-        />
-        <ColumnsSection
-          columns={columns} columnXs={columnXs}
-          onColumnsChange={onColumnsChange} onColumnXsChange={onColumnXsChange}
-          onRemoveColumn={onRemoveColumn} onAddColumn={onAddColumn} onAddGap={onAddGap} onMoveGaine={onMoveGaine}
-          levels={levels}
-          editColumnsEnabled={editColumnsEnabled} onEditColumnsChange={onEditColumnsChange}
-        />
-        <GroupesSection
-          groupesEditMode={groupesEditMode} onGroupesEditModeChange={onGroupesEditModeChange}
-          showGroupeNames={showGroupeNames} onShowGroupeNamesChange={onShowGroupeNamesChange}
-          onAddGroupe={onAddGroupe} onRemoveGroupe={onRemoveGroupe}
-          columns={columns} levels={levels} points={points}
-        />
-      </div>
-    )
-  }
-
-  return (
-    <div className="left-panel">
-      <GlobalParamsSection params={globalParams} onChange={onGlobalParamsChange} />
-      <MaterialsSection materials={materials} onChange={onMaterialsChange} />
-      <InsulationsSection insulations={insulations} onChange={onInsulationsChange} />
+  const levelsCol = (
+    <>
       <LevelsSection
         levels={levels} lineYs={lineYs}
         onLevelsChange={onLevelsChange} onLineYsChange={onLineYsChange}
-        editLevelsEnabled={editLevelsEnabled} onEditLevelsChange={onEditLevelsChange}
       />
       <ColumnsSection
         columns={columns} columnXs={columnXs}
         onColumnsChange={onColumnsChange} onColumnXsChange={onColumnXsChange}
         onRemoveColumn={onRemoveColumn} onAddColumn={onAddColumn} onAddGap={onAddGap} onMoveGaine={onMoveGaine}
         levels={levels}
-        editColumnsEnabled={editColumnsEnabled} onEditColumnsChange={onEditColumnsChange}
       />
-      <GroupesSection
+      <div className="lp-section">
+        <div className="lp-section-body">
+          <label className="lp-checkbox-label">
+            <input type="checkbox" checked={editLinesEnabled}
+              onChange={e => onEditLinesChange(e.target.checked)} />
+            <span>Modifier les lignes de niveaux / colonnes</span>
+          </label>
+          {editLinesEnabled && (
+            <p className="lp-hint">Glissez les lignes sur le plan pour ajuster les hauteurs et largeurs.</p>
+          )}
+        </div>
+      </div>
+    </>
+  )
+
+  const activePdcP = activeCalcId === 'alimentation-ecs' ? pdcParamsAlimECS : pdcParams
+  const activePdcOnChange = activeCalcId === 'alimentation-ecs' ? onPdcParamsAlimECSChange : onPdcParamsChange
+
+  let content: React.ReactNode = null
+  switch (activeSection) {
+    case 'niveaux':
+      content = levelsCol
+      break
+    case 'groupes':
+      content = <GroupesSection
         groupesEditMode={groupesEditMode} onGroupesEditModeChange={onGroupesEditModeChange}
         showGroupeNames={showGroupeNames} onShowGroupeNamesChange={onShowGroupeNamesChange}
         onAddGroupe={onAddGroupe} onRemoveGroupe={onRemoveGroupe}
         columns={columns} levels={levels} points={points}
       />
+      break
+    case 'materiaux':
+      content = <MaterialsSection materials={materials} onChange={onMaterialsChange} />
+      break
+    case 'isolation':
+      content = <InsulationsSection insulations={insulations} onChange={onInsulationsChange} />
+      break
+    case 'equipements':
+      content = <>
+        {(activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') && (
+          <AlimentationParamsSection params={alimentationParams} onChange={onAlimentationParamsChange} />
+        )}
+      </>
+      break
+    case 'pdc':
+      if (activeCalcId === 'bouclage-ecs') {
+        content = <>
+          <PdcParamsSection params={pdcParams} onChange={onPdcParamsChange} />
+          <FittingLibrarySection pdcParams={pdcParams} onChange={onPdcParamsChange} />
+        </>
+      } else if (activeCalcId === 'alimentation-ecs') {
+        content = <>
+          <PdcParamsSection
+            params={pdcParamsAlimECS} onChange={onPdcParamsAlimECSChange}
+            isAlimECS
+            totalQpAlimM3h={totalQpAlimM3h}
+            selectedAmontId={selectedAmontId} onSelectAmontId={onSelectAmontId}
+            amontTronconResults={amontTronconResults}
+            pressionSourceAlimECSStatic={pressionSourceAlimECSStatic}
+          />
+          <FittingLibrarySection pdcParams={pdcParamsAlimECS} onChange={onPdcParamsAlimECSChange} />
+        </>
+      } else {
+        content = <div className="lp-section"><p className="lp-hint" style={{ padding: '12px 14px' }}>Les pertes de charge sont configurables en mode Bouclage ECS ou Alimentation ECS.</p></div>
+      }
+      break
+    default:
+      content = null
+  }
+
+  const panelTitles: Record<string, string> = {
+    niveaux:     'Niveaux & Colonnes',
+    groupes:     'Groupes de points de puisage',
+    materiaux:   'Matériaux des canalisations',
+    isolation:   'Isolants (calorifugeage)',
+    equipements: 'Équipements',
+    pdc:         'Pertes de charge',
+  }
+
+  return (
+    <div className="left-panel">
+      {activeSection && panelTitles[activeSection] && (
+        <div className="lp-panel-title">
+          <span style={{ flex: 1 }}>{panelTitles[activeSection]}</span>
+          {activeSection === 'pdc' && activePdcP != null && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+              <span style={{ fontSize: 9, color: '#9ca3af', marginRight: 2 }}>Unité</span>
+              {([['Pa', 'Pa'], ['mmCE', 'mmCE'], ['both', 'Pa/mmCE']] as [string, string][]).map(([val, lbl]) => {
+                const active = (activePdcP.uniteAffichage ?? 'Pa') === val
+                return (
+                  <button key={val} onClick={() => activePdcOnChange({ ...activePdcP, uniteAffichage: val })}
+                    style={{
+                      padding: '2px 6px', fontSize: 9.5, borderRadius: 3, cursor: 'pointer',
+                      border: `1px solid ${active ? '#94a3b8' : '#e5e7eb'}`,
+                      background: active ? '#f1f5f9' : '#fff',
+                      color: active ? '#374151' : '#9ca3af',
+                      fontWeight: active ? 600 : 400,
+                      lineHeight: 1.4,
+                    }}>
+                    {lbl}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+      {content}
     </div>
   )
 }

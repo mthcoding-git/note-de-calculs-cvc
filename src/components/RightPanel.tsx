@@ -3,8 +3,9 @@ import { ABAQUE } from '../utils/alimentationCalc'
 import { getDisplayName } from '../utils/naming'
 import { computeSegUI, getSegAmbTemp } from '../utils/thermalCalc'
 import { sf } from '../utils/fmt'
-import { FITTING_TYPES, EQUIPMENT_TYPES } from '../utils/pdcCalc'
+import { FITTING_TYPES, EQUIPMENT_TYPES, type TronconAmontEF, type TronconAmontResult } from '../utils/pdcCalc'
 import { getNodeCote, getNodeDefaultCote } from '../utils/coteCalc'
+import { NumInput } from './NumInput'
 
 function tAvalStyle(T, T_depart) {
   if (T == null) return {}
@@ -16,15 +17,508 @@ function tAvalStyle(T, T_depart) {
 
 function Field({ label, unit = null, children }: { label: any, unit?: any, children: any }) {
   return (
-    <div className="lp-field">
-      <label className="lp-label">
-        {label}{unit && <span className="lp-unit"> ({unit})</span>}
-      </label>
-      {children}
+    <div className="lp-field rp-field-row">
+      <label className="lp-label">{label}</label>
+      <div className="rp-field-input-wrap">
+        {children}
+        {unit && <span className="rp-field-unit">{unit}</span>}
+      </div>
     </div>
   )
 }
 
+
+// ── Calcul longueur + volume antenne ─────────────────────────────────────
+function _antenneDiMm(s: any, materials: any[]): number | null {
+  if (s.di_override != null) return s.di_override
+  const mat = materials.find((m: any) => m.id === s.materialId)
+  return mat?.dns.find((d: any) => d.dn === s.dn)?.di ?? null
+}
+
+function _segContrib(s: any, materials: any[]): { len: number; vol: number } {
+  const len = s.length_override ?? 0
+  const di  = _antenneDiMm(s, materials)
+  const vol = di && len > 0 ? (Math.PI / 4) * (di / 1000) ** 2 * len * 1000 : 0
+  return { len, vol }
+}
+
+/** Longueur + volume totaux depuis la racine aller ECS jusqu'à un groupe (marche amont). */
+function computeGroupePath(
+  groupePtId: string,
+  allSegs: any[],
+  flowDirections: Map<string, { fromId: string; toId: string }> | undefined,
+  materials: any[],
+  roleMap: Map<string, string> | undefined
+): { length: number; volume: number } {
+  if (!flowDirections || !roleMap) return { length: 0, volume: 0 }
+  let totalLen = 0, totalVol = 0
+  let currentNodeId: string | undefined = groupePtId
+  const visited = new Set<string>()
+  while (currentNodeId) {
+    if (visited.has(currentNodeId)) break
+    visited.add(currentNodeId)
+    const incoming = allSegs.find(
+      (s: any) => flowDirections.get(s.id)?.toId === currentNodeId && roleMap.get(s.id) === 'antenne'
+    )
+    if (!incoming) break
+    const { len, vol } = _segContrib(incoming, materials)
+    totalLen += len; totalVol += vol
+    currentNodeId = flowDirections.get(incoming.id)?.fromId
+  }
+  return { length: totalLen, volume: totalVol }
+}
+
+/**
+ * Groupes de puisage en aval du tronçon `seg` (uniquement depuis son nœud aval),
+ * avec longueur + volume totaux depuis la racine aller ECS.
+ */
+function computeAntenneGroupePaths(
+  seg: any,
+  allSegs: any[],
+  points: any[],
+  flowDirections: Map<string, { fromId: string; toId: string }> | undefined,
+  materials: any[],
+  roleMap: Map<string, string> | undefined
+): { groupeId: string; length: number; volume: number }[] {
+  if (!flowDirections || !roleMap) return []
+
+  // Cumul longueur/volume depuis la racine jusqu'à l'aval du tronçon sélectionné
+  // = marche amont depuis dir.fromId + contribution du tronçon lui-même
+  const dir = flowDirections.get(seg.id)
+  if (!dir) return []
+
+  const upstreamBase = computeGroupePath(dir.fromId, allSegs, flowDirections, materials, roleMap)
+  const own          = _segContrib(seg, materials)
+  const baseLen      = upstreamBase.length + own.len
+  const baseVol      = upstreamBase.volume + own.vol
+
+  // DFS depuis l'aval du tronçon sélectionné
+  const results: { groupeId: string; length: number; volume: number }[] = []
+  const visited = new Set<string>()
+
+  function dfs(nodeId: string, cumulLen: number, cumulVol: number) {
+    if (visited.has(nodeId)) return
+    visited.add(nodeId)
+    const pt = points.find((p: any) => p.id === nodeId)
+    if (pt?.type === 'groupe') {
+      results.push({ groupeId: nodeId, length: cumulLen, volume: cumulVol })
+      return
+    }
+    for (const s of allSegs.filter(
+      (s: any) => flowDirections!.get(s.id)?.fromId === nodeId && roleMap!.get(s.id) === 'antenne'
+    )) {
+      const { len, vol } = _segContrib(s, materials)
+      const toId = flowDirections!.get(s.id)?.toId
+      if (toId) dfs(toId, cumulLen + len, cumulVol + vol)
+    }
+  }
+
+  dfs(dir.toId, baseLen, baseVol)
+  return results
+}
+
+const MAX_ANTENNE_VOL_L = 3.0   // L  (DTU 60.11)
+const MAX_ANTENNE_LEN_M = 8.0   // m
+
+function AntenneGroupesAval({ seg, allSegs, points, flowDirections, materials, roleMap, groupDisplayNames }: {
+  seg: any, allSegs: any[], points: any[]
+  flowDirections: Map<string, { fromId: string; toId: string }> | undefined
+  materials: any[], roleMap: Map<string, string> | undefined
+  groupDisplayNames: Map<string, string> | null | undefined
+}) {
+  if (roleMap?.get(seg.id) !== 'antenne') return null
+  const paths = computeAntenneGroupePaths(seg, allSegs, points, flowDirections, materials, roleMap)
+  if (paths.length === 0) return null
+
+  return (
+    <>
+      <hr className="rp-divider" />
+      <SectionLabel>Groupes en aval</SectionLabel>
+      {paths.map(({ groupeId, length, volume }) => {
+        const lenOk  = length <= MAX_ANTENNE_LEN_M
+        const volOk  = volume <= MAX_ANTENNE_VOL_L
+        const ok     = lenOk && volOk
+        const name   = groupDisplayNames?.get(groupeId)
+                     ?? points.find((p: any) => p.id === groupeId)?.name
+                     ?? 'Groupe de puisage'
+        const bg     = ok ? '#f0fdf4' : '#fef2f2'
+        const border = ok ? '#bbf7d0' : '#fca5a5'
+        const lenCol = lenOk ? '#16a34a' : '#dc2626'
+        const volCol = volOk ? '#16a34a' : '#dc2626'
+        return (
+          <div key={groupeId} style={{
+            padding: '7px 10px', background: bg,
+            border: `1px solid ${border}`, borderRadius: 6, marginBottom: 5,
+          }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: '#374151', marginBottom: 5, lineHeight: 1.3 }}>
+              {name}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span style={{ fontSize: 9.5, color: '#6b7280' }}>Longueur antenne</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: lenCol, fontFamily: 'ui-monospace, monospace' }}>
+                  {length.toFixed(1)} m {lenOk ? '✓' : `⚠ > ${MAX_ANTENNE_LEN_M} m`}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span style={{ fontSize: 9.5, color: '#6b7280' }}>Volume antenne</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: volCol, fontFamily: 'ui-monospace, monospace' }}>
+                  {volume.toFixed(2)} L {volOk ? '✓' : `⚠ > ${MAX_ANTENNE_VOL_L} L`}
+                </span>
+              </div>
+            </div>
+          </div>
+        )
+      })}
+      <div style={{ fontSize: 9, color: '#9ca3af', fontStyle: 'italic', marginTop: 2 }}>
+        Depuis le tronçon aller ECS jusqu'au groupe — seuils : {MAX_ANTENNE_LEN_M} m / {MAX_ANTENNE_VOL_L} L (DTU 60.11)
+      </div>
+    </>
+  )
+}
+
+function TronconAmontPanel({ tr, index, result, materials, totalQpAlimM3h, pdcParams, onUpdate, onRemove }: {
+  tr: TronconAmontEF, index: number, result: TronconAmontResult | null
+  materials: any[], totalQpAlimM3h: number, pdcParams: any
+  onUpdate: (tr: TronconAmontEF) => void, onRemove: () => void
+}) {
+  const [tab, setTab] = useState<'params' | 'results'>('params')
+  const set = (k: string, v: any) => onUpdate({ ...tr, [k]: v })
+
+  const enabledMats = materials.filter((m: any) => m.enabled)
+  const selMat      = materials.find((m: any) => m.id === tr.materialId)
+  const dnDef       = selMat?.dns.find((d: any) => d.dn === tr.dn)
+  const deltaH      = (tr.coteAval ?? 0) - (tr.coteAmont ?? 0)
+  const res         = result
+
+  const unite = pdcParams?.uniteAffichage ?? 'Pa'
+  const fmtMce = (pa: number) => `${(pa / 9.81).toFixed(0)} mmCE`
+  const fmtPa  = (v: number) => v >= 10000 ? `${(v / 1000).toFixed(2)} kPa` : `${Math.round(v)} Pa`
+  const fmtP   = (pa: number) => {
+    if (unite === 'mmCE') return fmtMce(pa)
+    if (unite === 'both') return `${fmtPa(pa)} / ${fmtMce(pa)}`
+    return fmtPa(pa)
+  }
+  const paStr  = (pa: number) => `${Math.round(pa)} Pa`
+  const pct    = (v: number) => res && res.dpTotal > 0 ? `${Math.round(v / res.dpTotal * 100)} %` : '—'
+
+  const row = (label: string, value: string) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      padding: '2px 0', borderBottom: '1px solid #f3f4f6', gap: 6 }}>
+      <span style={{ fontSize: 10, color: '#6b7280', minWidth: 0 }}>{label}</span>
+      <span style={{ fontSize: 10.5, fontWeight: 500, color: '#374151',
+        fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
+    </div>
+  )
+  const resultRow = (label: string, value: string, color: string) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      padding: '4px 0', marginTop: 4, gap: 6 }}>
+      <span style={{ fontSize: 10, color, fontWeight: 600 }}>{label}</span>
+      <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
+    </div>
+  )
+  const cardHeader = (title: string, value: string, pctVal: string, color: string, light: string) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      padding: '7px 12px', background: '#f9fafb', borderBottom: '1px solid #f3f4f6' }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: '#374151',
+        textTransform: 'uppercase', letterSpacing: '0.05em' }}>{title}</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color }}>{value}</span>
+        <span style={{ fontSize: 10, color: light }}>{pctVal}</span>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="rp-section">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <h3 className="rp-title" style={{ margin: 0 }}>Tronçon</h3>
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#2563eb',
+          background: '#dbeafe', padding: '2px 6px', borderRadius: 3 }}>EF</span>
+      </div>
+
+      {/* Tab toggle */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
+        {([['params', 'Paramètres'], ['results', 'Résultats']] as [string, string][]).map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key as any)} style={{
+            flex: 1, padding: '5px 0', fontSize: 11, fontWeight: tab === key ? 700 : 500,
+            border: `1px solid ${tab === key ? '#6366f1' : '#e5e7eb'}`,
+            borderRadius: 5, cursor: 'pointer',
+            background: tab === key ? '#eef2ff' : '#f9fafb',
+            color: tab === key ? '#4338ca' : '#6b7280',
+          }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'results' && (
+        <div>
+          {res ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+              {/* Pression entrée / sortie */}
+              <div style={{ display: 'flex', gap: 8 }}>
+                {[
+                  { label: 'Pression entrée', val: res.presIn },
+                  { label: 'Pression sortie', val: res.presOut },
+                ].map(({ label, val }) => {
+                  const isErr = val < 30000
+                  return (
+                    <div key={label} style={{ flex: 1, padding: '10px 12px',
+                      background: isErr ? '#fef2f2' : '#fff',
+                      border: `1px solid ${isErr ? '#fca5a5' : '#e5e7eb'}`,
+                      borderRadius: 8, textAlign: 'center' }}>
+                      <div style={{ fontSize: 8.5, fontWeight: 700, color: '#6b7280',
+                        textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 3, justifyContent: 'center' }}>
+                        <span style={{ fontSize: 22, fontWeight: 800, color: isErr ? '#dc2626' : '#0f172a' }}>
+                          {(val / 100000).toFixed(2)}
+                        </span>
+                        <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>bar</span>
+                      </div>
+                      {isErr && <div style={{ fontSize: 9, marginTop: 2, color: '#dc2626', fontWeight: 700 }}>{'< 0,3 bar'}</div>}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Séparateur Détail */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0' }}>
+                <div style={{ flex: 1, height: 1, background: '#e5e7eb' }} />
+                <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Détail</span>
+                <div style={{ flex: 1, height: 1, background: '#e5e7eb' }} />
+              </div>
+
+              {/* Pertes du tronçon (carte récap) */}
+              <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #2563eb', borderRadius: 8, overflow: 'hidden' }}>
+                {cardHeader('Pertes du tronçon', fmtP(res.dpTotal), '', '#0f172a', '#94a3b8')}
+                <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {res.dpTotal > 0 && (
+                    <div style={{ height: 5, borderRadius: 3, overflow: 'hidden', display: 'flex', gap: 2, marginBottom: 4 }}>
+                      <div style={{ flex: res.dpFric, background: '#2563eb', borderRadius: 3 }} />
+                      <div style={{ flex: res.dpSing, background: '#c2562d', borderRadius: 3 }} />
+                      {res.dpEquip > 0 && <div style={{ flex: res.dpEquip, background: '#7c3aed', borderRadius: 3 }} />}
+                      {res.dpStatic > 0 && <div style={{ flex: res.dpStatic, background: '#94a3b8', borderRadius: 3 }} />}
+                    </div>
+                  )}
+                  {row('ΔP frottement', fmtP(res.dpFric))}
+                  {row('ΔP singulières', fmtP(res.dpSing))}
+                  {res.dpEquip > 0 && row('ΔP équipements', fmtP(res.dpEquip))}
+                  {row('ΔP hauteur statique', fmtP(res.dpStatic))}
+                </div>
+              </div>
+
+              {/* Pertes linéaires */}
+              <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #2563eb', borderRadius: 8, overflow: 'hidden' }}>
+                {cardHeader('Pertes linéaires', fmtP(res.dpFric), pct(res.dpFric), '#2563eb', '#93c5fd')}
+                <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
+                    {pdcParams?.methodeReg === 'dtu-approche'
+                      ? `DTU 60.11 — formule approchée${pdcParams?.dtuUnite === 'mCE' ? ' (mCE)' : ' (Pa)'}`
+                      : 'Darcy-Weisbach + Colebrook-White'}
+                  </div>
+                  {pdcParams?.methodeReg !== 'dtu-approche' && res.rho != null && (<>
+                    {row('ρ', `${res.rho.toFixed(2)} kg/m³`)}
+                    {res.mu != null && row('μ', `${(res.mu * 1e3).toFixed(3)} ×10⁻³ Pa·s`)}
+                    {res.nu != null && row('ν', `${(res.nu * 1e6).toFixed(3)} ×10⁻⁶ m²/s`)}
+                    {res.Re != null && row(
+                      `Re — ${res.regime === 'laminar' ? 'laminaire' : res.regime === 'transition' ? 'transition' : 'turbulent'}`,
+                      `${Math.round(res.Re)}`
+                    )}
+                    {res.lambda != null && row('λ', res.lambda.toFixed(5))}
+                    {row('J', `${res.J.toFixed(1)} Pa/m`)}
+                  </>)}
+                  {pdcParams?.methodeReg === 'dtu-approche' && row('J', `${res.J.toFixed(1)} Pa/m`)}
+                  {resultRow(
+                    `ΔP_lin = J × L`,
+                    `${res.J.toFixed(1)} × ${tr.length != null ? tr.length.toFixed(1) : '—'} = ${paStr(res.dpFric)}`,
+                    '#2563eb'
+                  )}
+                </div>
+              </div>
+
+              {/* Pertes singulières */}
+              <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #c2562d', borderRadius: 8, overflow: 'hidden' }}>
+                {cardHeader('Pertes singulières', fmtP(res.dpSing), pct(res.dpSing), '#c2562d', '#fca38a')}
+                <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {(pdcParams?.methodeSing ?? 'pourcentage') === 'pourcentage' ? (<>
+                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
+                      {`Forfaitaire — ${pdcParams?.pourcentageSing ?? 20} % des pertes linéaires`}
+                    </div>
+                    {row(`ΔP_lin × ${pdcParams?.pourcentageSing ?? 20} %`, `${Math.round(res.dpFric)} × ${((pdcParams?.pourcentageSing ?? 20) / 100).toFixed(2)}`)}
+                    {resultRow('ΔP_sing', paStr(res.dpSing), '#c2562d')}
+                  </>) : (() => {
+                    const fittings: any[] = tr.fittings ?? []
+                    const active = fittings.filter(f => (f.count ?? 0) > 0)
+                    const dyn    = res.dynPressure ?? 0
+                    const customFittings: any[] = pdcParams?.customFittings ?? []
+                    const allF = [...FITTING_TYPES, ...customFittings.map((t: any) => ({ id: t.id, label: t.label, xi: t.xi }))]
+                    return (<>
+                      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>Par accessoires — ξ × ρV²/2</div>
+                      {row('ρV²/2  (pression dynamique)', paStr(dyn))}
+                      {active.length === 0
+                        ? <div style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic', padding: '3px 0' }}>Aucun accessoire renseigné</div>
+                        : active.map(f => {
+                            const def = allF.find(t => t.id === f.type)
+                            const xi  = f.xiOverride ?? pdcParams?.fittingOverrides?.[f.type] ?? def?.xi ?? 0
+                            const dp  = xi * (f.count ?? 1) * dyn
+                            return row(`${f.count}× ${def?.label ?? f.type}  (ξ = ${xi})`, paStr(dp))
+                          })
+                      }
+                      {active.length > 0 && resultRow('ΔP_sing = Σ', paStr(res.dpSing), '#c2562d')}
+                    </>)
+                  })()}
+                </div>
+              </div>
+
+              {/* Équipements */}
+              {pdcParams?.equipementsActifs && (
+                <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #7c3aed', borderRadius: 8, overflow: 'hidden' }}>
+                  {cardHeader('Équipements', fmtP(res.dpEquip), pct(res.dpEquip), '#7c3aed', '#c4b5fd')}
+                  <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {(() => {
+                      const equipment: any[] = tr.equipment ?? []
+                      const customEquipments: any[] = pdcParams?.customEquipments ?? []
+                      const allE = [...EQUIPMENT_TYPES, ...customEquipments.map((t: any) => ({ id: t.id, label: t.label, kvDefault: t.kvDefault }))]
+                      if (equipment.length === 0) return (
+                        <div style={{ fontSize: 10, color: '#c4b5fd', fontStyle: 'italic', padding: '3px 0' }}>Aucun équipement configuré</div>
+                      )
+                      return (<>
+                        {equipment.map(e => {
+                          const def = allE.find(t => t.id === e.type)
+                          const kv  = e.kvOverride ?? pdcParams?.equipmentOverrides?.[e.type] ?? def?.kvDefault ?? null
+                          const dp  = kv && totalQpAlimM3h ? Math.pow(totalQpAlimM3h / kv, 2) * 100000 : null
+                          return row(`${def?.label ?? e.type}`, dp != null ? paStr(dp) : 'Kv manquant')
+                        })}
+                        {resultRow('ΔP_équip = Σ', paStr(res.dpEquip), '#7c3aed')}
+                      </>)
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {/* Hauteur statique */}
+              <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #94a3b8', borderRadius: 8, overflow: 'hidden' }}>
+                {cardHeader('Hauteur statique', fmtP(res.dpStatic), '—', '#64748b', '#94a3b8')}
+                <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {row('Δh  (cote aval − cote amont)', `${deltaH.toFixed(2)} m`)}
+                  {resultRow('ΔP_stat = ρ · g · Δh', paStr(res.dpStatic), '#64748b')}
+                </div>
+              </div>
+
+              {/* Données techniques */}
+              <div style={{ padding: '7px 10px', background: '#f9fafb', border: '1px solid #f3f4f6',
+                borderRadius: 6, fontSize: 10, color: '#9ca3af', lineHeight: 1.9, marginTop: 2 }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
+                  letterSpacing: '0.04em', marginBottom: 4 }}>Données techniques</div>
+                <div>V = {res.V.toFixed(3)} m/s · di = {res.di_mm != null ? `${res.di_mm} mm` : '—'} · L = {tr.length != null ? `${tr.length.toFixed(1)} m` : '—'}</div>
+                {res.epsilon_used != null && <div>ε = {res.epsilon_used} m · T = {res.T_used.toFixed(1)} °C</div>}
+                <div>Q = {totalQpAlimM3h.toFixed(3)} m³/h · g = 9.81 m/s²</div>
+              </div>
+
+            </div>
+          ) : (
+            <p className="lp-hint">Renseignez la longueur et le diamètre pour calculer les pertes de charge.</p>
+          )}
+        </div>
+      )}
+
+      {tab === 'params' && (
+        <>
+          <SectionLabel>Identification</SectionLabel>
+          <div style={{ padding: '5px 8px', background: '#f8fafc',
+            border: '1px solid #e5e7eb', borderRadius: 4, fontSize: 12, color: '#374151', marginBottom: 8 }}>
+            Tronçon arrivée EF n°{index + 1}
+          </div>
+          <div style={{ fontSize: 9.5, color: '#9ca3af', marginBottom: 6, lineHeight: 1.5 }}>
+            Tronçon permettant de calculer la pression à Production ECS depuis l'arrivée EF du site.
+          </div>
+
+          <hr className="rp-divider" />
+          <SectionLabel>Cote</SectionLabel>
+          <Field label="Cote amont" unit="m">
+            <NumInput step={0.01}
+              value={tr.coteAmont ?? null}
+              placeholder="0.00 (par défaut)"
+              allowEmpty
+              onChange={v => set('coteAmont', v)} />
+          </Field>
+          <Field label="Cote aval" unit="m">
+            <NumInput step={0.01}
+              value={tr.coteAval ?? null}
+              placeholder="0.00 (par défaut)"
+              allowEmpty
+              onChange={v => set('coteAval', v)} />
+          </Field>
+
+          <hr className="rp-divider" />
+          <SectionLabel>Canalisation</SectionLabel>
+          <Field label="Longueur" unit="m">
+            <NumInput min={0}
+              value={tr.length ?? null}
+              placeholder="saisie manuelle"
+              allowEmpty
+              onChange={v => set('length', v)} />
+          </Field>
+          <Field label="Matériau">
+            {enabledMats.length === 0
+              ? <p className="lp-hint">Aucun matériau activé dans les paramètres.</p>
+              : (
+                <select value={tr.materialId || ''}
+                  onChange={e => onUpdate({ ...tr, materialId: e.target.value || null, dn: null, di_override: null })}>
+                  <option value="">— Choisir —</option>
+                  {enabledMats.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              )
+            }
+          </Field>
+          {selMat && (
+            <>
+              <Field label="DN">
+                <select value={tr.dn || ''}
+                  onChange={e => onUpdate({ ...tr, dn: e.target.value || null, di_override: null })}>
+                  <option value="">— Choisir —</option>
+                  {selMat.dns.map((d: any) => <option key={d.dn} value={d.dn}>{d.dn}</option>)}
+                </select>
+              </Field>
+              {dnDef && (
+                <Field label="Di" unit="mm">
+                  <NumInput
+                    value={tr.di_override ?? null}
+                    placeholder={`${dnDef.di} (par défaut)`}
+                    allowEmpty
+                    onChange={v => set('di_override', v)} />
+                </Field>
+              )}
+            </>
+          )}
+
+          {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (
+            <>
+              <hr className="rp-divider" />
+              <SectionLabel>Accessoires &amp; équipements</SectionLabel>
+              {pdcParams.methodeSing === 'accessoires' && (
+                <SegFittingsPanel seg={tr} set={(k, v) => set(k, v)} pdcParams={pdcParams} />
+              )}
+              {pdcParams.equipementsActifs && (
+                <SegEquipPanel seg={tr} set={(k, v) => set(k, v)} pdcParams={pdcParams} />
+              )}
+            </>
+          )}
+
+          <hr className="rp-divider" />
+          <button onClick={onRemove}
+            style={{ width: '100%', marginTop: 4, padding: '6px 0', fontSize: 11, fontWeight: 600,
+              background: '#fef2f2', color: '#dc2626',
+              border: '1px solid #fecaca', borderRadius: 5, cursor: 'pointer' }}>
+            Supprimer ce tronçon
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
 
 function CoteSection({ seg, points, levels, lineYs, onUpdate, flowDirections }: { seg: any, points: any[], levels: any[], lineYs: number[], onUpdate: any, flowDirections?: Map<string, { fromId: string; toId: string }> }) {
   const dir     = flowDirections?.get(seg.id)
@@ -38,10 +532,11 @@ function CoteSection({ seg, points, levels, lineYs, onUpdate, flowDirections }: 
     const def = getNodeDefaultCote(pt, levels ?? [], lineYs ?? [])
     return (
       <Field label={label} unit="m">
-        <input type="number" step="0.01"
-          value={pt.cote_override != null ? pt.cote_override : ''}
+        <NumInput step={0.01}
+          value={pt.cote_override ?? null}
           placeholder={`${def.toFixed(2)} (par défaut)`}
-          onChange={e => onUpdate(pt.id, 'point', { cote_override: e.target.value === '' ? null : parseFloat(e.target.value) })} />
+          allowEmpty
+          onChange={v => onUpdate(pt.id, 'point', { cote_override: v })} />
       </Field>
     )
   }
@@ -572,9 +1067,8 @@ function SegFittingsPanel({ seg, set, pdcParams }) {
     if (n <= 0) set('fittings', fittings.filter(f => f.type !== typeId))
     else set('fittings', fittings.map(f => f.type === typeId ? { ...f, count: n } : f))
   }
-  const setXi = (typeId: string, val: string) => {
-    const num = val === '' ? undefined : parseFloat(val)
-    set('fittings', fittings.map(f => f.type === typeId ? { ...f, xiOverride: num } : f))
+  const setXi = (typeId: string, val: number | null) => {
+    set('fittings', fittings.map(f => f.type === typeId ? { ...f, xiOverride: val ?? undefined } : f))
   }
   const del = (typeId: string) => set('fittings', fittings.filter(f => f.type !== typeId))
   const add = (typeId: string) => {
@@ -623,17 +1117,17 @@ function SegFittingsPanel({ seg, set, pdcParams }) {
               {def?.label ?? f.type}
             </span>
             <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>n</span>
-            <input type="number" min="1" step="1" value={f.count ?? 1}
-              onChange={e => setCount(f.type, parseInt(e.target.value) || 1)}
+            <NumInput min={1} step={1} value={f.count ?? 1}
+              onChange={v => setCount(f.type, Math.max(1, Math.round(v ?? 1)))}
               style={{ ...inp(), width: 32 }} />
             <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>ξ</span>
-            <input type="number" min="0" step="0.01" value={xi ?? ''}
-              placeholder={libXi != null ? String(libXi) : ''}
-              onChange={e => setXi(f.type, e.target.value)}
+            <NumInput min={0} step={0.01} value={xi ?? null} allowEmpty
+              placeholder={libXi != null ? `${libXi} (par défaut)` : ''}
+              onChange={v => setXi(f.type, v)}
               style={{ ...inp({ width: 44, color: overridden ? '#c2562d' : '#374151',
                                 border: `1px solid ${overridden ? '#fbd5c5' : '#e5e7eb'}` }) }} />
             {overridden && (
-              <button onClick={() => setXi(f.type, '')} title={`Rétablir (ξ = ${libXi})`}
+              <button onClick={() => setXi(f.type, null)} title={`Rétablir (ξ = ${libXi})`}
                 style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11, padding: 0, lineHeight: 1 }}>
                 ↺
               </button>
@@ -694,9 +1188,8 @@ function SegEquipPanel({ seg, set, pdcParams }) {
   const equipment: any[]  = seg.equipment ?? []
   const libOverrides       = pdcParams?.equipmentOverrides ?? {}
 
-  const setKv = (typeId: string, val: string) => {
-    const num = val === '' ? undefined : parseFloat(val)
-    set('equipment', equipment.map(e => e.type === typeId ? { ...e, kvOverride: num } : e))
+  const setKv = (typeId: string, val: number | null) => {
+    set('equipment', equipment.map(e => e.type === typeId ? { ...e, kvOverride: val ?? undefined } : e))
   }
   const del = (typeId: string) => set('equipment', equipment.filter(e => e.type !== typeId))
   const add = (typeId: string) => {
@@ -746,15 +1239,15 @@ function SegEquipPanel({ seg, set, pdcParams }) {
               {def?.label ?? e.type}
             </span>
             <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Kv</span>
-            <input type="number" min="0" step="0.1" value={kv ?? ''}
-              placeholder={libKv != null ? String(libKv) : 'requis'}
-              onChange={ev => setKv(e.type, ev.target.value)}
+            <NumInput min={0} step={0.1} value={kv ?? null} allowEmpty
+              placeholder={libKv != null ? `${libKv} (par défaut)` : 'requis'}
+              onChange={val => setKv(e.type, val)}
               style={{ ...inp({ width: 50,
                                 color: needsKv ? '#f97316' : overridden ? '#7c3aed' : '#374151',
                                 border: `1px solid ${needsKv ? '#fed7aa' : overridden ? '#ddd6fe' : '#e5e7eb'}` }) }} />
             <span style={{ fontSize: 8, color: '#9ca3af', flexShrink: 0, lineHeight: 1 }}>m³/h/√bar</span>
             {overridden && libKv != null && (
-              <button onClick={() => setKv(e.type, '')} title={`Rétablir (Kv = ${libKv})`}
+              <button onClick={() => setKv(e.type, null)} title={`Rétablir (Kv = ${libKv})`}
                 style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11, padding: 0 }}>
                 ↺
               </button>
@@ -803,7 +1296,7 @@ function SegEquipPanel({ seg, set, pdcParams }) {
   )
 }
 
-function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, pdcParams, pdcResult, calcSubMode, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections }) {
+function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, pdcParams, pdcResult, calcSubMode, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null }) {
   const [tab, setTab] = useState('params')
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
 
@@ -816,8 +1309,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
   const isDefault   = !seg.name
   const displayName = getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId, roleMap)
 
-  const he = globalParams?.he ?? 10
-  const uiValue = computeSegUI(seg, materials, insulations, he)
+  const uiValue = computeSegUI(seg, materials, insulations, 10)
 
   // ── Vue dédiée Alimentation ECS (dimensionnement) et Alimentation EF ──────────────────────
   if (activeCalcId === 'alimentation-ef' || (activeCalcId === 'alimentation-ecs' && calcSubMode !== 'pdc')) {
@@ -953,10 +1445,11 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
           <SectionLabel>Canalisation</SectionLabel>
 
           <Field label="Longueur" unit="m">
-            <input type="number" min="0"
-              value={seg.length_override ?? ''}
+            <NumInput min={0}
+              value={seg.length_override ?? null}
               placeholder="saisie manuelle"
-              onChange={e => set('length_override', e.target.value === '' ? null : +e.target.value)} />
+              allowEmpty
+              onChange={v => set('length_override', v)} />
           </Field>
 
           <Field label="Matériau">
@@ -984,13 +1477,20 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
             </Field>
             {dnDef && (
               <Field label="Di" unit="mm">
-                <input type="number"
-                  value={seg.di_override ?? ''}
+                <NumInput
+                  value={seg.di_override ?? null}
                   placeholder={`${dnDef.di} (par défaut)`}
-                  onChange={e => set('di_override', e.target.value === '' ? null : +e.target.value)} />
+                  allowEmpty
+                  onChange={v => set('di_override', v)} />
               </Field>
             )}
           </>)}
+
+          <AntenneGroupesAval
+            seg={seg} allSegs={allSegs} points={points ?? []}
+            flowDirections={flowDirections} materials={materials}
+            roleMap={roleMap} groupDisplayNames={groupDisplayNames}
+          />
         </>)}
 
         {/* ── Résultats ── */}
@@ -1347,7 +1847,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                   <div style={{ fontSize: 10, color: '#9ca3af', lineHeight: 1.9 }}>
                     <div>T amb = {sf(T_amb, 1)} °C · ΔT tronçon = {sf(Math.abs(deltaT), 3)} K</div>
                     <div>
-                      he = {he} W/(m²·K)
+                      he = 10 W/(m²·K)
                       {de_mm != null && <> · de = {de_mm} · di = {di_mm ?? '—'} mm</>}
                     </div>
                     {e_mm != null && <div>e = {e_mm} mm</div>}
@@ -1401,7 +1901,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
         <>
           <SectionLabel>Identification</SectionLabel>
           <SegNameField displayName={displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
-          {activeCalcId !== 'alimentation-ecs' && (
+          {activeCalcId !== 'alimentation-ecs' && roleMap?.get(seg.id) !== 'antenne' && (
             <Field label="Type de tronçon">
               <select value={seg.type} onChange={e => set('type', e.target.value)}>
                 <option value="aller">Aller ECS</option>
@@ -1414,7 +1914,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
           {activeCalcId === 'alimentation-ecs' && <CoteSection seg={seg} points={points} levels={levels} lineYs={lineYs} onUpdate={onUpdate} flowDirections={flowDirections} />}
           <hr className="rp-divider" />
 
-          {activeCalcId !== 'alimentation-ecs' && <>
+          {activeCalcId !== 'alimentation-ecs' && roleMap?.get(seg.id) !== 'antenne' && <>
             <SectionLabel>Hydraulique</SectionLabel>
             {(() => {
               const di_mm  = seg.di_override ?? dnDef?.di ?? null
@@ -1425,13 +1925,13 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
               const resolved   = flowData
 
               const qPlaceholder = hasManualV && area
-                ? sf(seg.velocity * area * 3600, 3)
+                ? `Calculé : ${sf(seg.velocity * area * 3600, 3)}`
                 : (!hasManual && resolved?.flowRate != null)
                 ? `Calculé : ${sf(resolved.flowRate, 3)}`
                 : 'm³/h'
 
               const vPlaceholder = hasManualQ && area
-                ? sf(seg.flowRate / (area * 3600), 3)
+                ? `Calculé : ${sf(seg.flowRate / (area * 3600), 3)}`
                 : (!hasManual && resolved?.velocity != null)
                 ? `Calculé : ${sf(resolved.velocity, 3)}`
                 : 'm/s'
@@ -1456,36 +1956,19 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                   <div style={{ display: 'flex', gap: 6 }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>Débit (m³/h)</div>
-                      <input type="number" min="0" step="0.001"
+                      <NumInput min={0} step={0.001}
                         placeholder={qPlaceholder}
-                        value={seg.flowRate ?? ''}
-                        onChange={e => {
-                          const v = e.target.value === '' ? null : +e.target.value
-                          set('flowRate', v)
-                          if (v != null) set('velocity', null)
-                        }} />
+                        value={seg.flowRate ?? null} allowEmpty
+                        onChange={v => { set('flowRate', v); if (v != null) set('velocity', null) }} />
                     </div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>Vitesse (m/s)</div>
-                      <input type="number" min="0" step="0.001"
+                      <NumInput min={0} step={0.001}
                         placeholder={vPlaceholder}
-                        value={seg.velocity ?? ''}
-                        onChange={e => {
-                          const v = e.target.value === '' ? null : +e.target.value
-                          set('velocity', v)
-                          if (v != null) set('flowRate', null)
-                        }} />
+                        value={seg.velocity ?? null} allowEmpty
+                        onChange={v => { set('velocity', v); if (v != null) set('flowRate', null) }} />
                     </div>
                   </div>
-                  {!hasManual && resolved?.source === 'computed' && resolved.flowRate != null && (
-                    <div style={{ marginTop: 5, padding: '5px 8px', background: '#f0fdf4',
-                      border: '1px solid #86efac', borderRadius: 4, fontSize: 11, color: '#15803d' }}>
-                      <span style={{ fontWeight: 700 }}>🔢 Calculé par le réseau</span>
-                      <div style={{ fontSize: 10, color: '#166534', marginTop: 2 }}>
-                        Saisissez une valeur pour passer en mode manuel.
-                      </div>
-                    </div>
-                  )}
                 </div>
               )
             })()}
@@ -1494,10 +1977,11 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
 
           <SectionLabel>Canalisation</SectionLabel>
           <Field label="Longueur" unit="m">
-            <input type="number" min="0"
-              value={seg.length_override ?? ''}
+            <NumInput min={0}
+              value={seg.length_override ?? null}
               placeholder="saisie manuelle"
-              onChange={e => set('length_override', e.target.value === '' ? null : +e.target.value)} />
+              allowEmpty
+              onChange={v => set('length_override', v)} />
           </Field>
           <Field label="Matériau">
             {enabledMats.length === 0
@@ -1522,10 +2006,11 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
               </Field>
               {dnDef && (
                 <Field label="Di" unit="mm">
-                  <input type="number"
-                    value={seg.di_override ?? ''}
+                  <NumInput
+                    value={seg.di_override ?? null}
                     placeholder={`${dnDef.di} (par défaut)`}
-                    onChange={e => set('di_override', e.target.value === '' ? null : +e.target.value)} />
+                    allowEmpty
+                    onChange={v => set('di_override', v)} />
                 </Field>
               )}
             </>
@@ -1543,108 +2028,103 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
               )}
             </>
           )}
+
+          <AntenneGroupesAval
+            seg={seg} allSegs={allSegs} points={points ?? []}
+            flowDirections={flowDirections} materials={materials}
+            roleMap={roleMap} groupDisplayNames={groupDisplayNames}
+          />
         </>
       ) : <>
       {/* Identification */}
       <SectionLabel>Identification</SectionLabel>
       <SegNameField displayName={displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
 
-      <Field label="Type de tronçon">
-        <select value={seg.type} onChange={e => set('type', e.target.value)}>
-          <option value="aller">Aller ECS</option>
-          <option value="retour">Retour ECS</option>
-        </select>
-      </Field>
+      {roleMap?.get(seg.id) !== 'antenne' && (
+        <Field label="Type de tronçon">
+          <select value={seg.type} onChange={e => set('type', e.target.value)}>
+            <option value="aller">Aller ECS</option>
+            <option value="retour">Retour ECS</option>
+          </select>
+        </Field>
+      )}
 
       <hr className="rp-divider" />
       {activeCalcId === 'alimentation-ecs' && <CoteSection seg={seg} points={points} levels={levels} lineYs={lineYs} onUpdate={onUpdate} />}
       <hr className="rp-divider" />
 
-      {/* Hydraulique */}
-      <SectionLabel>Hydraulique</SectionLabel>
-      {(() => {
-        const di_mm  = seg.di_override ?? dnDef?.di ?? null
-        const area   = di_mm ? Math.PI * (di_mm / 1000) ** 2 / 4 : null
-        const hasManualQ = seg.flowRate != null
-        const hasManualV = seg.velocity != null
-        const hasManual  = hasManualQ || hasManualV
-        const resolved   = flowData
+      {/* Hydraulique — masqué pour les antennes bouclage ECS */}
+      {roleMap?.get(seg.id) !== 'antenne' && (
+        <>
+          <SectionLabel>Hydraulique</SectionLabel>
+          {(() => {
+            const di_mm  = seg.di_override ?? dnDef?.di ?? null
+            const area   = di_mm ? Math.PI * (di_mm / 1000) ** 2 / 4 : null
+            const hasManualQ = seg.flowRate != null
+            const hasManualV = seg.velocity != null
+            const hasManual  = hasManualQ || hasManualV
+            const resolved   = flowData
 
-        const qPlaceholder = hasManualV && area
-          ? sf(seg.velocity * area * 3600, 3)
-          : (!hasManual && resolved?.flowRate != null)
-          ? `Calculé : ${sf(resolved.flowRate, 3)}`
-          : 'm³/h'
+            const qPlaceholder = hasManualV && area
+              ? `Calculé : ${sf(seg.velocity * area * 3600, 3)}`
+              : (!hasManual && resolved?.flowRate != null)
+              ? `Calculé : ${sf(resolved.flowRate, 3)}`
+              : 'm³/h'
 
-        const vPlaceholder = hasManualQ && area
-          ? sf(seg.flowRate / (area * 3600), 3)
-          : (!hasManual && resolved?.velocity != null)
-          ? `Calculé : ${sf(resolved.velocity, 3)}`
-          : 'm/s'
+            const vPlaceholder = hasManualQ && area
+              ? `Calculé : ${sf(seg.flowRate / (area * 3600), 3)}`
+              : (!hasManual && resolved?.velocity != null)
+              ? `Calculé : ${sf(resolved.velocity, 3)}`
+              : 'm/s'
 
-        return (
-          <div className="lp-field">
-            <label className="lp-label">
-              Débit / Vitesse
-              {resolved?.source === 'manual' && (
-                <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: '#2563eb',
-                  background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 3, padding: '1px 4px' }}>
-                  MANUEL
-                </span>
-              )}
-              {resolved?.source === 'computed' && (
-                <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: '#15803d',
-                  background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 3, padding: '1px 4px' }}>
-                  CALCULÉ
-                </span>
-              )}
-            </label>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>Débit (m³/h)</div>
-                <input type="number" min="0" step="0.001"
-                  placeholder={qPlaceholder}
-                  value={seg.flowRate ?? ''}
-                  onChange={e => {
-                    const v = e.target.value === '' ? null : +e.target.value
-                    set('flowRate', v)
-                    if (v != null) set('velocity', null)
-                  }} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>Vitesse (m/s)</div>
-                <input type="number" min="0" step="0.001"
-                  placeholder={vPlaceholder}
-                  value={seg.velocity ?? ''}
-                  onChange={e => {
-                    const v = e.target.value === '' ? null : +e.target.value
-                    set('velocity', v)
-                    if (v != null) set('flowRate', null)
-                  }} />
-              </div>
-            </div>
-            {!hasManual && resolved?.source === 'computed' && resolved.flowRate != null && (
-              <div style={{ marginTop: 5, padding: '5px 8px', background: '#f0fdf4',
-                border: '1px solid #86efac', borderRadius: 4, fontSize: 11, color: '#15803d' }}>
-                <span style={{ fontWeight: 700 }}>🔢 Calculé par le réseau</span>
-                <div style={{ fontSize: 10, color: '#166534', marginTop: 2 }}>
-                  Saisissez une valeur pour passer en mode manuel.
+            return (
+              <div className="lp-field">
+                <label className="lp-label">
+                  Débit / Vitesse
+                  {resolved?.source === 'manual' && (
+                    <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: '#2563eb',
+                      background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 3, padding: '1px 4px' }}>
+                      MANUEL
+                    </span>
+                  )}
+                  {resolved?.source === 'computed' && (
+                    <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: '#15803d',
+                      background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 3, padding: '1px 4px' }}>
+                      CALCULÉ
+                    </span>
+                  )}
+                </label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>Débit (m³/h)</div>
+                    <NumInput min={0} step={0.001}
+                      placeholder={qPlaceholder}
+                      value={seg.flowRate ?? null} allowEmpty
+                      onChange={v => { set('flowRate', v); if (v != null) set('velocity', null) }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>Vitesse (m/s)</div>
+                    <NumInput min={0} step={0.001}
+                      placeholder={vPlaceholder}
+                      value={seg.velocity ?? null} allowEmpty
+                      onChange={v => { set('velocity', v); if (v != null) set('flowRate', null) }} />
+                  </div>
                 </div>
               </div>
-            )}
-          </div>
-        )
-      })()}
-
-      <hr className="rp-divider" />
+            )
+          })()}
+          <hr className="rp-divider" />
+        </>
+      )}
 
       {/* Canalisation */}
       <SectionLabel>Canalisation</SectionLabel>
       <Field label="Longueur" unit="m">
-        <input type="number" min="0"
-          value={seg.length_override ?? ''}
+        <NumInput min={0}
+          value={seg.length_override ?? null}
           placeholder="saisie manuelle"
-          onChange={e => set('length_override', e.target.value === '' ? null : +e.target.value)} />
+          allowEmpty
+          onChange={v => set('length_override', v)} />
       </Field>
 
       <Field label="Matériau">
@@ -1683,28 +2163,37 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
           {dnDef && (
             <>
               <Field label="Di" unit="mm">
-                <input type="number"
-                  value={seg.di_override ?? ''}
+                <NumInput
+                  value={seg.di_override ?? null}
                   placeholder={`${dnDef.di} (par défaut)`}
-                  onChange={e => set('di_override', e.target.value === '' ? null : +e.target.value)} />
+                  allowEmpty
+                  onChange={v => set('di_override', v)} />
               </Field>
               <Field label="De" unit="mm">
-                <input type="number"
-                  value={seg.de_override ?? ''}
+                <NumInput
+                  value={seg.de_override ?? null}
                   placeholder={`${dnDef.de} (par défaut)`}
-                  onChange={e => set('de_override', e.target.value === '' ? null : +e.target.value)} />
+                  allowEmpty
+                  onChange={v => set('de_override', v)} />
               </Field>
             </>
           )}
 
           <Field label="λ tube" unit="W/m·K">
-            <input type="number" step="0.001"
-              value={seg.lambda_tube_override ?? ''}
+            <NumInput step={0.001}
+              value={seg.lambda_tube_override ?? null}
               placeholder={`${selMat.lambda} (par défaut)`}
-              onChange={e => set('lambda_tube_override', e.target.value === '' ? null : +e.target.value)} />
+              allowEmpty
+              onChange={v => set('lambda_tube_override', v)} />
           </Field>
         </>
       )}
+
+      <AntenneGroupesAval
+        seg={seg} allSegs={allSegs} points={points ?? []}
+        flowDirections={flowDirections} materials={materials}
+        roleMap={roleMap} groupDisplayNames={groupDisplayNames}
+      />
 
       <hr className="rp-divider" />
 
@@ -1734,23 +2223,25 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                 <option value="__custom">Autre (saisie manuelle)</option>
               </select>
             ) : (
-              <input type="number" placeholder="Saisir manuellement"
-                value={seg.thickness ?? ''}
-                onChange={e => set('thickness', e.target.value === '' ? null : +e.target.value)} />
+              <NumInput placeholder="Saisir manuellement"
+                value={seg.thickness ?? null}
+                allowEmpty
+                onChange={v => set('thickness', v)} />
             )}
           </Field>
 
           {seg.thickness === '__custom' && (
             <Field label="Épaisseur personnalisée" unit="mm">
-              <input type="number" onChange={e => set('thickness', +e.target.value)} />
+              <NumInput allowEmpty onChange={v => { if (v != null) set('thickness', v) }} value={null} />
             </Field>
           )}
 
           <Field label="λ isolant" unit="W/m·K">
-            <input type="number" step="0.001"
-              value={seg.lambda_insul_override ?? ''}
+            <NumInput step={0.001}
+              value={seg.lambda_insul_override ?? null}
               placeholder={`${selIns.lambda} (par défaut)`}
-              onChange={e => set('lambda_insul_override', e.target.value === '' ? null : +e.target.value)} />
+              allowEmpty
+              onChange={v => set('lambda_insul_override', v)} />
           </Field>
         </>
       )}
@@ -1761,25 +2252,17 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
       <SectionLabel>Thermique</SectionLabel>
       {(() => {
         const tAmbDefault = getSegAmbTemp(
-          { ...seg, t_amb_override: null }, levels, lineYs, globalParams
+          { ...seg, t_amb_override: null }, levels, lineYs
         )
-        const hasOverride = seg.t_amb_override != null
         return (
           <Field label="T° ambiante" unit="°C">
-            <input
-              type="number" step="0.5"
-              value={seg.t_amb_override ?? ''}
-              placeholder={tAmbDefault != null ? `${tAmbDefault} (défaut)` : 'défaut'}
-              onChange={e => set('t_amb_override', e.target.value === '' ? null : +e.target.value)}
+            <NumInput
+              step={0.5}
+              value={seg.t_amb_override ?? null}
+              placeholder={tAmbDefault != null ? `${tAmbDefault} (par défaut)` : 'par défaut'}
+              allowEmpty
+              onChange={v => set('t_amb_override', v)}
             />
-            {hasOverride && (
-              <button
-                onClick={() => set('t_amb_override', null)}
-                style={{ marginTop: 4, fontSize: 10, color: '#6b7280', background: 'none',
-                  border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
-                Rétablir la valeur par défaut ({tAmbDefault} °C)
-              </button>
-            )}
           </Field>
         )
       })()}
@@ -1821,7 +2304,7 @@ function TempBadge({ temp, T_depart }) {
   )
 }
 
-function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [] }) {
+function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null }) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
   const T_depart = globalParams?.T_depart ?? null
   const [showDims, setShowDims] = useState(false)
@@ -1829,10 +2312,11 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
   const coteDef = getNodeDefaultCote(pt, levels, lineYs)
   const coteJsx = activeCalcId === 'alimentation-ecs' ? (
     <Field label="Cote" unit="m">
-      <input type="number" step="0.01"
-        value={pt.cote_override != null ? pt.cote_override : ''}
+      <NumInput step={0.01}
+        value={pt.cote_override ?? null}
         placeholder={`${coteDef.toFixed(2)} (par défaut)`}
-        onChange={e => set('cote_override', e.target.value === '' ? null : parseFloat(e.target.value))} />
+        allowEmpty
+        onChange={v => set('cote_override', v)} />
     </Field>
   ) : null
 
@@ -1943,9 +2427,9 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
           </button>
           {showDims && (
             <Field label="Rayon" unit="px">
-              <input type="number" min="8" max="40" step="1"
+              <NumInput min={8} max={40} step={1}
                 value={pt.size ?? 12}
-                onChange={e => set('size', Math.max(8, Math.min(40, +e.target.value)))} />
+                onChange={v => set('size', Math.max(8, Math.min(40, v ?? 12)))} />
             </Field>
           )}
         </div>
@@ -1979,11 +2463,50 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
     return (
       <div className="rp-section">
         <h3 className="rp-title">Groupe de points de puisage</h3>
-        <Field label="Nom">
-          <input value={pt.name ?? ''} onChange={e => set('name', e.target.value || null)}
-            placeholder="Nom du groupe..." />
-        </Field>
+        <SegNameField
+          displayName={(groupDisplayNames as Map<string,string> | null)?.get(pt.id) ?? 'Groupe de puisage'}
+          isDefault={!pt.name}
+          value={pt.name ?? ''}
+          onChange={v => set('name', v)}
+        />
         {coteJsx}
+
+        {(activeCalcId === 'alimentation-ecs' || activeCalcId === 'bouclage-ecs') && (() => {
+          const path = computeGroupePath(pt.id, allSegs, flowDirections ?? undefined, materials, roleMap ?? undefined)
+          const lenOk = path.length <= MAX_ANTENNE_LEN_M
+          const volOk = path.volume <= MAX_ANTENNE_VOL_L
+          const ok    = lenOk && volOk
+          const bg    = ok ? '#f0fdf4' : '#fef2f2'
+          const border = ok ? '#bbf7d0' : '#fca5a5'
+          return (
+            <>
+              <hr className="rp-divider" />
+              <SectionLabel>Antenne</SectionLabel>
+              <div style={{ padding: '7px 10px', background: bg, border: `1px solid ${border}`, borderRadius: 6, marginBottom: 4 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span style={{ fontSize: 9.5, color: '#6b7280' }}>Longueur antenne</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'ui-monospace, monospace',
+                      color: lenOk ? '#16a34a' : '#dc2626' }}>
+                      {path.length.toFixed(1)} m {lenOk ? '✓' : `⚠ > ${MAX_ANTENNE_LEN_M} m`}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span style={{ fontSize: 9.5, color: '#6b7280' }}>Volume antenne</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'ui-monospace, monospace',
+                      color: volOk ? '#16a34a' : '#dc2626' }}>
+                      {path.volume.toFixed(2)} L {volOk ? '✓' : `⚠ > ${MAX_ANTENNE_VOL_L} L`}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div style={{ fontSize: 9, color: '#9ca3af', fontStyle: 'italic', marginBottom: 4 }}>
+                Depuis le tronçon aller ECS — seuils : {MAX_ANTENNE_LEN_M} m / {MAX_ANTENNE_VOL_L} L
+              </div>
+            </>
+          )
+        })()}
+
         {enabledAppareils.length > 0 && (<>
           <hr className="rp-divider" />
           <SectionLabel>Équipements</SectionLabel>
@@ -2122,15 +2645,12 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
             {/* Champ T départ éditable — au-dessus des badges */}
             <Field label="T départ" unit="°C">
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <input
-                  type="number"
-                  step="0.5"
-                  value={tOverride ?? ''}
-                  placeholder={String(T_depart ?? 60)}
-                  onChange={e => {
-                    const v = e.target.value === '' ? null : parseFloat(e.target.value)
-                    set('T_depart_override', v == null || isNaN(v) ? null : v)
-                  }}
+                <NumInput
+                  step={0.5}
+                  value={tOverride ?? null}
+                  placeholder={`${T_depart ?? 60} (par défaut)`}
+                  allowEmpty
+                  onChange={v => set('T_depart_override', v)}
                   style={{ fontStyle: isOverridden ? 'normal' : 'italic',
                     color: isOverridden ? '#111827' : '#9ca3af', flex: 1 }}
                 />
@@ -2224,6 +2744,63 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
           </>
         )}
 
+        {activeCalcId === 'alimentation-ecs' && calcSubMode === 'pdc' && pressionSourceAlimECS != null && (() => {
+          const pDyn  = pressionSourceAlimECS
+          const pStat = pressionSourceAlimECSStatic ?? pressionSourceAlimECS
+
+          const isErrDyn  = pDyn < 30000
+          const isWarnDyn = !isErrDyn && pDyn < 100000
+          const colDyn    = isErrDyn ? '#dc2626' : '#0f172a'
+          const bgDyn     = isErrDyn ? '#fef2f2' : '#fff'
+          const bdDyn     = isErrDyn ? '#fca5a5' : '#e5e7eb'
+          const hintDyn   = pDyn < 0      ? 'Pression négative'
+                          : pDyn < 30000  ? '< 0,3 bar — pression insuffisante'
+                          : pDyn < 100000 ? '< 1 bar — risque d\'insuffisance'
+                          :                 '≥ 1 bar'
+          const hintColDyn = isErrDyn || isWarnDyn ? '#dc2626' : '#16a34a'
+
+          const overStat = pStat > 400000
+          const bgStat   = overStat ? '#fef2f2' : '#fff'
+          const bdStat   = overStat ? '#fca5a5' : '#e5e7eb'
+          const colStat  = overStat ? '#dc2626' : '#0f172a'
+
+          return (
+            <>
+              <hr className="rp-divider" />
+              <SectionLabel>Pression à Production ECS</SectionLabel>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+                <div style={{ flex: 1, padding: '10px 12px', borderRadius: 8,
+                  background: bgDyn, border: `1px solid ${bdDyn}`, textAlign: 'center' }}>
+                  <div style={{ fontSize: 8.5, fontWeight: 700, color: '#6b7280',
+                    textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                    Pression disponible
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 3, justifyContent: 'center' }}>
+                    <span style={{ fontSize: 22, fontWeight: 800, color: colDyn }}>{(pDyn / 100000).toFixed(2)}</span>
+                    <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>bar</span>
+                  </div>
+                  <div style={{ fontSize: 9, marginTop: 2, fontWeight: 700, color: hintColDyn }}>{hintDyn}</div>
+                </div>
+                <div style={{ flex: 1, padding: '10px 12px', borderRadius: 8,
+                  background: bgStat, border: `1px solid ${bdStat}`, textAlign: 'center' }}>
+                  <div style={{ fontSize: 8.5, fontWeight: 700, color: '#6b7280',
+                    textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                    Pression statique
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 3, justifyContent: 'center' }}>
+                    <span style={{ fontSize: 22, fontWeight: 800, color: colStat }}>{(pStat / 100000).toFixed(2)}</span>
+                    <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>bar</span>
+                  </div>
+                  <div style={{ fontSize: 9, marginTop: 2, fontWeight: 700,
+                    color: overStat ? '#dc2626' : '#16a34a' }}>
+                    {overStat ? '> 4 bar — réducteur de pression requis' : '≤ 4 bar'}
+                  </div>
+                </div>
+              </div>
+            </>
+          )
+        })()}
+
         {coteJsx}
 
         {/* Bouton discret pour les dimensions */}
@@ -2237,14 +2814,14 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
           {showDims && (
             <>
               <Field label="Largeur" unit="px">
-                <input type="number" min="30" step="1"
+                <NumInput min={30} step={1}
                   value={pt.size?.w ?? 44}
-                  onChange={e => set('size', { ...(pt.size ?? { w: 44, h: 28 }), w: Math.max(30, +e.target.value) })} />
+                  onChange={v => set('size', { ...(pt.size ?? { w: 44, h: 28 }), w: Math.max(30, v ?? 44) })} />
               </Field>
               <Field label="Hauteur" unit="px">
-                <input type="number" min="20" step="1"
+                <NumInput min={20} step={1}
                   value={pt.size?.h ?? 28}
-                  onChange={e => set('size', { ...(pt.size ?? { w: 44, h: 28 }), h: Math.max(20, +e.target.value) })} />
+                  onChange={v => set('size', { ...(pt.size ?? { w: 44, h: 28 }), h: Math.max(20, v ?? 28) })} />
               </Field>
             </>
           )}
@@ -2545,18 +3122,18 @@ function ChaufferiePanel({ chaufferie, onChange, levels }) {
       </Field>
 
       <Field label="Largeur" unit="px">
-        <input type="number" min="20" step="10"
+        <NumInput min={20} step={10}
           value={width}
-          onChange={e => {
-            const w = Math.max(20, +e.target.value)
+          onChange={v => {
+            const w = Math.max(20, v ?? 20)
             set('x2', chaufferie.x1 + w)
           }} />
       </Field>
 
       <Field label="Hauteur" unit="px">
-        <input type="number" min="20" step="10"
+        <NumInput min={20} step={10}
           value={height}
-          onChange={e => set('height', Math.max(20, +e.target.value))} />
+          onChange={v => set('height', Math.max(20, v ?? 20))} />
       </Field>
 
       <div style={{ marginTop: 16, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
@@ -2583,6 +3160,10 @@ export default function RightPanel({
   selectedValveId, valves, onValveUpdate,
   activeCalcId, alimentationParams, alimentationResults,
   pdcParams, pdcResults, pdcCumResults, pdcCumAlimResults, segToCol, valveKvResults,
+  selectedAmontId, tronçonsAmont, onUpdateAmontTroncon, onRemoveAmontTroncon,
+  amontTronconResults, totalQpAlimM3h = 0, pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null,
+  pdcParamsAlimECS = null,
+  groupDisplayNames = null,
 }) {
   // In editChaufferie mode, chaufferie panel takes priority
   if (editChaufferie && chaufferie?.placed) {
@@ -2600,6 +3181,25 @@ export default function RightPanel({
     return <ValvePanel valve={selectedValve} onUpdate={onValveUpdate}
       valveKvResult={valveKvResults?.get(selectedValve.id)}
       activeCalcId={activeCalcId} segToCol={segToCol} />
+  }
+
+  if (selectedAmontId && (!selectedIds || selectedIds.length === 0)) {
+    const trIndex = (tronçonsAmont ?? []).findIndex((t: TronconAmontEF) => t.id === selectedAmontId)
+    const tr = trIndex >= 0 ? (tronçonsAmont ?? [])[trIndex] : null
+    if (tr) {
+      return (
+        <TronconAmontPanel
+          tr={tr}
+          index={trIndex}
+          result={amontTronconResults?.get(selectedAmontId) ?? null}
+          materials={materials ?? []}
+          totalQpAlimM3h={totalQpAlimM3h}
+          pdcParams={pdcParamsAlimECS}
+          onUpdate={onUpdateAmontTroncon}
+          onRemove={() => onRemoveAmontTroncon?.(selectedAmontId)}
+        />
+      )
+    }
   }
 
   if (!selectedIds || selectedIds.length === 0) {
@@ -2645,6 +3245,7 @@ export default function RightPanel({
       pdcCumAlimResults={pdcCumAlimResults}
       segToCol={segToCol}
       flowDirections={flowDirections}
+      groupDisplayNames={groupDisplayNames}
     />
   )
   if (pt) {
@@ -2673,6 +3274,13 @@ export default function RightPanel({
         pdcCumAlimResults={pdcCumAlimResults}
         levels={levels}
         lineYs={lineYs}
+        pressionSourceAlimECS={pressionSourceAlimECS}
+        pressionSourceAlimECSStatic={pressionSourceAlimECSStatic}
+        groupDisplayNames={groupDisplayNames}
+        allSegs={segments}
+        flowDirections={flowDirections}
+        materials={materials}
+        roleMap={roleMap}
       />
     )
   }

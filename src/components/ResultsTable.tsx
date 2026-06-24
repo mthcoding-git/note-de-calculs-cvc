@@ -79,7 +79,7 @@ function SegRow({ row, segments, points, materials, insulations,
   const de          = seg.de_override ?? dnDef?.de
   const lambdaTube  = seg.lambda_tube_override ?? mat?.lambda
   const lambdaInsul = seg.lambda_insul_override ?? ins?.lambda
-  const Ui          = computeSegUI(seg, materials, insulations, globalParams?.he ?? 10)
+  const Ui          = computeSegUI(seg, materials, insulations, 10)
 
   const flowRate = fr?.flowRate
   const velocity = fr?.velocity

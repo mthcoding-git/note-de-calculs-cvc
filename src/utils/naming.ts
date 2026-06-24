@@ -240,8 +240,8 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
     const putStartFirst = startDist <= endDist
     const [firstL, secondL] = putStartFirst ? [startL, endL] : [endL, startL]
 
-    // Antenne en alimentation-ecs : chercher la colonne via la chaîne d'antennes parentes
-    if (role === 'antenne' && activeCalcId === 'alimentation-ecs') {
+    // Antenne en alimentation-ecs ou bouclage-ecs : chercher la colonne via la chaîne d'antennes parentes
+    if (role === 'antenne' && (activeCalcId === 'alimentation-ecs' || activeCalcId === 'bouclage-ecs')) {
       const colLoc = findAntenneColLoc(seg, allSegs, roleMap, ecsDistances, levels, lineYs, columns, columnXs)
       if (colLoc) return `${prefix} – ${colLoc} → ${colLoc}`
     }
@@ -249,6 +249,93 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
     return `${prefix} – ${firstL} → ${secondL}`
   }
   return `${prefix} – ${startL} → ${endL}`
+}
+
+// ── Groupes de points de puisage ────────────────────────────────────────────
+
+// Nom de base d'un groupe : remonte les antennes ECS en sens inverse du flux
+// jusqu'au tronçon aller ECS pour récupérer sa colonne.
+export function getDefaultGroupName(
+  pt: any,
+  allSegs: any[],
+  flowDirections: Map<string, { fromId: string; toId: string }>,
+  allerDist: Map<string, number>,
+  roleMap: Map<string, string> | null,
+  levels: any[], lineYs: number[], columns: any[], columnXs: number[]
+): string {
+  // Niveau où se trouve physiquement le groupe
+  let levelName = '?'
+  for (let i = 0; i < levels.length; i++) {
+    const yBot = lineYs[i], yTop = lineYs[i + 1]
+    if (yTop === undefined) continue
+    if (pt.y > yTop && pt.y <= yBot) { levelName = levels[i].name; break }
+  }
+  if (levelName === '?') {
+    const topLine = lineYs[levels.length]
+    if (topLine !== undefined && pt.y <= topLine) levelName = 'Toiture'
+  }
+
+  // Segments aller entrant dans ce groupe (sens du flux → groupe)
+  const incomingSegs = allSegs.filter(
+    s => s.type === 'aller' && flowDirections.get(s.id)?.toId === pt.id
+  )
+
+  // Remonte les antennes pour trouver la colonne du tronçon aller ECS
+  for (const seg of incomingSegs) {
+    const colLoc = findAntenneColLoc(seg, allSegs, roleMap, allerDist, levels, lineYs, columns, columnXs)
+    if (colLoc) return `Groupe de puisage - ${colLoc}`
+  }
+
+  return `Groupe de puisage - ${levelName}`
+}
+
+// Calcule le nom d'affichage final (avec "- n°x" si doublons) pour tous les groupes.
+// Retourne Map<ptId, displayName>.
+export function getDisplayGroupNames(
+  allPts: any[],
+  allSegs: any[],
+  flowDirections: Map<string, { fromId: string; toId: string }>,
+  allerDist: Map<string, number>,
+  roleMap: Map<string, string> | null,
+  levels: any[], lineYs: number[], columns: any[], columnXs: number[]
+): Map<string, string> {
+  const result = new Map<string, string>()
+  const groupes = allPts.filter(p => p.type === 'groupe')
+
+  // Noms personnalisés — priorité absolue
+  for (const pt of groupes) {
+    if (pt.name) result.set(pt.id, pt.name)
+  }
+
+  // Noms auto pour les groupes sans nom personnalisé
+  const autoGroupes = groupes.filter(p => !p.name)
+  const baseOf = new Map<string, string>()
+  for (const pt of autoGroupes) {
+    baseOf.set(pt.id, getDefaultGroupName(pt, allSegs, flowDirections, allerDist, roleMap, levels, lineYs, columns, columnXs))
+  }
+
+  // Regrouper par nom de base → numérotation si doublon
+  const byBase = new Map<string, string[]>()
+  for (const [id, base] of baseOf) {
+    if (!byBase.has(base)) byBase.set(base, [])
+    byBase.get(base)!.push(id)
+  }
+
+  for (const [base, ids] of byBase) {
+    if (ids.length === 1) {
+      result.set(ids[0], base)
+    } else {
+      // Tri : X croissant puis Y croissant (ordre visuel gauche→droite, haut→bas)
+      const sorted = [...ids].sort((a, b) => {
+        const pA = groupes.find(p => p.id === a)!
+        const pB = groupes.find(p => p.id === b)!
+        return pA.x !== pB.x ? pA.x - pB.x : pA.y - pB.y
+      })
+      sorted.forEach((id, i) => result.set(id, `${base} - n°${i + 1}`))
+    }
+  }
+
+  return result
 }
 
 // Dijkstra depuis les nœuds Production ECS en ne traversant que les tronçons Retour ECS.
