@@ -830,7 +830,6 @@ export default function DrawingCanvas({
   onValvesChange,
   selectedValveId,
   onSelectedValveChange,
-  calcSubMode,
   pdcParams,
   segToCol,
   onExitSpecialMode,

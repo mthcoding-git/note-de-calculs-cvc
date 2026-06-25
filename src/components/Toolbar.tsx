@@ -85,7 +85,7 @@ export default function Toolbar({
   onAddArriveeEF,
   canvasDisplay, onCanvasDisplayToggle,
   activeFluidId, activeCalcId,
-  calcSubMode, pdcParams,
+  pdcParams,
 }) {
   const [displayOpen, setDisplayOpen] = useState(false)
   const displayRef = useRef(null)
@@ -130,7 +130,7 @@ export default function Toolbar({
       <button
         className={`tb-btn ${isSelect ? 'active' : ''}`}
         onClick={() => setDrawMode('select')}
-        title="Mode sélection (Échap)">
+>
         <CursorIcon /> Sélectionner
       </button>
 
@@ -138,7 +138,7 @@ export default function Toolbar({
       <button
         className={`tb-btn ${isEditParams ? 'active' : ''}`}
         onClick={() => setDrawMode(isEditParams ? 'select' : 'editParams')}
-        title="Cliquer sur un tronçon pour lui attribuer ses paramètres">
+        >
         <PropsIcon /> Attribuer
       </button>
 
@@ -147,7 +147,7 @@ export default function Toolbar({
         <button
           className={`tb-btn ${displayOpen ? 'active' : ''}`}
           onClick={() => setDisplayOpen(o => !o)}
-          title="Choisir les informations à afficher sur le schéma">
+          >
           Afficher ▾
         </button>
         {displayOpen && (
@@ -177,7 +177,7 @@ export default function Toolbar({
           <button
             className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller-ef' : ''}`}
             onClick={() => activateDraw('aller')}
-            title="Aller EF — cliquer à nouveau ou Échap pour quitter">
+            >
             <span className="pipe-prev-aller-ef" /> Aller EF
           </button>
         ) : (
@@ -185,13 +185,13 @@ export default function Toolbar({
             <button
               className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller' : ''}`}
               onClick={() => activateDraw('aller')}
-              title="Aller ECS — cliquer à nouveau ou Échap pour quitter">
+              >
               <span className="pipe-prev-aller" /> Aller ECS
             </button>
             <button
               className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour' : ''}`}
               onClick={() => activateDraw('retour')}
-              title="Retour ECS — cliquer à nouveau ou Échap pour quitter">
+              >
               <span className="pipe-prev-retour" /> Retour ECS
             </button>
           </>
@@ -199,7 +199,7 @@ export default function Toolbar({
         <button
           className={`tb-btn ${drawMode === 'draw' && pipeType === 'point' ? 'active' : ''}`}
           onClick={() => activateDraw('point')}
-          title="Ajouter un nœud — clic sur le schéma pour créer, clic sur un tronçon pour le diviser · Échap pour quitter">
+          >
           <NodeSquareIcon /> Nœud
         </button>
       </div>
@@ -215,14 +215,14 @@ export default function Toolbar({
           <button
             className={`tb-btn ${placingChaufferie ? 'active' : ''}`}
             onClick={onAddChaufferie}
-            title="Cliquer sur le schéma pour placer le local ECS">
+            >
             Local ECS
           </button>
         ) : (
           <button
             className={`tb-btn ${editChaufferie ? 'active' : ''}`}
             onClick={() => onEditChaufferieChange(!editChaufferie)}
-            title="Activer pour déplacer et redimensionner le local ECS">
+            >
             ✎ Modifier local ECS
           </button>
         ))}
@@ -232,7 +232,7 @@ export default function Toolbar({
           <button
             className={`tb-btn ${placingEquipment?.type === 'arriveeEF' ? 'active' : ''}`}
             onClick={onAddArriveeEF}
-            title="Cliquer sur le schéma pour placer une arrivée d'eau froide">
+            >
             Arrivée EF
           </button>
         ) : (
@@ -242,7 +242,7 @@ export default function Toolbar({
               className={`tb-btn ${placingEquipment?.type === 'productionECS' ? 'active' : ''}`}
               onClick={onAddProductionECS}
               disabled={hasProductionECS}
-              title={hasProductionECS ? 'Une production ECS est déjà placée sur le schéma' : 'Cliquer sur le schéma pour placer une production ECS'}>
+              >
               Prod. ECS
             </button>
 
@@ -250,7 +250,7 @@ export default function Toolbar({
             <button
               className={`tb-btn ${placingEquipment?.type === 'pump' ? 'active' : ''}`}
               onClick={onAddPump}
-              title="Cliquer sur le schéma pour placer une pompe (sens modifiable via clic)">
+              >
               <PumpSymbol
                 rotation={180}
                 color={placingEquipment?.type === 'pump' ? '#1d4ed8' : '#4f46e5'}
@@ -263,7 +263,7 @@ export default function Toolbar({
             <button
               className={`tb-btn ${drawMode === 'draw' && pipeType === 'vanne' ? 'active' : ''}`}
               onClick={() => activateDraw('vanne')}
-              title="Cliquer sur un tronçon pour placer une vanne d'équilibrage">
+              >
               <VanneIcon active={drawMode === 'draw' && pipeType === 'vanne'} />
               Vanne équilib.
             </button>

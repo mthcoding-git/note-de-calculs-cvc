@@ -259,9 +259,9 @@ function ColumnsSection({ columns, columnXs, onColumnsChange, onColumnXsChange, 
           </div>
         ))}
       </div>
-      <div style={{ display: 'flex', gap: 5, marginTop: 2 }}>
-        <button className="lp-add-btn" style={{ flex: 1 }} onClick={onAddColumn}>+ Ajouter une colonne</button>
-        <button className="lp-add-btn" style={{ flex: 1 }} onClick={addGap}>+ Ajouter une gaine</button>
+      <div style={{ display: 'flex', gap: 4, marginTop: 2 }}>
+        <button className="lp-add-btn" style={{ flex: 1, fontSize: 10, padding: '4px 4px', whiteSpace: 'nowrap' }} onClick={onAddColumn}>+ Ajouter une colonne</button>
+        <button className="lp-add-btn" style={{ flex: 1, fontSize: 10, padding: '4px 4px', whiteSpace: 'nowrap' }} onClick={addGap}>+ Ajouter une gaine</button>
       </div>
     </Section>
   )
@@ -388,26 +388,26 @@ function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon 
               )}
             </div>
           </div>
-          {mat.enabled && showLambda && !compact && (
-            <div className="lp-mat-lambda">
-              <span>λ =</span>
-              <NumInput step={0.001} value={asNum(mat.lambda)}
-                onChange={v => { if (v != null) setLambda(mat.id, v) }} />
-              <span className="lp-unit">W/m·K</span>
-            </div>
-          )}
-          {mat.enabled && showEpsilon && (
-            <div className="lp-mat-lambda">
-              <span>ε =</span>
-              <input type="number" step="0.00001" min="0"
-                key={mat.epsilon ?? 0.0001}
-                defaultValue={mat.epsilon ?? 0.0001}
-                onBlur={e => setEpsilon(mat.id, e.target.value)} />
-              <span className="lp-unit">m</span>
-            </div>
-          )}
           {mat.enabled && expanded === mat.id && (
             <>
+              {showLambda && !compact && (
+                <div className="lp-mat-lambda">
+                  <span>λ =</span>
+                  <NumInput step={0.001} value={asNum(mat.lambda)}
+                    onChange={v => { if (v != null) setLambda(mat.id, v) }} />
+                  <span className="lp-unit">W/m·K</span>
+                </div>
+              )}
+              {showEpsilon && (
+                <div className="lp-mat-lambda">
+                  <span>ε =</span>
+                  <input type="number" step="0.00001" min="0"
+                    key={mat.epsilon ?? 0.0001}
+                    defaultValue={mat.epsilon ?? 0.0001}
+                    onBlur={e => setEpsilon(mat.id, e.target.value)} />
+                  <span className="lp-unit">m</span>
+                </div>
+              )}
               <table className="lp-dn-table">
                 {mat.custom
                   ? <colgroup><col style={{width:'68px'}}/><col style={{width:'64px'}}/><col style={{width:'64px'}}/><col style={{width:'22px'}}/></colgroup>
@@ -486,16 +486,14 @@ function InsulationsSection({ insulations, onChange }) {
               )}
             </div>
           </div>
-          {ins.enabled && (
-            <div className="lp-mat-lambda">
-              <span>λ =</span>
-              <NumInput step={0.001} value={asNum(ins.lambda)}
-                onChange={v => { if (v != null) setLambda(ins.id, v) }} />
-              <span className="lp-unit">W/m·K</span>
-            </div>
-          )}
           {ins.enabled && expanded === ins.id && (
             <>
+              <div className="lp-mat-lambda">
+                <span>λ =</span>
+                <NumInput step={0.001} value={asNum(ins.lambda)}
+                  onChange={v => { if (v != null) setLambda(ins.id, v) }} />
+                <span className="lp-unit">W/m·K</span>
+              </div>
               <div className="lp-thicknesses">
                 <label className="lp-label">Épaisseurs disponibles (mm) :</label>
                 {ins.thicknesses.length === 0 && (
@@ -600,20 +598,18 @@ function EditParamsPanel({
   segments, points, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie,
   editParam, onEditParamChange,
-  activeCalcId, alimentationParams, calcSubMode,
+  activeCalcId, alimentationParams,
 }) {
   const isAlim = activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef'
   const isEF   = activeCalcId === 'alimentation-ef'
-  const isPdc  = calcSubMode === 'pdc'
   const set = patch => onEditParamChange({ ...editParam, ...patch })
   const { paramType, segType, materialId, dn, insulationId, thickness,
           length, flowVelocityMode, flowVelocityValue } = editParam
 
-  // Réinitialise paramType si la valeur courante n'est pas disponible dans ce mode
-  const validTypes = isEF ? ['material', 'length'] : isAlim ? ['type', 'material', 'length'] : isPdc ? ['type', 'material', 'length', 'flowVelocity'] : ['type', 'material', 'insulation', 'length', 'flowVelocity']
+  const validTypes = isEF ? ['material', 'length'] : isAlim ? ['type', 'material', 'length'] : ['type', 'material', 'insulation', 'length', 'flowVelocity']
   useEffect(() => {
     if (!validTypes.includes(paramType)) set({ paramType: 'material' })
-  }, [isAlim, isPdc, paramType])
+  }, [isAlim, paramType])
 
   const enabledMats = materials.filter(m => m.enabled)
   const enabledIns  = insulations.filter(i => i.enabled)
@@ -641,7 +637,7 @@ function EditParamsPanel({
         <select value={paramType} onChange={e => set({ paramType: e.target.value, materialId: null, dn: null, insulationId: null, thickness: null, length: null, flowVelocityValue: null })}>
           {!isEF && <option value="type">Réseau (Aller / Retour ECS)</option>}
           <option value="material">Matériau & DN</option>
-          {!isAlim && !isPdc && <option value="insulation">Isolant & épaisseur</option>}
+          {!isAlim && <option value="insulation">Isolant & épaisseur</option>}
           <option value="length">Longueur</option>
           {!isAlim && <option value="flowVelocity">Débit / Vitesse</option>}
         </select>
@@ -1533,7 +1529,6 @@ function FittingLibrarySection({ pdcParams, onChange }) {
 export default function LeftPanel({
   activeSection,
   activeCalcId,
-  calcSubMode,
   alimentationParams, onAlimentationParamsChange,
   pdcParams, onPdcParamsChange,
   pdcParamsAlimECS, onPdcParamsAlimECSChange, totalQpAlimM3h = 0,
@@ -1566,7 +1561,6 @@ export default function LeftPanel({
               editParam={editParam} onEditParamChange={onEditParamChange}
               activeCalcId={activeCalcId}
               alimentationParams={alimentationParams}
-              calcSubMode={calcSubMode}
             />
           </div>
         </div>
@@ -1683,10 +1677,10 @@ export default function LeftPanel({
   return (
     <div className="left-panel">
       {activeSection && panelTitles[activeSection] && (
-        <div className="lp-panel-title">
-          <span style={{ flex: 1 }}>{panelTitles[activeSection]}</span>
+        <div className="lp-panel-title" style={activeSection === 'pdc' && activePdcP != null ? { flexDirection: 'column', alignItems: 'flex-start', gap: 6 } : {}}>
+          <span>{panelTitles[activeSection]}</span>
           {activeSection === 'pdc' && activePdcP != null && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
               <span style={{ fontSize: 9, color: '#9ca3af', marginRight: 2 }}>Unité</span>
               {([['Pa', 'Pa'], ['mmCE', 'mmCE'], ['both', 'Pa/mmCE']] as [string, string][]).map(([val, lbl]) => {
                 const active = (activePdcP.uniteAffichage ?? 'Pa') === val

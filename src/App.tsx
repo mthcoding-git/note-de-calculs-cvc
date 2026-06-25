@@ -19,8 +19,7 @@ import { getNodeCote } from './utils/coteCalc'
 import { computeCumDp, computeCumDpAlim } from './utils/pdcCumul'
 import { computeValveKvs } from './utils/valveKv'
 import ResultsTable from './components/ResultsTable'
-import { Building2 } from 'lucide-react'
-import { PipeIcon, InsulatedPipeIcon, FaucetIcon, FaucetsGroupIcon, GaugeIcon } from './components/icons'
+import { PipeIcon, InsulatedPipeIcon, FaucetIcon, FaucetsGroupIcon, GaugeIcon, BuildingFloorsIcon } from './components/icons'
 import './App.css'
 
 let _uid = 0
@@ -752,7 +751,6 @@ export default function App() {
     return conn + flow + missingProd
   }, [project.segments, project.points, networkFlows, activeCalcId])
 
-  const [calcSubMode, setCalcSubMode] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
   const [selectedAmontId, setSelectedAmontId] = useState<string | null>(null)
 
   const pdcCumResults = useMemo(
@@ -836,7 +834,7 @@ export default function App() {
   const [groupesEditMode,    setGroupesEditMode]    = useState(false)
   const [showGroupeNames,    setShowGroupeNames]    = useState(false)
   const [canvasDisplay, setCanvasDisplay] = useState(CANVAS_DISPLAY_RESET)
-  const [showResultsTable, setShowResultsTable] = useState(false)
+  const [activeTable, setActiveTable] = useState<'dimensionnement' | 'pdc' | null>(null)
   const [tableHeight, setTableHeight] = useState(300)
   const tableHeightRef = useRef(0)
   tableHeightRef.current = tableHeight
@@ -990,7 +988,7 @@ export default function App() {
 
   const handleSetupComplete = useCallback(() => {
     setPendingSetup(false)
-    setActiveSection('niveaux')
+    setActiveSection(null)
     setFitViewRequest(r => r + 1)
   }, [])
 
@@ -1026,7 +1024,7 @@ export default function App() {
   const handleCalcChange = useCallback((id) => {
     if (!activeCalcId && !pendingSetup) setActiveSection(s => s ?? 'niveaux')
     setActiveCalcId(id)
-    setCalcSubMode('dimensionnement')
+    setActiveTable(null)
     setCanvasDisplay(CANVAS_DISPLAY_RESET)
   }, [activeCalcId, pendingSetup])
 
@@ -1357,7 +1355,7 @@ export default function App() {
             ) : (
               <span
                 className={`app-title-main${!projectName ? ' app-title-placeholder' : ''}`}
-                title="Cliquer pour renommer"
+                title="Cliquer pour renommer le projet"
                 onClick={() => setEditingProjName(true)}>
                 {projectName || 'Nouveau projet'}
               </span>
@@ -1394,22 +1392,6 @@ export default function App() {
                 onSetBase={setBaseVariant}
                 onReorder={reorderVariant}
               />
-              {(activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') && (
-                <>
-                  <div className="app-hd-sep" />
-                  <div className="calc-sub-pills">
-                    <button
-                      className={`calc-sub-pill${calcSubMode === 'dimensionnement' ? ' active' : ''}`}
-                      onClick={() => setCalcSubMode('dimensionnement')}
-                    >Dimensionnement</button>
-                    <button
-                      className={`calc-sub-pill${calcSubMode === 'pdc' ? ' active' : ''}`}
-                      disabled={activeCalcId !== 'bouclage-ecs' && activeCalcId !== 'alimentation-ecs'}
-                      onClick={() => setCalcSubMode('pdc')}
-                    >Pertes de charge</button>
-                  </div>
-                </>
-              )}
             </>
           )}
         </div>
@@ -1443,7 +1425,6 @@ export default function App() {
         onCanvasDisplayToggle={key => setCanvasDisplay(d => ({ ...d, [key]: !d[key] }))}
         activeFluidId={activeFluidId}
         activeCalcId={pendingSetup ? null : activeCalcId}
-        calcSubMode={calcSubMode}
         pdcParams={activePdcParams}
       />
 
@@ -1451,7 +1432,7 @@ export default function App() {
         {!pendingSetup && (
           <nav className="icon-sidebar">
             {([
-              ['niveaux',     'Niveaux & Colonnes',  <Building2 size={36} />],
+              ['niveaux',     'Niveaux & Colonnes',  <BuildingFloorsIcon size={36} />],
               ['groupes',     'Groupes de points de puisage', <FaucetsGroupIcon size={36} />],
               ['materiaux',   'Matériaux des canalisations', <PipeIcon size={36} />],
               ['isolation',   'Isolants (calorifugeage)',    <InsulatedPipeIcon size={36} />],
@@ -1466,7 +1447,6 @@ export default function App() {
                   setActiveSection(s => s === key ? null : key)
                 }}
                 data-tooltip={label}
-                title={label}
               >
                 {icon}
               </button>
@@ -1487,7 +1467,6 @@ export default function App() {
             <LeftPanel
               activeSection={activeSection}
               activeCalcId={activeCalcId}
-              calcSubMode={calcSubMode}
               alimentationParams={resolveAlimentationParams(project.alimentationParams)}
               onAlimentationParamsChange={v => update('alimentationParams', v)}
               pdcParams={project.pdcParams ?? DEFAULT_PDC_PARAMS}
@@ -1587,24 +1566,23 @@ export default function App() {
             onValvesChange={v => update('valves', typeof v === 'function' ? v(project.valves ?? []) : v)}
             selectedValveId={selectedValveId}
             onSelectedValveChange={id => { setSelectedValveId(id); if (id) setSelectedIds([]) }}
-            calcSubMode={calcSubMode}
             pdcParams={activePdcParams}
             segToCol={segToCol}
             onExitSpecialMode={() => setDrawMode('select')}
           />
         </main>
 
-        {!pendingSetup && showResultsTable && (
+        {!pendingSetup && activeTable !== null && (
           <div className="rt-resizer" onMouseDown={startTableResize} />
         )}
-        {!pendingSetup && showResultsTable && (
+        {!pendingSetup && activeTable !== null && (
           <ResultsTable
             height={tableHeight}
             rows={flowRows}
             roleMap={roleMap}
             efFlowRowsArr={efFlowRowsArr}
             activeCalcId={activeCalcId}
-            calcSubMode={calcSubMode}
+            activeTable={activeTable}
             segments={project.segments}
             points={project.points}
             materials={project.materials}
@@ -1631,9 +1609,20 @@ export default function App() {
 
         {!pendingSetup && activeCalcId && (
           <div className="rt-toggle-bar">
-            <button className="rt-toggle-btn" onClick={() => setShowResultsTable(v => !v)}>
-              {showResultsTable ? '▼ Masquer les résultats' : '▲ Afficher les résultats'}
+            <button
+              className={`rt-toggle-btn${activeTable === 'dimensionnement' ? ' active' : ''}`}
+              onClick={() => setActiveTable(t => t === 'dimensionnement' ? null : 'dimensionnement')}
+            >
+              {activeTable === 'dimensionnement' ? '▼' : '▲'} Dimensionnement
             </button>
+            {(activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs') && (
+              <button
+                className={`rt-toggle-btn${activeTable === 'pdc' ? ' active' : ''}`}
+                onClick={() => setActiveTable(t => t === 'pdc' ? null : 'pdc')}
+              >
+                {activeTable === 'pdc' ? '▼' : '▲'} Pertes de charge
+              </button>
+            )}
           </div>
         )}
 
@@ -1641,7 +1630,6 @@ export default function App() {
 
         <aside className={`sidebar-right${(pendingSetup || (selectedIds.length === 0 && !editChaufferie && !selectedValveId && !selectedAmontId)) ? ' sidebar-right-closed' : ''}`}>
           <RightPanel
-            calcSubMode={calcSubMode}
             selectedIds={selectedIds}
             segments={project.segments}
             points={project.points}

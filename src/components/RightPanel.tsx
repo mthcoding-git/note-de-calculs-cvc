@@ -210,6 +210,14 @@ function TronconAmontPanel({ tr, index, result, materials, totalQpAlimM3h, pdcPa
         fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
     </div>
   )
+  const rowBlack = (label: string, value: string) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      padding: '2px 0', borderBottom: '1px solid #f3f4f6', gap: 6 }}>
+      <span style={{ fontSize: 10, color: '#111827', minWidth: 0 }}>{label}</span>
+      <span style={{ fontSize: 10.5, fontWeight: 500, color: '#111827',
+        fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
+    </div>
+  )
   const resultRow = (label: string, value: string, color: string) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
       padding: '4px 0', marginTop: 4, gap: 6 }}>
@@ -302,10 +310,10 @@ function TronconAmontPanel({ tr, index, result, materials, totalQpAlimM3h, pdcPa
                       {res.dpStatic > 0 && <div style={{ flex: res.dpStatic, background: '#94a3b8', borderRadius: 3 }} />}
                     </div>
                   )}
-                  {row('ΔP frottement', fmtP(res.dpFric))}
-                  {row('ΔP singulières', fmtP(res.dpSing))}
-                  {res.dpEquip > 0 && row('ΔP équipements', fmtP(res.dpEquip))}
-                  {row('ΔP hauteur statique', fmtP(res.dpStatic))}
+                  {rowBlack('ΔP frottement', fmtP(res.dpFric))}
+                  {rowBlack('ΔP singulières', fmtP(res.dpSing))}
+                  {res.dpEquip > 0 && rowBlack('ΔP équipements', fmtP(res.dpEquip))}
+                  {rowBlack('ΔP hauteur statique', fmtP(res.dpStatic))}
                 </div>
               </div>
 
@@ -601,7 +609,11 @@ function SegNameField({ displayName, isDefault, value, onChange }) {
 function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentationData = null, cumDp, postJunction = false, segCol = null, isOnCriticalPath = false, criticalCol = null,
                          isAlimEcs = false, deltaH = null, dpStatic = null, pressionAval = null, pStatAval = null,
                          isTerminalGroupePuisage = false }) {
-  const [showIter, setShowIter] = useState(false)
+  const [showIter, setShowIter]   = useState(false)
+  const [openLin, setOpenLin]     = useState(false)
+  const [openSing, setOpenSing]   = useState(false)
+  const [openEquip, setOpenEquip] = useState(false)
+  const [openStat, setOpenStat]   = useState(false)
 
   const fmtPa = (v: number) => v >= 10000
     ? `${(v / 1000).toFixed(2)} kPa`
@@ -670,6 +682,14 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentatio
         fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
     </div>
   )
+  const rowBlack = (label: string, value: string) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      padding: '2px 0', borderBottom: '1px solid #f3f4f6', gap: 6 }}>
+      <span style={{ fontSize: 10, color: '#111827', minWidth: 0 }}>{label}</span>
+      <span style={{ fontSize: 10.5, fontWeight: 500, color: '#111827',
+        fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
+    </div>
+  )
   const resultRow = (label: string, value: string, color: string) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
       padding: '4px 0', marginTop: 4, gap: 6 }}>
@@ -684,14 +704,15 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentatio
       {children}
     </div>
   )
-  const cardHeader = (title: string, value: React.ReactNode, pctVal: string, color: string, light: string) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      padding: '7px 12px', background: '#f9fafb', borderBottom: '1px solid #f3f4f6' }}>
-      <span style={{ fontSize: 10, fontWeight: 700, color: '#374151',
+  const cardHeader = (title: string, value: React.ReactNode, pctVal: string, color: string, light: string, onClick?: () => void) => (
+    <div onClick={onClick} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      padding: '7px 12px', background: '#f9fafb', borderBottom: '1px solid #f3f4f6',
+      cursor: onClick ? 'pointer' : 'default', userSelect: 'none' }}>
+      <span style={{ fontSize: 9.5, fontWeight: 700, color: '#374151',
         textTransform: 'uppercase', letterSpacing: '0.05em' }}>{title}</span>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
-        <span style={{ fontSize: 15, fontWeight: 700, color }}>{value}</span>
-        <span style={{ fontSize: 10, color: light }}>{pctVal}</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexShrink: 0, whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color }}>{value}</span>
+        <span style={{ fontSize: 9.5, color: light }}>{pctVal}</span>
       </div>
     </div>
   )
@@ -854,8 +875,8 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentatio
         const total      = dpFriction + dpStat
         const majoré     = pdcResult.dpPompe != null
         return (
-          <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #2563eb', borderRadius: 8, overflow: 'hidden' }}>
-            {cardHeader('Pertes du tronçon', fmtPNode(total), '', '#0f172a', '#94a3b8')}
+          <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #374151', borderRadius: 8, overflow: 'hidden' }}>
+            {cardHeader('Pertes du tronçon', fmtPNode(total), '', '#111827', '#374151')}
             <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
               {/* Barre 4 couleurs */}
               {total > 0 && (
@@ -866,9 +887,9 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentatio
                   {dpStat > 0 && <div style={{ flex: dpStat, background: '#94a3b8', borderRadius: 3 }} />}
                 </div>
               )}
-              {row('ΔP frottement', fmtP(dpFriction))}
-              {row('ΔP hauteur statique', dpStatic != null ? fmtP(dpStat) : '—')}
-              {majoré && row(`ΔP frottement majoré (+${pdcParams?.coefPompe ?? 10} %)`, fmtP(pdcResult.dpPompe!))}
+              {rowBlack('ΔP frottement', fmtP(dpFriction))}
+              {rowBlack('ΔP hauteur statique', dpStatic != null ? fmtP(dpStat) : '—')}
+              {majoré && rowBlack(`ΔP frottement majoré (+${pdcParams?.coefPompe ?? 10} %)`, fmtP(pdcResult.dpPompe!))}
             </div>
           </div>
         )
@@ -876,8 +897,8 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentatio
 
       {/* ── Pertes linéaires ── */}
       <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #2563eb', borderRadius: 8, overflow: 'hidden' }}>
-        {cardHeader('Pertes linéaires', fmtPNode(pdcResult.dpReg), pct(pdcResult.dpReg), '#2563eb', '#93c5fd')}
-        <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {cardHeader('Pertes linéaires', fmtPNode(pdcResult.dpReg), pct(pdcResult.dpReg), '#2563eb', '#93c5fd', () => setOpenLin(v => !v))}
+        {openLin && <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
           <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
             {pdcParams?.methodeReg === 'darcy-colebrook'
               ? 'Darcy-Weisbach + Colebrook-White'
@@ -946,17 +967,17 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentatio
           {pdcParams?.methodeReg === 'dtu-approche' && row('J', `${pdcResult.J.toFixed(1)} Pa/m`)}
 
           {resultRow(
-            'ΔP_lin = J × L',
-            `${pdcResult.J.toFixed(1)} × ${L != null ? L.toFixed(1) : '—'} = ${paStr(pdcResult.dpReg)}`,
+            'ΔP_lin = J×L',
+            `${pdcResult.J.toFixed(1)}×${L != null ? L.toFixed(1) : '—'} = ${paStr(pdcResult.dpReg)}`,
             '#2563eb'
           )}
-        </div>
+        </div>}
       </div>
 
       {/* ── Pertes singulières ── */}
       <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #c2562d', borderRadius: 8, overflow: 'hidden' }}>
-        {cardHeader('Pertes singulières', fmtPNode(pdcResult.dpSing), pct(pdcResult.dpSing), '#c2562d', '#fca38a')}
-        <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {cardHeader('Pertes singulières', fmtPNode(pdcResult.dpSing), pct(pdcResult.dpSing), '#c2562d', '#fca38a', () => setOpenSing(v => !v))}
+        {openSing && <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
           <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
             {pdcParams?.methodeSing === 'pourcentage'
               ? `Forfaitaire — ${pdcParams.pourcentageSing ?? 10} % des pertes linéaires`
@@ -985,14 +1006,14 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentatio
                 </>)
               })()
           }
-        </div>
+        </div>}
       </div>
 
       {/* ── Équipements ── */}
       {pdcParams?.equipementsActifs && (
         <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #7c3aed', borderRadius: 8, overflow: 'hidden' }}>
-          {cardHeader('Équipements', fmtPNode(pdcResult.dpEquip), pct(pdcResult.dpEquip), '#7c3aed', '#c4b5fd')}
-          <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {cardHeader('Équipements', fmtPNode(pdcResult.dpEquip), pct(pdcResult.dpEquip), '#7c3aed', '#c4b5fd', () => setOpenEquip(v => !v))}
+          {openEquip && <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
             {(() => {
               const equipment: any[] = seg.equipment ?? []
               if (equipment.length === 0) return (
@@ -1008,18 +1029,18 @@ function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentatio
                 {resultRow('ΔP_équip = Σ', paStr(pdcResult.dpEquip), '#7c3aed')}
               </>)
             })()}
-          </div>
+          </div>}
         </div>
       )}
 
       {/* ── Hauteur statique (alimentation ECS — après équipements) ── */}
       {isAlimEcs && (dpStatic != null || deltaH != null) && (
         <div style={{ border: '1px solid #e5e7eb', borderLeft: '3px solid #94a3b8', borderRadius: 8, overflow: 'hidden' }}>
-          {cardHeader('Hauteur statique', fmtPNode(dpStatic ?? 0), '—', '#64748b', '#94a3b8')}
-          <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {cardHeader('Hauteur statique', fmtPNode(dpStatic ?? 0), '—', '#64748b', '#94a3b8', () => setOpenStat(v => !v))}
+          {openStat && <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
             {row('Δh  (cote aval − cote amont)', deltaH != null ? `${deltaH.toFixed(2)} m` : '—')}
-            {resultRow('ΔP_stat = ρ · g · Δh', dpStatic != null ? paStr(dpStatic) : '—', '#64748b')}
-          </div>
+            {resultRow('ΔP_stat = ρ·g·Δh', dpStatic != null ? paStr(dpStatic) : '—', '#64748b')}
+          </div>}
         </div>
       )}
 
@@ -1086,8 +1107,8 @@ function SegFittingsPanel({ seg, set, pdcParams }) {
   const available = allStdF.filter(t => !fittings.find(f => f.type === t.id))
 
   const row: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4,
-    padding: '4px 7px', background: '#fef7f4', border: '1px solid #fbd5c5', borderRadius: 5,
+    display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4,
+    padding: '5px 8px', background: '#fef7f4', border: '1px solid #fbd5c5', borderRadius: 5,
   }
   const inp = (extra: React.CSSProperties = {}): React.CSSProperties => ({
     fontSize: 10, padding: '2px 4px', borderRadius: 4, border: '1px solid #e5e7eb',
@@ -1156,14 +1177,16 @@ function SegFittingsPanel({ seg, set, pdcParams }) {
               </div>
             ) : available.map(t => {
               const libXi = libOverrides[t.id] ?? t.xi
+              const long = t.label.length > 32
               return (
                 <div key={t.id} onClick={() => add(t.id)}
                   style={{ padding: '5px 10px', fontSize: 10.5, cursor: 'pointer', borderRadius: 5,
-                           display: 'flex', justifyContent: 'space-between', gap: 8 }}
+                           display: 'flex', flexDirection: long ? 'column' : 'row',
+                           alignItems: long ? 'flex-start' : 'baseline', gap: long ? 1 : 6 }}
                   onMouseEnter={e => (e.currentTarget.style.background = '#fef0ea')}
                   onMouseLeave={e => (e.currentTarget.style.background = '')}>
                   <span>{t.label}</span>
-                  <span style={{ color: '#9ca3af', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>ξ = {libXi}</span>
+                  <span style={{ fontSize: 9.5, color: '#9ca3af', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>ξ = {libXi}</span>
                 </div>
               )
             })}
@@ -1207,8 +1230,8 @@ function SegEquipPanel({ seg, set, pdcParams }) {
   const available = allStdE.filter(t => !equipment.find(e => e.type === t.id))
 
   const row: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4,
-    padding: '4px 7px', background: '#faf8ff', border: '1px solid #ddd6fe', borderRadius: 5,
+    display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4,
+    padding: '5px 8px', background: '#faf8ff', border: '1px solid #ddd6fe', borderRadius: 5,
   }
   const inp = (extra: React.CSSProperties = {}): React.CSSProperties => ({
     fontSize: 10, padding: '2px 4px', borderRadius: 4, border: '1px solid #e5e7eb',
@@ -1245,7 +1268,7 @@ function SegEquipPanel({ seg, set, pdcParams }) {
               style={{ ...inp({ width: 50,
                                 color: needsKv ? '#f97316' : overridden ? '#7c3aed' : '#374151',
                                 border: `1px solid ${needsKv ? '#fed7aa' : overridden ? '#ddd6fe' : '#e5e7eb'}` }) }} />
-            <span style={{ fontSize: 8, color: '#9ca3af', flexShrink: 0, lineHeight: 1 }}>m³/h/√bar</span>
+            <span style={{ fontSize: 8, color: '#9ca3af', flexShrink: 0, lineHeight: 1 }}>m³/h<br/>√bar</span>
             {overridden && libKv != null && (
               <button onClick={() => setKv(e.type, null)} title={`Rétablir (Kv = ${libKv})`}
                 style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11, padding: 0 }}>
@@ -1276,14 +1299,16 @@ function SegEquipPanel({ seg, set, pdcParams }) {
               </div>
             ) : available.map(t => {
               const libKv = libOverrides[t.id] ?? t.kvDefault
+              const long = t.label.length > 32
               return (
                 <div key={t.id} onClick={() => add(t.id)}
                   style={{ padding: '5px 10px', fontSize: 10.5, cursor: 'pointer', borderRadius: 5,
-                           display: 'flex', justifyContent: 'space-between', gap: 8 }}
+                           display: 'flex', flexDirection: long ? 'column' : 'row',
+                           alignItems: long ? 'flex-start' : 'baseline', gap: long ? 1 : 6 }}
                   onMouseEnter={e => (e.currentTarget.style.background = '#faf8ff')}
                   onMouseLeave={e => (e.currentTarget.style.background = '')}>
                   <span>{t.label}</span>
-                  <span style={{ color: '#9ca3af', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                  <span style={{ fontSize: 9.5, color: '#9ca3af', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
                     Kv = {libKv ?? '—'}
                   </span>
                 </div>
@@ -1296,7 +1321,7 @@ function SegEquipPanel({ seg, set, pdcParams }) {
   )
 }
 
-function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, pdcParams, pdcResult, calcSubMode, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null }) {
+function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null }) {
   const [tab, setTab] = useState('params')
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
 
@@ -1312,7 +1337,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
   const uiValue = computeSegUI(seg, materials, insulations, 10)
 
   // ── Vue dédiée Alimentation ECS (dimensionnement) et Alimentation EF ──────────────────────
-  if (activeCalcId === 'alimentation-ef' || (activeCalcId === 'alimentation-ecs' && calcSubMode !== 'pdc')) {
+  if (activeCalcId === 'alimentation-ef' || activeCalcId === 'alimentation-ecs') {
     const di_mm = seg.di_override ?? dnDef?.di ?? null
     const ad    = alimentationData
 
@@ -1486,6 +1511,19 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
             )}
           </>)}
 
+          {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (
+            <>
+              <hr className="rp-divider" />
+              <SectionLabel>Accessoires &amp; équipements</SectionLabel>
+              {pdcParams.methodeSing === 'accessoires' && (
+                <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} />
+              )}
+              {pdcParams.equipementsActifs && (
+                <SegEquipPanel seg={seg} set={set} pdcParams={pdcParams} />
+              )}
+            </>
+          )}
+
           <AntenneGroupesAval
             seg={seg} allSegs={allSegs} points={points ?? []}
             flowDirections={flowDirections} materials={materials}
@@ -1496,7 +1534,50 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
         {/* ── Résultats ── */}
         {tab === 'results' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {ad ? (() => {
+
+            {/* Toggle Dimensionnement / Pertes de charge (alimentation-ecs uniquement) */}
+            {activeCalcId === 'alimentation-ecs' && pdcParams != null && (
+              <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', marginBottom: 4 }}>
+                {(['dimensionnement', 'pdc'] as const).map(key => (
+                  <button key={key} onClick={() => onResultsViewChange(key)} style={{
+                    padding: '2px 10px 7px', fontSize: 10.5,
+                    fontWeight: resultsView === key ? 700 : 400,
+                    color: resultsView === key ? '#4338ca' : '#6b7280',
+                    border: 'none',
+                    borderBottom: resultsView === key ? '2px solid #6366f1' : '2px solid transparent',
+                    background: 'none', cursor: 'pointer', marginBottom: -1,
+                    whiteSpace: 'nowrap', transition: 'color 0.1s',
+                  }}>
+                    {key === 'pdc' ? 'Pertes de charge' : 'Dimensionnement'}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Résultats Pertes de charge */}
+            {resultsView === 'pdc' && pdcParams != null && activeCalcId === 'alimentation-ecs' && (() => {
+              const toId = flowDirections?.get(seg.id)?.toId
+              const isTerminal = toId != null && points.find(p => p.id === toId)?.type === 'groupe'
+              return (
+                <PdcSegResults pdcResult={pdcResult} pdcParams={pdcParams} seg={seg} dnDef={dnDef} flowData={flowData}
+                  alimentationData={alimentationData}
+                  cumDp={pdcCumAlimResults?.segCumDp?.get(seg.id)}
+                  postJunction={false}
+                  segCol={segToCol?.get(seg.id) ?? null}
+                  isOnCriticalPath={pdcCumAlimResults?.criticalSegIds?.has(seg.id) ?? false}
+                  criticalCol={null}
+                  isAlimEcs={true}
+                  deltaH={pdcCumAlimResults?.segDeltaH?.get(seg.id) ?? null}
+                  dpStatic={pdcCumAlimResults?.segDpStatic?.get(seg.id) ?? null}
+                  pressionAval={pdcCumAlimResults?.segPressionAval?.get(seg.id) ?? null}
+                  pStatAval={pdcCumAlimResults?.segPStatAval?.get(seg.id) ?? null}
+                  isTerminalGroupePuisage={isTerminal}
+                />
+              )
+            })()}
+
+            {/* Résultats Dimensionnement NF DTU 60.11 */}
+            {(resultsView !== 'pdc' || pdcParams == null) && (ad ? (() => {
               const isCollective = ad.method === 'collective'
               const c = isCollective ? ad.collective : null
 
@@ -1641,7 +1722,7 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
                   ? 'Tronçon retour — le dimensionnement s\'applique uniquement aux tronçons aller en Alimentation ECS.'
                   : 'Aucun groupe de puisage en aval, ou aucun appareil activé.'}
               </p>
-            )}
+            ))}
           </div>
         )}
       </div>
@@ -1672,7 +1753,24 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
 
       {tab === 'results' && (
         <div>
-          {calcSubMode === 'pdc' ? (
+          {pdcParams != null && (
+            <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', marginBottom: 12 }}>
+              {(['dimensionnement', 'pdc'] as const).map(key => (
+                <button key={key} onClick={() => onResultsViewChange(key)} style={{
+                  padding: '2px 10px 7px', fontSize: 10.5,
+                  fontWeight: resultsView === key ? 700 : 400,
+                  color: resultsView === key ? '#4338ca' : '#6b7280',
+                  border: 'none',
+                  borderBottom: resultsView === key ? '2px solid #6366f1' : '2px solid transparent',
+                  background: 'none', cursor: 'pointer', marginBottom: -1,
+                  whiteSpace: 'nowrap', transition: 'color 0.1s',
+                }}>
+                  {key === 'pdc' ? 'Pertes de charge' : 'Dimensionnement'}
+                </button>
+              ))}
+            </div>
+          )}
+          {resultsView === 'pdc' && pdcParams != null ? (
             (() => {
               const isAlimEcs = activeCalcId === 'alimentation-ecs'
               const toId = flowDirections?.get(seg.id)?.toId
@@ -1897,161 +1995,27 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
         </div>
       )}
 
-      {tab === 'params' && (calcSubMode === 'pdc' ? (
-        <>
-          <SectionLabel>Identification</SectionLabel>
-          <SegNameField displayName={displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
-          {activeCalcId !== 'alimentation-ecs' && roleMap?.get(seg.id) !== 'antenne' && (
-            <Field label="Type de tronçon">
-              <select value={seg.type} onChange={e => set('type', e.target.value)}>
-                <option value="aller">Aller ECS</option>
-                <option value="retour">Retour ECS</option>
-              </select>
-            </Field>
-          )}
-
-          <hr className="rp-divider" />
-          {activeCalcId === 'alimentation-ecs' && <CoteSection seg={seg} points={points} levels={levels} lineYs={lineYs} onUpdate={onUpdate} flowDirections={flowDirections} />}
-          <hr className="rp-divider" />
-
-          {activeCalcId !== 'alimentation-ecs' && roleMap?.get(seg.id) !== 'antenne' && <>
-            <SectionLabel>Hydraulique</SectionLabel>
-            {(() => {
-              const di_mm  = seg.di_override ?? dnDef?.di ?? null
-              const area   = di_mm ? Math.PI * (di_mm / 1000) ** 2 / 4 : null
-              const hasManualQ = seg.flowRate != null
-              const hasManualV = seg.velocity != null
-              const hasManual  = hasManualQ || hasManualV
-              const resolved   = flowData
-
-              const qPlaceholder = hasManualV && area
-                ? `Calculé : ${sf(seg.velocity * area * 3600, 3)}`
-                : (!hasManual && resolved?.flowRate != null)
-                ? `Calculé : ${sf(resolved.flowRate, 3)}`
-                : 'm³/h'
-
-              const vPlaceholder = hasManualQ && area
-                ? `Calculé : ${sf(seg.flowRate / (area * 3600), 3)}`
-                : (!hasManual && resolved?.velocity != null)
-                ? `Calculé : ${sf(resolved.velocity, 3)}`
-                : 'm/s'
-
-              return (
-                <div className="lp-field">
-                  <label className="lp-label">
-                    Débit / Vitesse
-                    {resolved?.source === 'manual' && (
-                      <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: '#2563eb',
-                        background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 3, padding: '1px 4px' }}>
-                        MANUEL
-                      </span>
-                    )}
-                    {resolved?.source === 'computed' && (
-                      <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: '#15803d',
-                        background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 3, padding: '1px 4px' }}>
-                        CALCULÉ
-                      </span>
-                    )}
-                  </label>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>Débit (m³/h)</div>
-                      <NumInput min={0} step={0.001}
-                        placeholder={qPlaceholder}
-                        value={seg.flowRate ?? null} allowEmpty
-                        onChange={v => { set('flowRate', v); if (v != null) set('velocity', null) }} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>Vitesse (m/s)</div>
-                      <NumInput min={0} step={0.001}
-                        placeholder={vPlaceholder}
-                        value={seg.velocity ?? null} allowEmpty
-                        onChange={v => { set('velocity', v); if (v != null) set('flowRate', null) }} />
-                    </div>
-                  </div>
-                </div>
-              )
-            })()}
-            <hr className="rp-divider" />
-          </>}
-
-          <SectionLabel>Canalisation</SectionLabel>
-          <Field label="Longueur" unit="m">
-            <NumInput min={0}
-              value={seg.length_override ?? null}
-              placeholder="saisie manuelle"
-              allowEmpty
-              onChange={v => set('length_override', v)} />
-          </Field>
-          <Field label="Matériau">
-            {enabledMats.length === 0
-              ? <p className="lp-hint">Aucun matériau activé dans les paramètres.</p>
-              : (
-                <select value={seg.materialId || ''}
-                  onChange={e => { set('materialId', e.target.value || null); set('dn', null) }}>
-                  <option value="">— Choisir —</option>
-                  {enabledMats.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-              )
-            }
-          </Field>
-          {selMat && (
-            <>
-              <Field label="DN">
-                <select value={seg.dn || ''}
-                  onChange={e => { set('dn', e.target.value || null); set('di_override', null) }}>
-                  <option value="">— Choisir —</option>
-                  {selMat.dns.map(d => <option key={d.dn} value={d.dn}>{d.dn}</option>)}
-                </select>
-              </Field>
-              {dnDef && (
-                <Field label="Di" unit="mm">
-                  <NumInput
-                    value={seg.di_override ?? null}
-                    placeholder={`${dnDef.di} (par défaut)`}
-                    allowEmpty
-                    onChange={v => set('di_override', v)} />
-                </Field>
-              )}
-            </>
-          )}
-
-          {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (
-            <>
-              <hr className="rp-divider" />
-              <SectionLabel>Accessoires &amp; équipements</SectionLabel>
-              {pdcParams.methodeSing === 'accessoires' && (
-                <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} />
-              )}
-              {pdcParams.equipementsActifs && (
-                <SegEquipPanel seg={seg} set={set} pdcParams={pdcParams} />
-              )}
-            </>
-          )}
-
-          <AntenneGroupesAval
-            seg={seg} allSegs={allSegs} points={points ?? []}
-            flowDirections={flowDirections} materials={materials}
-            roleMap={roleMap} groupDisplayNames={groupDisplayNames}
-          />
-        </>
-      ) : <>
+      {tab === 'params' && (<>
       {/* Identification */}
       <SectionLabel>Identification</SectionLabel>
       <SegNameField displayName={displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
 
-      {roleMap?.get(seg.id) !== 'antenne' && (
-        <Field label="Type de tronçon">
-          <select value={seg.type} onChange={e => set('type', e.target.value)}>
-            <option value="aller">Aller ECS</option>
-            <option value="retour">Retour ECS</option>
-          </select>
-        </Field>
-      )}
+      <Field label="Type de tronçon">
+        <select value={seg.type} onChange={e => set('type', e.target.value)} style={{ fontSize: 10 }}>
+          <option value="aller">Aller ECS</option>
+          <option value="retour">Retour ECS</option>
+        </select>
+      </Field>
 
-      <hr className="rp-divider" />
-      {activeCalcId === 'alimentation-ecs' && <CoteSection seg={seg} points={points} levels={levels} lineYs={lineYs} onUpdate={onUpdate} />}
-      <hr className="rp-divider" />
+      {activeCalcId === 'alimentation-ecs' ? (
+        <>
+          <hr className="rp-divider" />
+          <CoteSection seg={seg} points={points} levels={levels} lineYs={lineYs} onUpdate={onUpdate} />
+          <hr className="rp-divider" />
+        </>
+      ) : (
+        <hr className="rp-divider" />
+      )}
 
       {/* Hydraulique — masqué pour les antennes bouclage ECS */}
       {roleMap?.get(seg.id) !== 'antenne' && (
@@ -2189,12 +2153,6 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
         </>
       )}
 
-      <AntenneGroupesAval
-        seg={seg} allSegs={allSegs} points={points ?? []}
-        flowDirections={flowDirections} materials={materials}
-        roleMap={roleMap} groupDisplayNames={groupDisplayNames}
-      />
-
       <hr className="rp-divider" />
 
       {/* Isolation */}
@@ -2267,6 +2225,25 @@ function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, 
         )
       })()}
 
+      {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (
+        <>
+          <hr className="rp-divider" />
+          <SectionLabel>Accessoires &amp; équipements</SectionLabel>
+          {pdcParams.methodeSing === 'accessoires' && (
+            <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} />
+          )}
+          {pdcParams.equipementsActifs && (
+            <SegEquipPanel seg={seg} set={set} pdcParams={pdcParams} />
+          )}
+        </>
+      )}
+
+      <AntenneGroupesAval
+        seg={seg} allSegs={allSegs} points={points ?? []}
+        flowDirections={flowDirections} materials={materials}
+        roleMap={roleMap} groupDisplayNames={groupDisplayNames}
+      />
+
       </>)}
 
     </div>
@@ -2304,7 +2281,7 @@ function TempBadge({ temp, T_depart }) {
   )
 }
 
-function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null }) {
+function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null }) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
   const T_depart = globalParams?.T_depart ?? null
   const [showDims, setShowDims] = useState(false)
@@ -2457,7 +2434,7 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
       for (const k of Object.keys(equip)) { if (!equip[k]) delete equip[k] }
       set('equipements', equip)
     }
-    const enabledAppareils = (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef')
+    const enabledAppareils = (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef' || activeCalcId === 'bouclage-ecs')
       ? (alimentationParams?.appareils ?? []).filter(a => a.enabled)
       : []
     return (
@@ -2469,7 +2446,41 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
           value={pt.name ?? ''}
           onChange={v => set('name', v)}
         />
-        {coteJsx}
+
+        {enabledAppareils.length > 0 && (<>
+          <hr className="rp-divider" />
+          <SectionLabel>Équipements</SectionLabel>
+          {enabledAppareils.map(a => {
+            const cnt = pt.equipements?.[a.id] ?? 0
+            return (
+              <div key={a.id} style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '4px 0', borderBottom: '1px solid #f3f4f6',
+              }}>
+                <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                  background: cnt > 0 ? '#0369a1' : '#d1d5db' }} />
+                <span style={{ flex: 1, fontSize: 11, color: cnt > 0 ? '#111827' : '#6b7280' }}>{a.name}</span>
+                <button onClick={() => setEquip(a.id, Math.max(0, cnt - 1))}
+                  style={{ width: 22, height: 22, border: '1px solid #d1d5db', borderRadius: 4,
+                    background: '#fff', cursor: cnt > 0 ? 'pointer' : 'default', fontSize: 15, lineHeight: 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                    opacity: cnt > 0 ? 1 : 0.35 }}>−</button>
+                <span style={{ fontSize: 12, fontWeight: 700,
+                  color: cnt > 0 ? '#0369a1' : '#6b7280',
+                  minWidth: 22, textAlign: 'center' }}>{cnt}</span>
+                <button onClick={() => setEquip(a.id, cnt + 1)}
+                  style={{ width: 22, height: 22, border: '1px solid #d1d5db', borderRadius: 4,
+                    background: '#fff', cursor: 'pointer', fontSize: 15, lineHeight: 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>+</button>
+              </div>
+            )
+          })}
+        </>)}
+
+        {coteJsx && (<>
+          <hr className="rp-divider" />
+          {coteJsx}
+        </>)}
 
         {(activeCalcId === 'alimentation-ecs' || activeCalcId === 'bouclage-ecs') && (() => {
           const path = computeGroupePath(pt.id, allSegs, flowDirections ?? undefined, materials, roleMap ?? undefined)
@@ -2506,36 +2517,6 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
             </>
           )
         })()}
-
-        {enabledAppareils.length > 0 && (<>
-          <hr className="rp-divider" />
-          <SectionLabel>Équipements</SectionLabel>
-          {enabledAppareils.map(a => {
-            const cnt = pt.equipements?.[a.id] ?? 0
-            return (
-              <div key={a.id} style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '4px 0', borderBottom: '1px solid #f3f4f6',
-              }}>
-                <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-                  background: cnt > 0 ? '#0369a1' : '#d1d5db' }} />
-                <span style={{ flex: 1, fontSize: 11, color: cnt > 0 ? '#111827' : '#6b7280' }}>{a.name}</span>
-                <button onClick={() => setEquip(a.id, Math.max(0, cnt - 1))}
-                  style={{ width: 22, height: 22, border: '1px solid #d1d5db', borderRadius: 4,
-                    background: '#fff', cursor: cnt > 0 ? 'pointer' : 'default', fontSize: 15, lineHeight: 1,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    opacity: cnt > 0 ? 1 : 0.35 }}>−</button>
-                <span style={{ fontSize: 12, fontWeight: 700,
-                  color: cnt > 0 ? '#0369a1' : '#6b7280',
-                  minWidth: 22, textAlign: 'center' }}>{cnt}</span>
-                <button onClick={() => setEquip(a.id, cnt + 1)}
-                  style={{ width: 22, height: 22, border: '1px solid #d1d5db', borderRadius: 4,
-                    background: '#fff', cursor: 'pointer', fontSize: 15, lineHeight: 1,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>+</button>
-              </div>
-            )
-          })}
-        </>)}
         <TempBadge temp={activeCalcId === 'alimentation-ecs' ? null : nodeTemp} T_depart={T_depart} />
 
         {activeCalcId === 'alimentation-ecs' && calcSubMode === 'pdc' && (() => {
@@ -2836,6 +2817,24 @@ function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeC
   return (
     <div className="rp-section">
       <h3 className="rp-title">Nœud</h3>
+
+      {pdcParams != null && onResultsViewChange != null && (
+        <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', marginBottom: 10 }}>
+          {(['dimensionnement', 'pdc'] as const).map(key => (
+            <button key={key} onClick={() => onResultsViewChange(key)} style={{
+              padding: '2px 10px 7px', fontSize: 10.5,
+              fontWeight: calcSubMode === key ? 700 : 400,
+              color: calcSubMode === key ? '#4338ca' : '#6b7280',
+              border: 'none',
+              borderBottom: calcSubMode === key ? '2px solid #6366f1' : '2px solid transparent',
+              background: 'none', cursor: 'pointer', marginBottom: -1,
+              transition: 'color 0.1s',
+            }}>
+              {key === 'pdc' ? 'Pertes de charge' : 'Dimensionnement'}
+            </button>
+          ))}
+        </div>
+      )}
 
       {coteJsx}
 
@@ -3152,7 +3151,6 @@ function ChaufferiePanel({ chaufferie, onChange, levels }) {
 }
 
 export default function RightPanel({
-  calcSubMode,
   selectedIds, segments, points, onUpdate, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie, onChaufferieChange,
   editChaufferie, flowDirections, networkFlows, globalParams, thermalResults, roleMap,
@@ -3165,6 +3163,8 @@ export default function RightPanel({
   pdcParamsAlimECS = null,
   groupDisplayNames = null,
 }) {
+  const [resultsView, setResultsView] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
+
   // In editChaufferie mode, chaufferie panel takes priority
   if (editChaufferie && chaufferie?.placed) {
     return (
@@ -3240,7 +3240,8 @@ export default function RightPanel({
       alimentationData={alimentationResults?.get(seg.id)}
       pdcParams={pdcParams}
       pdcResult={pdcResults?.get(seg.id)}
-      calcSubMode={calcSubMode}
+      resultsView={resultsView}
+      onResultsViewChange={setResultsView}
       pdcCumResults={pdcCumResults}
       pdcCumAlimResults={pdcCumAlimResults}
       segToCol={segToCol}
@@ -3261,14 +3262,15 @@ export default function RightPanel({
     return (
       <PointPanel
         pt={pt} onUpdate={onUpdate}
-        nodeTemp={calcSubMode === 'pdc' || activeCalcId === 'alimentation-ecs' ? null : thermalResults?.nodeTemps.get(pt.id)}
+        nodeTemp={resultsView === 'pdc' || activeCalcId === 'alimentation-ecs' ? null : thermalResults?.nodeTemps.get(pt.id)}
         inSegs={inSegs}
         globalParams={globalParams}
         activeCalcId={activeCalcId}
         alimentationParams={alimentationParams}
         alimentationResults={alimentationResults}
         points={points}
-        calcSubMode={calcSubMode}
+        calcSubMode={resultsView}
+        onResultsViewChange={setResultsView}
         pdcCumResults={pdcCumResults}
         pdcParams={pdcParams}
         pdcCumAlimResults={pdcCumAlimResults}

@@ -558,7 +558,7 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
 export default function ResultsTable({
   rows, roleMap,
   activeCalcId,
-  calcSubMode,
+  activeTable,
   efFlowRowsArr,
   segments, points, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie,
@@ -619,7 +619,7 @@ export default function ResultsTable({
   }
 
   // ── PDC ────────────────────────────────────────────────────────────────────
-  const isPdc = (activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs') && calcSubMode === 'pdc'
+  const isPdc = (activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs') && activeTable === 'pdc'
   if (isPdc) {
     const isAlimEcsPdc  = activeCalcId === 'alimentation-ecs'
     const isDarcy       = pdcParams?.methodeReg === 'darcy-colebrook'
