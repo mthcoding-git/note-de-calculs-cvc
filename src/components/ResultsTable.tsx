@@ -65,7 +65,7 @@ function tAvalStyle(T_aval, T_depart) {
 function SegRow({ row, segments, points, materials, insulations,
                   levels, lineYs, columns, columnXs, chaufferie,
                   globalParams, networkFlows, thermalResults,
-                  selectedIds, onSelectIds, rowRef, roleMap, activeCalcId }) {
+                  selectedIds, onSelectIds, rowRef, roleMap, activeCalcId, flowDirections = null }) {
   const { seg, depth, segType } = row
 
   const sr = thermalResults?.segResults?.get(seg.id)
@@ -111,7 +111,7 @@ function SegRow({ row, segments, points, materials, insulations,
   const lenIsDefault  = seg.length_override == null
   const flowIsDefault = seg.flowRate == null && seg.velocity == null
 
-  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId, roleMap)
+  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId, roleMap, flowDirections)
     .replace(/^((Collecteur (aller|retour)|Aller|Retour|Antenne) ECS|EF)\s*–\s*/, '')
   const colonneName = extractColonne(shortName, columns)
   const levelName   = segLevelName(seg, levels, lineYs)
@@ -201,7 +201,7 @@ function JunctionRow({ row, thermalResults, globalParams, selectedIds, onSelectI
 
 function SegRowAlim({ row, segments, points, materials, insulations,
                       levels, lineYs, columns, columnXs, chaufferie,
-                      alimentationResults, selectedIds, onSelectIds, rowRef, roleMap, hideAllerBadge = false, activeCalcId }) {
+                      alimentationResults, selectedIds, onSelectIds, rowRef, roleMap, hideAllerBadge = false, activeCalcId, flowDirections = null }) {
   const { seg } = row
 
   const ar   = alimentationResults?.get(seg.id)
@@ -221,10 +221,11 @@ function SegRowAlim({ row, segments, points, materials, insulations,
   const diOk      = ar?.di_min == null || di == null || di >= ar.di_min
   const collectDiOk = isCollective && (c?.di_min == null || di == null || di >= c.di_min)
   const diErr     = isCollective ? !collectDiOk : !diOk
-  const velErr    = velocity != null && velocity > 2.0
-  const velWarn   = velocity != null && velocity > 1.5 && velocity <= 2.0
+  const vMax      = ar?.isSousSol ? 2.0 : 1.5
+  const velErr    = velocity != null && velocity > vMax
+  const velWarn   = false
 
-  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId, roleMap)
+  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId, roleMap, flowDirections)
     .replace(/^((Collecteur (aller|retour)|Aller|Retour|Antenne) ECS|EF)\s*–\s*/, '')
 
   const methodLabel  = ar == null ? '—' : ar.method === 'individual' ? 'Individuelle' : 'Collective'
@@ -232,9 +233,9 @@ function SegRowAlim({ row, segments, points, materials, insulations,
     ? (ar.collectiveReason === 'N > 5' ? 'N>5' : 'X>15')
     : 'N≤5, X≤15'
 
-  const role      = roleMap?.get(seg.id)
-  const isAntenne = role === 'antenne'
-
+  const role           = roleMap?.get(seg.id)
+  const isAntenne      = role === 'antenne'
+  const isLeafBranchEF = activeCalcId === 'alimentation-ef' && role === 'leaf-branch'
 
   return (
     <tr ref={rowRef} className={`rt-row${isSelected ? ' rt-row-selected' : ''}`}
@@ -248,7 +249,7 @@ function SegRowAlim({ row, segments, points, materials, insulations,
             ? <span className="rt-badge-ant">ANT</span>
             : <span className="rt-badge-a">{role === 'collecteur-aller' ? 'CA' : 'A'}</span>
         )}
-        {isAntenne && <span style={{ marginRight: 4 }}>↳</span>}
+        {(isAntenne || isLeafBranchEF) && <span style={{ marginRight: 4 }}>↳</span>}
         {shortName}
       </td>
 
@@ -325,14 +326,14 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
                      chaufferie, networkFlows, alimentationResults, pdcResult, pdcParams, cumDp, postJunction, pressionAval,
                      dpStatic, deltaH, pStatAval, coteAmont, coteAval,
                      needsSingTot, needsEquipTot, isTerminalGroupePuisage = false,
-                     selectedIds, onSelectIds, rowRef, roleMap, activeCalcId }) {
+                     selectedIds, onSelectIds, rowRef, roleMap, activeCalcId, flowDirections = null }) {
   const { seg, depth, segType } = row
 
   const mat   = materials?.find(m => m.id === seg.materialId)
   const dnDef = mat?.dns.find(d => d.dn === seg.dn)
   const di    = seg.di_override ?? dnDef?.di
   const fr    = networkFlows?.get(seg.id)
-  const isAlimEcs = activeCalcId === 'alimentation-ecs'
+  const isAlimEcs = activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef'
   const alimResult = isAlimEcs ? alimentationResults?.get(seg.id) : null
   const displayFlowRate = isAlimEcs
     ? (alimResult?.flowRateForPdc != null && alimResult.flowRateForPdc > 0 ? alimResult.flowRateForPdc * 3.6 : null)
@@ -354,12 +355,13 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
   const isSelected = selectedIds?.includes(seg.id)
   const isAller    = segType === 'aller'
   const role       = roleMap?.get(seg.id)
-  const isAntenne  = role === 'antenne'
+  const isAntenne      = role === 'antenne'
+  const isLeafBranchEF = activeCalcId === 'alimentation-ef' && role === 'leaf-branch'
   const badgeText  = isAntenne ? 'ANT' : role === 'collecteur-aller' ? 'CA' : role === 'collecteur-retour' ? 'CR' : isAller ? 'A' : 'R'
   const badgeCls   = isAntenne ? 'rt-badge-ant' : isAller ? 'rt-badge-a' : 'rt-badge-r'
   const indent     = depth * 13
 
-  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap)
+  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections)
     .replace(/^((Collecteur (aller|retour)|Aller|Retour|Antenne) ECS|EF)\s*–\s*/, '')
   const colonneName = extractColonne(shortName, columns)
   const levelName   = segLevelName(seg, levels, lineYs)
@@ -411,9 +413,9 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
 
           {/* ── Identification (rowspan) ── */}
           <td className="rt-cell rt-cell-name" {...rs({ paddingLeft: 6 + indent })}>
-            <span className={badgeCls}>{badgeText}</span>
+            {activeCalcId !== 'alimentation-ef' && <span className={badgeCls}>{badgeText}</span>}
             {depth > 0 && <span className="rt-depth">{'└─'}</span>}
-            {isAntenne && <span style={{ marginRight: 4 }}>↳</span>}
+            {(isAntenne || isLeafBranchEF) && <span style={{ marginRight: 4 }}>↳</span>}
             {shortName}
           </td>
           <td className="rt-cell rt-cell-sm" {...rs()}>{levelName}</td>
@@ -564,6 +566,7 @@ export default function ResultsTable({
   levels, lineYs, columns, columnXs, chaufferie,
   flowDirections, networkFlows, thermalResults,
   alimentationResults,
+  alimentationResultsEF,
   pdcResults, pdcParams, pdcCumResults, pdcCumAlimResults, segToCol,
   globalParams, selectedIds, onSelectIds,
   height,
@@ -615,13 +618,15 @@ export default function ResultsTable({
   const sharedAlim = {
     segments, points, materials, insulations,
     levels, lineYs, columns, columnXs, chaufferie,
-    alimentationResults, selectedIds, onSelectIds, roleMap, activeCalcId,
+    alimentationResults: isEF ? alimentationResultsEF : alimentationResults,
+    selectedIds, onSelectIds, roleMap, activeCalcId, flowDirections,
   }
 
   // ── PDC ────────────────────────────────────────────────────────────────────
-  const isPdc = (activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs') && activeTable === 'pdc'
+  const isPdc = (activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') && activeTable === 'pdc'
   if (isPdc) {
-    const isAlimEcsPdc  = activeCalcId === 'alimentation-ecs'
+    const isAlimModePdc = activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef'
+    const isAlimEcsPdc  = isAlimModePdc
     const isDarcy       = pdcParams?.methodeReg === 'darcy-colebrook'
     const isAccessoires = pdcParams?.methodeSing === 'accessoires'
     const hasEquip      = !!pdcParams?.equipementsActifs
@@ -629,11 +634,34 @@ export default function ResultsTable({
     const unite         = pdcParams?.uniteAffichage ?? 'Pa'
     const dpUnit        = unite === 'mmCE' ? 'mmCE' : unite === 'both' ? 'Pa / mmCE' : 'Pa'
 
+    // EF : aplatir efFlowRowsArr avec banners par source et fusionner les roleMaps
+    let pdcRows = displayRows
+    let pdcRoleMap = roleMap
+    if (isEF && efFlowRowsArr?.length) {
+      const mergedRoleMap = new Map()
+      for (const src of efFlowRowsArr) {
+        for (const [k, v] of (src.roleMap ?? [])) mergedRoleMap.set(k, v)
+      }
+      pdcRoleMap = mergedRoleMap
+      const flatRows: any[] = []
+      efFlowRowsArr.forEach(({ sourceId, rows: srcRows }: any, idx: number) => {
+        const srcPt = points?.find((p: any) => p.id === sourceId)
+        const srcLabel = srcPt?.name || (efFlowRowsArr.length > 1 ? `Arrivée EF n°${idx + 1}` : 'Arrivée EF')
+        if (idx > 0) flatRows.push({ kind: 'ef-source-spacer' })
+        for (const row of (srcRows ?? [])) {
+          if (row.kind === 'separation') continue
+          if (row.kind === 'flow-start') flatRows.push({ kind: 'ef-source-banner', label: `▶ ${srcLabel} — Départ` })
+          else flatRows.push(row)
+        }
+      })
+      pdcRows = flatRows
+    }
+
     // Colonnes "tot" uniquement si au moins un tronçon a >1 accessoire ou >1 équipement
-    const needsSingTot = isAccessoires && displayRows.some(r =>
+    const needsSingTot = isAccessoires && pdcRows.some(r =>
       r.kind === 'segment' && (r.seg.fittings ?? []).filter(f => (f.count ?? 0) > 0).length > 1
     )
-    const needsEquipTot = hasEquip && displayRows.some(r =>
+    const needsEquipTot = hasEquip && pdcRows.some(r =>
       r.kind === 'segment' && (r.seg.equipment ?? []).length > 1
     )
 
@@ -645,13 +673,14 @@ export default function ResultsTable({
       : 3 + (hasCoef ? 1 : 0)   // ΔP total + majoré + ΔP depuis prod. ECS
     const nPdcCols  = fixedCols + singCols + equipCols + totalCols
 
+    const activeAlimResults = activeCalcId === 'alimentation-ef' ? alimentationResultsEF : alimentationResults
     const sharedPdc = {
       segments, points, materials, levels, lineYs, columns, columnXs, chaufferie,
-      networkFlows, alimentationResults, pdcParams, needsSingTot, needsEquipTot, selectedIds, onSelectIds, roleMap, activeCalcId,
+      networkFlows, alimentationResults: activeAlimResults, pdcParams, needsSingTot, needsEquipTot, selectedIds, onSelectIds, roleMap: pdcRoleMap, activeCalcId, flowDirections,
     }
 
     return (
-      <div className="rt-panel" style={{ height: height ?? 320 }}>
+      <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
         <div className="rt-table-scroll">
           <table className="rt-table">
             <thead>
@@ -721,10 +750,18 @@ export default function ResultsTable({
               </tr>
             </thead>
             <tbody>
-              {displayRows.length === 0 && (
-                <tr><td colSpan={nPdcCols} className="rt-empty">Aucun tronçon — tracez des tronçons et placez une Production ECS</td></tr>
+              {pdcRows.length === 0 && (
+                <tr><td colSpan={nPdcCols} className="rt-empty">{activeCalcId === 'alimentation-ef' ? 'Aucun tronçon — tracez des tronçons EF et placez une Arrivée EF' : 'Aucun tronçon — tracez des tronçons et placez une Production ECS'}</td></tr>
               )}
-              {displayRows.map((row, i) => {
+              {pdcRows.map((row, i) => {
+                if (row.kind === 'ef-source-banner') return (
+                  <tr key={`ef-banner-${i}`} className="rt-flow-banner rt-flow-banner-ef-start">
+                    <td colSpan={nPdcCols}>{row.label}</td>
+                  </tr>
+                )
+                if (row.kind === 'ef-source-spacer') return (
+                  <tr key={`ef-spacer-${i}`} className="rt-ef-spacer"><td colSpan={nPdcCols} /></tr>
+                )
                 if (row.kind === 'flow-start') return (
                   <tr key="flow-start" className="rt-flow-banner rt-flow-banner-start">
                     <td colSpan={nPdcCols}>▶ Production ECS — Départ</td>
@@ -847,13 +884,13 @@ export default function ResultsTable({
   if (isEF) {
     const sourceList = efFlowRowsArr ?? []
     return (
-      <div className="rt-panel" style={{ height: height ?? 320 }}>
+      <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
         <div className="rt-table-scroll">
           <table className="rt-table">
             <thead>
               <tr className="rt-thead-group">
                 <th colSpan={5} className="rt-thg">Identification</th>
-                <th colSpan={2} className="rt-thg">Canalisation</th>
+                <th colSpan={3} className="rt-thg">Canalisation</th>
                 <th colSpan={6} className="rt-thg rt-thg-result rt-th-result-first">Résultats</th>
               </tr>
               <tr className="rt-thead-cols">
@@ -862,6 +899,7 @@ export default function ResultsTable({
                 <th className="rt-th">Colonne</th>
                 <th className="rt-th">N appareils en aval</th>
                 <th className="rt-th">Méthode</th>
+                <th className="rt-th">Matériau</th>
                 <th className="rt-th">DN</th>
                 <th className="rt-th">dᵢ (mm)</th>
                 <th className="rt-th rt-th-result rt-th-result-first">Coeff. X</th>
@@ -877,7 +915,7 @@ export default function ResultsTable({
                 <tr><td colSpan={ALIM_COLS} className="rt-empty">Placez une arrivée EF et tracez des tronçons</td></tr>
               ) : sourceList.map(({ sourceId, rows: srcRows, roleMap: srcRoleMap }, srcIdx) => {
                 const srcPt = points?.find(p => p.id === sourceId)
-                const srcLabel = srcPt?.name || `Arrivée EF n°${srcIdx + 1}`
+                const srcLabel = srcPt?.name || (sourceList.length > 1 ? `Arrivée EF n°${srcIdx + 1}` : 'Arrivée EF')
                 const bannerLabel = `▶ ${srcLabel} — Départ`
                 const srcSharedAlim = { ...sharedAlim, roleMap: srcRoleMap, hideAllerBadge: true }
                 const srcDisplayRows = srcRows.filter(r => r.kind !== 'separation')
@@ -890,6 +928,11 @@ export default function ResultsTable({
                       <td colSpan={ALIM_COLS}>{bannerLabel}</td>
                     </tr>
                     {srcDisplayRows.filter(r => r.kind !== 'flow-start' && r.kind !== 'flow-end').map((row, i) => {
+                      if (row.kind === 'collecteur-header') return (
+                        <tr key={`coll-h-${i}`} className="rt-collecteur-header">
+                          <td colSpan={ALIM_COLS} />
+                        </tr>
+                      )
                       if (row.kind === 'col-header') return (
                         <tr key={`col-${row.name}-${i}`} className="rt-col-sep">
                           <td colSpan={ALIM_COLS}>{row.name}</td>
@@ -916,7 +959,7 @@ export default function ResultsTable({
   }
 
   return (
-    <div className="rt-panel" style={{ height: height ?? 320 }}>
+    <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
       <div className="rt-table-scroll">
         <table className="rt-table">
           <thead>
