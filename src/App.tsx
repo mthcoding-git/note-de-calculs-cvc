@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+﻿import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import DrawingCanvas from './components/DrawingCanvas'
 import LeftPanel from './components/LeftPanel'
 import RightPanel from './components/RightPanel'
@@ -14,7 +14,7 @@ import { buildECSDistances, getDisplayGroupNames } from './utils/naming'
 import { computeNetworkFlows } from './utils/flowCalc'
 import { computeThermal } from './utils/thermalCalc'
 import { computeAlimentationResults } from './utils/alimentationCalc'
-import { computeSegPdc, computePresSourceECS, computePresSourceECSStatic, computeAmontResults, DEFAULT_PDC_PARAMS, DEFAULT_PDC_PARAMS_ALIM_ECS, waterDensity } from './utils/pdcCalc'
+import { computeSegPdc, computePresSourceECS, computePresSourceECSStatic, computeAmontResults, DEFAULT_PDC_PARAMS, DEFAULT_PDC_PARAMS_ALIM_ECS, DEFAULT_PDC_PARAMS_ALIM_EF, waterDensity } from './utils/pdcCalc'
 import { getNodeCote } from './utils/coteCalc'
 import { computeCumDp, computeCumDpAlim } from './utils/pdcCumul'
 import { computeValveKvs } from './utils/valveKv'
@@ -253,7 +253,7 @@ const DEFAULT_ALIMENTATION_PARAMS = {
     { id: 'evier',         name: 'Évier',                          qBase: 0.20, k: 2.5,  enabled: false },
     { id: 'lavabo',        name: 'Lavabo',                         qBase: 0.20, k: 1.5,  enabled: false },
     { id: 'bidet',         name: 'Bidet',                          qBase: 0.20, k: 1.0,  enabled: false },
-    { id: 'baignoire',     name: 'Baignoire ≤ 150 L',            qBase: 0.33, k: 3.0,  enabled: false },
+    { id: 'baignoire',     name: 'Baignoire',                      qBase: 0.33, k: 3.0,  enabled: false },
     { id: 'douche',        name: 'Douche',                         qBase: 0.20, k: 2.0,  enabled: false },
     { id: 'poste_12',      name: "Poste d'eau robinet ½",          qBase: 0.33, k: 2.0,  enabled: false },
     { id: 'poste_34',      name: "Poste d'eau robinet ¾",          qBase: 0.42, k: 2.0,  enabled: false },
@@ -319,7 +319,7 @@ const DEFAULT_CHAUFFERIE = {
 
 const DEFAULT_POINTS = []
 
-const CANVAS_DISPLAY_RESET = { nomTroncon: false, length: false, material: false, dn: false, insulation: false, debit: false, vitesse: false, temperatureNoeud: false, deltaT: false, equipment: false }
+const CANVAS_DISPLAY_RESET = { nomTroncon: false, length: false, material: false, dn: false, insulation: false, debit: false, vitesse: false, temperatureNoeud: false, deltaT: false, equipment: false, dpTroncon: false, dpNoeud: false, pressionDispo: false, pressionStat: false }
 
 function buildFluidSetupProject(nSousSol, nFloors, nCols) {
   const levels = []
@@ -340,9 +340,12 @@ function initProject() {
   return {
     globalParams: DEFAULT_GLOBAL_PARAMS,
     alimentationParams: DEFAULT_ALIMENTATION_PARAMS,
+    alimentationParamsEF: null,
     pdcParams: DEFAULT_PDC_PARAMS,
     pdcParamsAlimECS: DEFAULT_PDC_PARAMS_ALIM_ECS,
+    pdcParamsAlimEF: null,
     materials: DEFAULT_MATERIALS,
+    materialsEF: DEFAULT_MATERIALS,
     insulations: DEFAULT_INSULATIONS,
     levels: DEFAULT_LEVELS,
     lineYs: DEFAULT_LINE_YS,
@@ -589,6 +592,8 @@ export default function App() {
 
   // Sauvegarde d'état par type de réseau : fluidId → { state, calcId }
   const fluidStashRef = useRef(new Map())
+  // Vrai dès que les paramètres EF ont été copiés vers ECS (première fois EF→ECS seulement)
+  const hasECSInheritedFromEFRef = useRef(false)
 
   const [pendingSetup, setPendingSetup] = useState(true)
 
@@ -617,26 +622,91 @@ export default function App() {
      flowDirections, networkFlows, project.levels, project.lineYs, project.globalParams]
   )
 
+  const segIsSousSolMap = useMemo(() => {
+    const map = new Map<string, boolean>()
+    for (const seg of project.segments) {
+      if (!seg.vertices?.length) { map.set(seg.id, false); continue }
+      const midY = seg.vertices.reduce((s: number, v: any) => s + v.y, 0) / seg.vertices.length
+      let found = false
+      for (let i = 0; i < project.levels.length; i++) {
+        const yBot = project.lineYs[i]
+        const yTop = project.lineYs[i + 1]
+        if (yTop !== undefined && midY >= yTop && midY <= yBot) {
+          map.set(seg.id, project.levels[i].isSousSol ?? false)
+          found = true; break
+        }
+      }
+      if (!found) map.set(seg.id, false)
+    }
+    return map
+  }, [project.segments, project.levels, project.lineYs])
+
   const alimentationResults = useMemo(
     () => computeAlimentationResults(
       project.segments, project.points,
       resolveAlimentationParams(project.alimentationParams),
-      flowDirections
+      flowDirections,
+      segIsSousSolMap
     ),
-    [project.segments, project.points, project.alimentationParams, flowDirections]
+    [project.segments, project.points, project.alimentationParams, flowDirections, segIsSousSolMap]
   )
+
+  const alimentationResultsEF = useMemo(
+    () => project.alimentationParamsEF == null ? new Map() : computeAlimentationResults(
+      project.segments, project.points,
+      resolveAlimentationParams(project.alimentationParamsEF),
+      flowDirections,
+      segIsSousSolMap
+    ),
+    [project.segments, project.points, project.alimentationParamsEF, flowDirections, segIsSousSolMap]
+  )
+
+  // First-open initialisation for alimentation-ef
+  useEffect(() => {
+    if (activeCalcId !== 'alimentation-ef') return
+    setProject((p: any) => {
+      let next: any = { ...p }
+      let changed = false
+      if (p.alimentationParamsEF == null) {
+        next.alimentationParamsEF = resolveAlimentationParams(p.alimentationParams)
+        changed = true
+      }
+      if (p.pdcParamsAlimEF == null) {
+        const src = p.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS
+        next.pdcParamsAlimEF = {
+          ...DEFAULT_PDC_PARAMS_ALIM_EF,
+          equipementsActifs:  src.equipementsActifs,
+          fittingOverrides:   { ...src.fittingOverrides },
+          equipmentOverrides: { ...(src.equipmentOverrides ?? {}) },
+          customFittings:     [...(src.customFittings ?? [])],
+          customEquipments:   [...(src.customEquipments ?? [])],
+        }
+        changed = true
+      }
+      if (p.materialsEF == null) {
+        next.materialsEF = DEFAULT_MATERIALS.map((m: any) => ({ ...m }))
+        changed = true
+      }
+      return changed ? next : p
+    })
+  }, [activeCalcId])
 
   const pdcResults = useMemo(() => {
     const results = new Map()
     const isBouclage = activeCalcId === 'bouclage-ecs'
     const isAlimECS  = activeCalcId === 'alimentation-ecs'
-    if (!isBouclage && !isAlimECS) return results
+    const isAlimEF   = activeCalcId === 'alimentation-ef'
+    if (!isBouclage && !isAlimECS && !isAlimEF) return results
     const pdcParams = isBouclage
       ? (project.pdcParams ?? DEFAULT_PDC_PARAMS)
-      : (project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS)
-    const prodECS = project.points.find(p => p.type === 'productionECS')
+      : isAlimEF
+        ? (project.pdcParamsAlimEF ?? DEFAULT_PDC_PARAMS_ALIM_EF)
+        : (project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS)
+    const activeMats = isAlimEF ? (project.materialsEF ?? DEFAULT_MATERIALS) : project.materials
+    const prodECS = project.points.find((p: any) => p.type === 'productionECS')
     const _rawT = prodECS?.T_depart_override ?? project.globalParams.T_depart ?? 60
     const T_depart_eff = typeof _rawT === 'number' && !isNaN(_rawT) ? _rawT : (parseFloat(String(_rawT)) || 60)
+    const T_ef_eff = isAlimEF ? ((project.pdcParamsAlimEF ?? DEFAULT_PDC_PARAMS_ALIM_EF).T_ef ?? 10) : 10
     // Pour alimentation ECS : map nœud → tronçon qui l'alimente (remontée upstream)
     const parentSegOfNode = new Map<string, string>()
     if (isAlimECS) {
@@ -666,26 +736,32 @@ export default function App() {
     }
 
     for (const seg of project.segments) {
-      if (isAlimECS && seg.type !== 'aller') continue
+      if ((isAlimECS || isAlimEF) && seg.type !== 'aller') continue
       let flowRate: number | null
       if (isAlimECS) {
         const ar = alimentationResults.get(seg.id)
+        flowRate = (ar?.flowRateForPdc ?? 0) > 0 ? ar!.flowRateForPdc * 3.6 : null
+      } else if (isAlimEF) {
+        const ar = alimentationResultsEF.get(seg.id)
         flowRate = (ar?.flowRateForPdc ?? 0) > 0 ? ar!.flowRateForPdc * 3.6 : null
       } else {
         flowRate = networkFlows.get(seg.id)?.flowRate ?? null
       }
       const T = isAlimECS
         ? getTAlimECS(seg.id)
-        : (() => { const td = thermalResults.segResults.get(seg.id); return td ? (td.T_from + td.T_to) / 2 : T_depart_eff })()
-      const mat   = project.materials.find(m => m.id === seg.materialId)
-      const dnDef = mat?.dns.find(d => d.dn === seg.dn)
+        : isAlimEF
+          ? T_ef_eff
+          : (() => { const td = thermalResults.segResults.get(seg.id); return td ? (td.T_from + td.T_to) / 2 : T_depart_eff })()
+      const mat   = activeMats.find((m: any) => m.id === seg.materialId)
+      const dnDef = mat?.dns.find((d: any) => d.dn === seg.dn)
       const di_mm = seg.di_override ?? dnDef?.di ?? null
       const result = computeSegPdc(seg, pdcParams, flowRate, di_mm, T, mat)
       if (result) results.set(seg.id, result)
     }
     return results
-  }, [activeCalcId, project.segments, project.pdcParams, project.pdcParamsAlimECS, project.materials,
-      project.globalParams, networkFlows, thermalResults, alimentationResults])
+  }, [activeCalcId, project.segments, project.pdcParams, project.pdcParamsAlimECS, project.pdcParamsAlimEF,
+      project.materials, project.materialsEF,
+      project.globalParams, networkFlows, thermalResults, alimentationResults, alimentationResultsEF])
 
   const { rows: flowRows, roleMap } = useMemo(
     () => buildFlowRows(project.segments, project.points, flowDirections,
@@ -806,9 +882,46 @@ export default function App() {
   }, [activeCalcId, project.segments, project.points, flowDirections, pdcResults,
       pressionSourceAlimECS, project.globalParams, project.levels, project.lineYs])
 
+  const totalQpAlimEFM3h = useMemo(() => {
+    if (activeCalcId !== 'alimentation-ef') return 0
+    let total = 0
+    for (const seg of project.segments) {
+      if (seg.type !== 'aller') continue
+      const ar = alimentationResultsEF.get(seg.id)
+      if (ar?.flowRateForPdc) total += ar.flowRateForPdc
+    }
+    return total * 3.6
+  }, [activeCalcId, project.segments, alimentationResultsEF])
+
+  const pressionSourceAlimEF = useMemo(
+    () => (project.pdcParamsAlimEF ?? DEFAULT_PDC_PARAMS_ALIM_EF).pressionEF ?? 300000,
+    [project.pdcParamsAlimEF]
+  )
+
+  const pdcCumAlimEFResults = useMemo(() => {
+    if (activeCalcId !== 'alimentation-ef') return null
+    const T_ef = (project.pdcParamsAlimEF ?? DEFAULT_PDC_PARAMS_ALIM_EF).T_ef ?? 10
+    const rho = waterDensity(T_ef)
+    const nodeCotes = new Map<string, number>()
+    for (const pt of project.points) {
+      nodeCotes.set(pt.id, getNodeCote(pt, project.levels, project.lineYs).value)
+    }
+    return computeCumDpAlim(
+      project.segments, project.points, flowDirections, pdcResults,
+      pressionSourceAlimEF,
+      nodeCotes, rho,
+      'arriveeEF'
+    )
+  }, [activeCalcId, project.segments, project.points, flowDirections, pdcResults,
+      pressionSourceAlimEF, project.pdcParamsAlimEF, project.levels, project.lineYs])
+
+  const activePdcCumAlimResults = activeCalcId === 'alimentation-ef' ? pdcCumAlimEFResults : pdcCumAlimResults
+
   const activePdcParams = activeCalcId === 'alimentation-ecs'
     ? (project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS)
-    : (project.pdcParams ?? DEFAULT_PDC_PARAMS)
+    : activeCalcId === 'alimentation-ef'
+      ? (project.pdcParamsAlimEF ?? DEFAULT_PDC_PARAMS_ALIM_EF)
+      : (project.pdcParams ?? DEFAULT_PDC_PARAMS)
 
   const valveKvResults = useMemo(
     () => computeValveKvs(
@@ -905,6 +1018,8 @@ export default function App() {
   const handleSelectIds = useCallback((ids) => {
     setSelectedIds(ids)
     setSelectedValveId(null)
+    setSelectedAmontId(null)
+    setEditChaufferie(false)
   }, [])
 
   const handleFluidChange = useCallback((fluidId, calcId) => {
@@ -924,9 +1039,43 @@ export default function App() {
     const stashed = fluidStashRef.current.get(fluidId)
     const resolvedCalcId = calcId ?? getAutoCalcId(fluidId)
 
+    // Première fois qu'on passe EF→ECS : copier paramètres appareils + équipements PDC
+    const isFirstEFtoECS = activeFluidId === 'ef' && fluidId === 'ecs'
+      && !hasECSInheritedFromEFRef.current && currentFullState != null
+    if (isFirstEFtoECS) {
+      hasECSInheritedFromEFRef.current = true
+    }
+
+    const applyEFtoECSPatch = (variants: any[]) => {
+      if (!isFirstEFtoECS || !currentFullState) return variants
+      const efBase = currentFullState.variants?.find((v: any) => v.isBase)?.data ?? initProject()
+      const efAlimParams = efBase.alimentationParamsEF ?? efBase.alimentationParams
+      const efPdc = efBase.pdcParamsAlimEF
+      return variants.map((v: any) => ({
+        ...v,
+        data: {
+          ...v.data,
+          alimentationParams: efAlimParams,
+          ...(efPdc ? {
+            pdcParamsAlimECS: {
+              ...(v.data.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS),
+              equipementsActifs:  efPdc.equipementsActifs,
+              fittingOverrides:   { ...efPdc.fittingOverrides },
+              equipmentOverrides: { ...(efPdc.equipmentOverrides ?? {}) },
+              customFittings:     [...(efPdc.customFittings ?? [])],
+              customEquipments:   [...(efPdc.customEquipments ?? [])],
+            }
+          } : {})
+        }
+      }))
+    }
+
     if (stashed) {
-      // Fluide déjà visité → restaurer son état
-      loadState({ ...stashed.state, projectName })
+      // Fluide déjà visité → restaurer son état (en y injectant les paramètres EF si premier EF→ECS)
+      const stateToLoad = isFirstEFtoECS && stashed.state.variants
+        ? { ...stashed.state, variants: applyEFtoECSPatch(stashed.state.variants) }
+        : stashed.state
+      loadState({ ...stateToLoad, projectName })
       setActiveCalcId(resolvedCalcId ?? stashed.calcId)
       setPendingSetup(false)
     } else if (currentFullState) {
@@ -947,8 +1096,20 @@ export default function App() {
         columns:  baseData.columns,
         columnXs: baseData.columnXs,
         ...(isAlimSwitch ? {
-          alimentationParams: baseData.alimentationParams,
+          alimentationParams: isFirstEFtoECS
+            ? (baseData.alimentationParamsEF ?? baseData.alimentationParams)
+            : baseData.alimentationParams,
           points: (baseData.points ?? []).filter(p => p.type === 'groupe'),
+          ...(isFirstEFtoECS && baseData.pdcParamsAlimEF ? {
+            pdcParamsAlimECS: {
+              ...DEFAULT_PDC_PARAMS_ALIM_ECS,
+              equipementsActifs:  baseData.pdcParamsAlimEF.equipementsActifs,
+              fittingOverrides:   { ...baseData.pdcParamsAlimEF.fittingOverrides },
+              equipmentOverrides: { ...(baseData.pdcParamsAlimEF.equipmentOverrides ?? {}) },
+              customFittings:     [...(baseData.pdcParamsAlimEF.customFittings ?? [])],
+              customEquipments:   [...(baseData.pdcParamsAlimEF.customEquipments ?? [])],
+            }
+          } : {})
         } : {}),
       }
       loadState({
@@ -1097,6 +1258,7 @@ export default function App() {
     setProject(p => moveGaine(p, gapIdx, finalLeft))
   }, [setProject])
 
+
   // Returns the insertion index: before the last column if it's a gap, otherwise at the end.
   function insertBeforeRightZone(cols) {
     return (cols.length > 0 && cols[cols.length - 1].isGap) ? cols.length - 1 : cols.length
@@ -1109,7 +1271,7 @@ export default function App() {
       const colW     = COL_PIPE_W
       const newId    = uid('col')
       const newCol   = { id: newId, name: `Colonne ${cols.filter(c => !c.isGap).length + 1}`, levelIds: 'all' }
-      const at       = insertBeforeRightZone(cols)
+      const at       = cols.length
       const xInsert  = xs[at]
       const expanded = expandZone(p, xInsert, colW)
       return {
@@ -1127,7 +1289,9 @@ export default function App() {
       const gapW     = 120
       const newId    = uid('gap')
       const newGap   = { id: newId, name: '', levelIds: 'all', isGap: true }
-      const at       = insertBeforeRightZone(cols)
+      // Insert after the last group gaine (isPPZone), or at end — never before a group gaine
+      let at = cols.length
+      if (at > 0 && cols[at - 1].isGap && !cols[at - 1].isPPZone) at = at - 1
       const xInsert  = xs[at]
       const expanded = expandZone(p, xInsert, gapW)
       return {
@@ -1307,9 +1471,7 @@ export default function App() {
   }
 
   const handleAddArriveeEF = () => {
-    const existing = project.points.filter(p => p.type === 'arriveeEF')
-    const name = existing.length === 0 ? 'Arrivée EF' : `Arrivée EF n°${existing.length + 1}`
-    setPlacingEquipment({ type: 'arriveeEF', name, size: { w: 44, h: 28 } })
+    setPlacingEquipment({ type: 'arriveeEF', name: 'Arrivée EF', size: { w: 44, h: 28 } })
   }
 
   const handleAddChaufferie = () => {
@@ -1438,7 +1600,7 @@ export default function App() {
               ['isolation',   'Isolants (calorifugeage)',    <InsulatedPipeIcon size={36} />],
               ['equipements', 'Équipements',        <FaucetIcon size={36} />],
               ['pdc',         'Pertes de charge',   <GaugeIcon size={36} />],
-            ] as [string, string, React.ReactNode][]).map(([key, label, icon]) => (
+            ] as [string, string, React.ReactNode][]).filter(([key]) => !(key === 'isolation' && activeCalcId === 'alimentation-ef')).map(([key, label, icon]) => (
               <button
                 key={key}
                 className={`icon-sidebar-btn${activeSection === key ? ' active' : ''}`}
@@ -1469,11 +1631,16 @@ export default function App() {
               activeCalcId={activeCalcId}
               alimentationParams={resolveAlimentationParams(project.alimentationParams)}
               onAlimentationParamsChange={v => update('alimentationParams', v)}
+              alimentationParamsEF={project.alimentationParamsEF != null ? resolveAlimentationParams(project.alimentationParamsEF) : null}
+              onAlimentationParamsEFChange={v => update('alimentationParamsEF', v)}
               pdcParams={project.pdcParams ?? DEFAULT_PDC_PARAMS}
               onPdcParamsChange={v => update('pdcParams', v)}
               pdcParamsAlimECS={project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS}
               onPdcParamsAlimECSChange={v => update('pdcParamsAlimECS', v)}
               totalQpAlimM3h={totalQpAlimM3h}
+              pdcParamsAlimEF={project.pdcParamsAlimEF}
+              onPdcParamsAlimEFChange={v => update('pdcParamsAlimEF', v)}
+              totalQpAlimEFM3h={totalQpAlimEFM3h}
               selectedAmontId={selectedAmontId}
               onSelectAmontId={(id: string | null) => { setSelectedAmontId(id); setSelectedIds([]) }}
               amontTronconResults={amontTronconResults}
@@ -1486,6 +1653,8 @@ export default function App() {
               onEditLinesChange={setEditLinesEnabled}
               materials={project.materials}
               onMaterialsChange={v => update('materials', typeof v === 'function' ? v(project.materials) : v)}
+              materialsEF={project.materialsEF ?? DEFAULT_MATERIALS}
+              onMaterialsEFChange={v => update('materialsEF', typeof v === 'function' ? v(project.materialsEF ?? DEFAULT_MATERIALS) : v)}
               insulations={project.insulations}
               onInsulationsChange={v => update('insulations', typeof v === 'function' ? v(project.insulations) : v)}
               columns={project.columns}
@@ -1555,76 +1724,95 @@ export default function App() {
             groupDisplayNames={groupDisplayNames}
             canvasDisplay={canvasDisplay}
             roleMap={effectiveRoleMap}
-            materials={project.materials}
+            materials={activeCalcId === 'alimentation-ef' ? (project.materialsEF ?? DEFAULT_MATERIALS) : project.materials}
             insulations={project.insulations}
             alimentationParams={resolveAlimentationParams(project.alimentationParams)}
             activeCalcId={activeCalcId}
             thermalResults={thermalResults}
-            alimentationResults={alimentationResults}
+            alimentationResults={activeCalcId === 'alimentation-ef' ? alimentationResultsEF : alimentationResults}
             fitViewRequest={fitViewRequest}
             valves={project.valves ?? []}
             onValvesChange={v => update('valves', typeof v === 'function' ? v(project.valves ?? []) : v)}
             selectedValveId={selectedValveId}
             onSelectedValveChange={id => { setSelectedValveId(id); if (id) setSelectedIds([]) }}
             pdcParams={activePdcParams}
+            pdcResults={pdcResults}
+            pdcCumResults={pdcCumResults}
+            pdcCumAlimResults={activePdcCumAlimResults}
             segToCol={segToCol}
             onExitSpecialMode={() => setDrawMode('select')}
+            pressionSourceAlimEF={pressionSourceAlimEF}
+            pressionSourceAlimEFStatic={pressionSourceAlimEF}
           />
         </main>
 
-        {!pendingSetup && activeTable !== null && (
-          <div className="rt-resizer" onMouseDown={startTableResize} />
-        )}
-        {!pendingSetup && activeTable !== null && (
-          <ResultsTable
-            height={tableHeight}
-            rows={flowRows}
-            roleMap={roleMap}
-            efFlowRowsArr={efFlowRowsArr}
-            activeCalcId={activeCalcId}
-            activeTable={activeTable}
-            segments={project.segments}
-            points={project.points}
-            materials={project.materials}
-            insulations={project.insulations}
-            levels={project.levels}
-            lineYs={project.lineYs}
-            columns={project.columns}
-            columnXs={project.columnXs}
-            chaufferie={project.chaufferie}
-            flowDirections={flowDirections}
-            networkFlows={networkFlows}
-            thermalResults={thermalResults}
-            alimentationResults={alimentationResults}
-            pdcResults={pdcResults}
-            pdcParams={activePdcParams}
-            pdcCumResults={pdcCumResults}
-            pdcCumAlimResults={pdcCumAlimResults}
-            segToCol={segToCol}
-            globalParams={project.globalParams}
-            selectedIds={selectedIds}
-            onSelectIds={setSelectedIds}
-          />
-        )}
-
-        {!pendingSetup && activeCalcId && (
-          <div className="rt-toggle-bar">
-            <button
-              className={`rt-toggle-btn${activeTable === 'dimensionnement' ? ' active' : ''}`}
-              onClick={() => setActiveTable(t => t === 'dimensionnement' ? null : 'dimensionnement')}
-            >
-              {activeTable === 'dimensionnement' ? '▼' : '▲'} Dimensionnement
-            </button>
-            {(activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs') && (
-              <button
-                className={`rt-toggle-btn${activeTable === 'pdc' ? ' active' : ''}`}
-                onClick={() => setActiveTable(t => t === 'pdc' ? null : 'pdc')}
-              >
-                {activeTable === 'pdc' ? '▼' : '▲'} Pertes de charge
-              </button>
-            )}
-          </div>
-        )}
+        {!pendingSetup && activeCalcId && (() => {
+          const leftOpen = activeSection !== null || drawMode === 'editParams' || drawMode === 'errors'
+          const rightOpen = selectedIds.length > 0 || editChaufferie || !!selectedValveId || !!selectedAmontId
+          return (
+            <div style={{
+              marginLeft: leftOpen ? 280 : 0,
+              marginRight: rightOpen ? 250 : 0,
+              transition: 'margin-left 0.2s ease, margin-right 0.15s ease',
+              flexShrink: 0,
+            }}>
+              {activeTable !== null && (
+                <div className="rt-resizer" onMouseDown={startTableResize} />
+              )}
+              {activeTable !== null && (
+                <ResultsTable
+                  height={tableHeight}
+                  rows={flowRows}
+                  roleMap={roleMap}
+                  efFlowRowsArr={efFlowRowsArr}
+                  activeCalcId={activeCalcId}
+                  activeTable={activeTable}
+                  segments={project.segments}
+                  points={project.points}
+                  materials={activeCalcId === 'alimentation-ef' ? (project.materialsEF ?? DEFAULT_MATERIALS) : project.materials}
+                  insulations={project.insulations}
+                  levels={project.levels}
+                  lineYs={project.lineYs}
+                  columns={project.columns}
+                  columnXs={project.columnXs}
+                  chaufferie={project.chaufferie}
+                  flowDirections={flowDirections}
+                  networkFlows={networkFlows}
+                  thermalResults={thermalResults}
+                  alimentationResults={alimentationResults}
+                  alimentationResultsEF={alimentationResultsEF}
+                  pdcResults={pdcResults}
+                  pdcParams={activePdcParams}
+                  pdcCumResults={pdcCumResults}
+                  pdcCumAlimResults={activePdcCumAlimResults}
+                  segToCol={segToCol}
+                  globalParams={project.globalParams}
+                  selectedIds={selectedIds}
+                  onSelectIds={setSelectedIds}
+                />
+              )}
+              <div className="rt-toggle-bar">
+                <span className="rt-bar-label">Tableau des résultats</span>
+                <button
+                  className={`rt-toggle-btn${activeTable === 'dimensionnement' ? ' active' : ''}`}
+                  onClick={() => setActiveTable(t => t === 'dimensionnement' ? null : 'dimensionnement')}
+                >
+                  Dimensionnement
+                  <span style={{ fontSize: 8, opacity: 0.6 }}>{activeTable === 'dimensionnement' ? '▼' : '▲'}</span>
+                </button>
+                {(activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') && (
+                  <button
+                    className={`rt-toggle-btn${activeTable === 'pdc' ? ' active' : ''}`}
+                    onClick={() => setActiveTable(t => t === 'pdc' ? null : 'pdc')}
+                  >
+                    Pertes de charge
+                    <span style={{ fontSize: 8, opacity: 0.6 }}>{activeTable === 'pdc' ? '▼' : '▲'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })()}
 
         </div>{/* canvas-col */}
 
@@ -1634,14 +1822,16 @@ export default function App() {
             segments={project.segments}
             points={project.points}
             onUpdate={updateElement}
-            materials={project.materials}
+            materials={activeCalcId === 'alimentation-ef' ? (project.materialsEF ?? DEFAULT_MATERIALS) : project.materials}
             insulations={project.insulations}
             activeCalcId={activeCalcId}
-            alimentationParams={resolveAlimentationParams(project.alimentationParams)}
+            alimentationParams={activeCalcId === 'alimentation-ef' && project.alimentationParamsEF != null
+              ? resolveAlimentationParams(project.alimentationParamsEF)
+              : resolveAlimentationParams(project.alimentationParams)}
             pdcParams={activePdcParams}
             pdcResults={pdcResults}
             pdcCumResults={pdcCumResults}
-            pdcCumAlimResults={pdcCumAlimResults}
+            pdcCumAlimResults={activePdcCumAlimResults}
             segToCol={segToCol}
             valveKvResults={valveKvResults}
             levels={project.levels}
@@ -1655,7 +1845,7 @@ export default function App() {
             networkFlows={networkFlows}
             globalParams={project.globalParams}
             thermalResults={thermalResults}
-            alimentationResults={alimentationResults}
+            alimentationResults={activeCalcId === 'alimentation-ef' ? alimentationResultsEF : alimentationResults}
             roleMap={roleMap}
             drawMode={drawMode}
             onExitEditParams={() => setDrawMode('select')}
@@ -1678,6 +1868,8 @@ export default function App() {
             pressionSourceAlimECS={pressionSourceAlimECS}
             pressionSourceAlimECSStatic={pressionSourceAlimECSStatic}
             pdcParamsAlimECS={project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS}
+            pressionSourceAlimEF={pressionSourceAlimEF}
+            pressionSourceAlimEFStatic={pressionSourceAlimEF}
             groupDisplayNames={groupDisplayNames}
           />
         </aside>

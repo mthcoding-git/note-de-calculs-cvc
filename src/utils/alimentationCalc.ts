@@ -38,9 +38,10 @@ function wccEffectif(n) {
 }
 
 // ── §3.2.2 — Débit probable collectif ──────────────────────────────────────
-function computeCollective(totalEquip, appareils, buildingType) {
-  // §3.2.2 Note 1 : enseignement → lavabos et douches tous simultanés
-  const isEnseignement = buildingType === 'enseignement'
+const SIM_BATIMENT = new Set(['enseignement', 'internat', 'stade', 'gymnase', 'caserne'])
+
+function computeCollective(totalEquip, appareils, buildingType, isSousSol = false) {
+  const isBatimentSim = SIM_BATIMENT.has(buildingType)
   const SIM_IDS = new Set(['lavabo', 'douche'])
 
   let Qs_sim = 0, N_sim = 0   // lavabos+douches (enseignement : y=1)
@@ -67,7 +68,7 @@ function computeCollective(totalEquip, appareils, buildingType) {
       machineLingeCounted = true
     }
 
-    if (isEnseignement && SIM_IDS.has(a.id)) {
+    if (isBatimentSim && SIM_IDS.has(a.id)) {
       Qs_sim += qBase * cnt   // débit plein, tous simultanés
       N_sim  += cnt
     } else {
@@ -79,23 +80,22 @@ function computeCollective(totalEquip, appareils, buildingType) {
   // N et Qs servant au calcul de y selon le type de bâtiment
   // Standard    : y appliqué à tous les appareils hors wcc robinets
   // Enseignement: y appliqué uniquement aux appareils hors lavabos/douches
-  const N_for_y  = isEnseignement ? N_y : N_y + N_sim
-  const Qs_for_y = isEnseignement ? Qs_y : Qs_y + Qs_sim
+  const N_for_y  = isBatimentSim ? N_y : N_y + N_sim
+  const Qs_for_y = isBatimentSim ? Qs_y : Qs_y + Qs_sim
   const y = N_for_y > 5
     ? 0.8 / Math.sqrt(N_for_y - 1)
     : N_for_y > 0 ? 1.0 : 0
 
   const Qp_y      = y * Qs_for_y
-  // Pour enseignement : on ajoute les lavabos/douches en plein débit
-  const Qp_autres = isEnseignement ? Qs_sim + Qp_y : Qp_y
+  const Qp_autres = isBatimentSim ? Qs_sim + Qp_y : Qp_y
 
   // WC robinets de chasse
   const N_wcc_eff = wccEffectif(N_wcc)
   const Qp_wcc    = N_wcc_eff * 1.50
   const Qp        = Qp_autres + Qp_wcc
 
-  // di_min depuis V_max = 2 m/s (§3.1 — sous-sol / locaux techniques)
-  const V_max  = 2.0
+  // di_min depuis V_max selon §3.1 : 2 m/s en sous-sol / locaux techniques, 1,5 m/s en colonne montante
+  const V_max  = isSousSol ? 2.0 : 1.5
   const di_min = Qp > 0
     ? Math.sqrt(4 * (Qp * 1e-3) / (Math.PI * V_max)) * 1000
     : null
@@ -103,7 +103,7 @@ function computeCollective(totalEquip, appareils, buildingType) {
   return {
     Qp, y,
     Qs_for_y, N_for_y,
-    Qs_sim, N_sim, isEnseignement,
+    Qs_sim, N_sim, isBatimentSim,
     N_wcc, N_wcc_eff, Qp_wcc, Qp_autres,
     di_min, V_max,
     machineLingeLimited: machineLinge_total > 1,
@@ -133,7 +133,7 @@ function collectDownstreamGroupes(startNodeId, segments, points, flowDirections)
 }
 
 // ── Point d'entrée principal ────────────────────────────────────────────────
-export function computeAlimentationResults(segments, points, alimentationParams, flowDirections) {
+export function computeAlimentationResults(segments, points, alimentationParams, flowDirections, segIsSousSolMap: Map<string, boolean> = new Map()) {
   if (!alimentationParams || !flowDirections) return new Map()
 
   const appareils    = alimentationParams.appareils ?? []
@@ -152,9 +152,20 @@ export function computeAlimentationResults(segments, points, alimentationParams,
     const totalEquip = {}
     for (const g of groupes) {
       if (!g.equipements) continue
-      for (const [id, cnt] of Object.entries(g.equipements)) {
-        if (!enabledIds.has(id)) continue
-        totalEquip[id] = (totalEquip[id] ?? 0) + cnt
+      if (g.isChambreHopital) {
+        // DTU 60.11 Note 3 : seul l'appareil le plus demandeur (hors WC), quantité 1
+        let maxQBase = -1, maxId: string | null = null
+        for (const [id, cnt] of Object.entries(g.equipements)) {
+          if (!enabledIds.has(id) || (cnt as number) === 0 || id === 'wc_robinet') continue
+          const qBase = appareils.find(a => a.id === id)?.qBase ?? 0
+          if (qBase > maxQBase) { maxQBase = qBase; maxId = id }
+        }
+        if (maxId) totalEquip[maxId] = (totalEquip[maxId] ?? 0) + 1
+      } else {
+        for (const [id, cnt] of Object.entries(g.equipements)) {
+          if (!enabledIds.has(id)) continue
+          totalEquip[id] = (totalEquip[id] ?? 0) + (cnt as number)
+        }
       }
     }
 
@@ -184,9 +195,11 @@ export function computeAlimentationResults(segments, points, alimentationParams,
       ? (X >= ABAQUE[0][0] ? lookupDiMin(X) : X > 0 ? ABAQUE[0][1] : null)
       : null
 
+    const isSousSol = segIsSousSolMap.get(seg.id) ?? false
+
     // Méthode collective §3.2.2
     const collective = method === 'collective'
-      ? computeCollective(totalEquip, appareils, buildingType)
+      ? computeCollective(totalEquip, appareils, buildingType, isSousSol)
       : null
 
     // Débit simultané total — tous appareils en fonctionnement (pour PDC méthode individuelle)
@@ -211,6 +224,7 @@ export function computeAlimentationResults(segments, points, alimentationParams,
       collective,
       Qs_all,
       flowRateForPdc,
+      isSousSol,
     })
   }
 

@@ -78,6 +78,25 @@ export interface TronconAmontResult {
   epsilon_used?: number
 }
 
+export const DEFAULT_PDC_PARAMS_ALIM_EF = {
+  methodeReg:        'darcy-colebrook' as 'darcy-colebrook' | 'dtu-approche',
+  dtuUnite:          'Pa'             as 'Pa' | 'mCE',
+  roughnessMode:     'global'          as 'global' | 'par-materiau',
+  roughnessGlobal:   0.0001,
+  methodeSing:       'pourcentage'     as 'pourcentage' | 'accessoires',
+  pourcentageSing:   20,
+  equipementsActifs: false,
+  coefPompeActif:    false,
+  coefPompe:         10,
+  uniteAffichage:    'Pa'             as 'Pa' | 'mmCE' | 'both',
+  fittingOverrides:  {} as Record<string, number>,
+  equipmentOverrides:{} as Record<string, number>,
+  customFittings:    [] as { id: string; label: string; xi: number }[],
+  customEquipments:  [] as { id: string; label: string; kvDefault: number | null }[],
+  pressionEF:        null             as number | null,   // null → 3 bar par défaut
+  T_ef:              null             as number | null,   // null → 10 °C par défaut
+}
+
 export const DEFAULT_PDC_PARAMS_ALIM_ECS = {
   methodeReg:               'darcy-colebrook' as 'darcy-colebrook' | 'dtu-approche',
   dtuUnite:                 'Pa'             as 'Pa' | 'mCE',
@@ -271,7 +290,7 @@ export function computeSegPdc(
   const dynPressure = rho * V * V / 2
   let dpSing: number
   if (pdcParams.methodeSing === 'pourcentage') {
-    dpSing = dpReg * (pdcParams.pourcentageSing ?? 10) / 100
+    dpSing = dpReg * (pdcParams.pourcentageSing ?? 20) / 100
   } else {
     const fittings: any[] = seg.fittings ?? []
     dpSing = fittings.reduce((sum, f) => {

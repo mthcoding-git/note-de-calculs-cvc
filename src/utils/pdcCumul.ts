@@ -191,15 +191,16 @@ export interface CumDpAlimResult {
  * Retourne la pression résiduelle aval de chaque tronçon et le circuit le plus défavorisé.
  */
 export function computeCumDpAlim(
-  segments:       any[],
-  points:         any[],
-  flowDirections: Map<string, { fromId: string; toId: string }>,
-  pdcResults:     Map<string, { dpTotal: number }> | null,
-  pressionSource: number,
-  nodeCotes:      Map<string, number> = new Map(),
-  rho:            number = 980,
+  segments:         any[],
+  points:           any[],
+  flowDirections:   Map<string, { fromId: string; toId: string }>,
+  pdcResults:       Map<string, { dpTotal: number }> | null,
+  pressionSource:   number,
+  nodeCotes:        Map<string, number> = new Map(),
+  rho:              number = 980,
+  sourceNodeType:   string = 'productionECS',
 ): CumDpAlimResult | null {
-  const prodNode = points.find(p => p.type === 'productionECS')
+  const prodNode = points.find(p => p.type === sourceNodeType)
   if (!prodNode) return null
 
   const coteSource         = nodeCotes.get(prodNode.id) ?? 0
@@ -258,6 +259,22 @@ export function computeCumDpAlim(
         queue.push(toId)
       }
     }
+  }
+
+  // Tronçons retour : hauteur statique et pression statique aval
+  const retourSegs = segments.filter(s => s.type === 'retour')
+  for (const seg of retourSegs) {
+    const dir = flowDirections.get(seg.id)
+    if (!dir) continue
+    const coteAmont = nodeCotes.get(dir.fromId) ?? 0
+    const coteAval  = nodeCotes.get(dir.toId)   ?? 0
+    const deltaH    = coteAval - coteAmont
+    const dpStat    = rho * 9.81 * deltaH
+    segDeltaH.set(seg.id, deltaH)
+    segDpStatic.set(seg.id, dpStat)
+    segCoteAmont.set(seg.id, coteAmont)
+    segCoteAval.set(seg.id, coteAval)
+    segPStatAval.set(seg.id, pressionSource - rho * 9.81 * (coteAval - coteSource))
   }
 
   // Nœuds terminaux (sans tronçon aller sortant)

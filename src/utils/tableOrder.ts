@@ -427,10 +427,19 @@ export function buildFlowRowsEF(segments, points, flowDirections, columns, colum
         rows.push({ kind: 'separation', ptId: cur, branchCount: branches.length })
         for (const seg of sortSegs(branches)) {
           visitedLocal.add(seg.id)
-          const branchCol = findBranchColumn(seg)
-          if (branchCol) rows.push({ kind: 'col-header', name: branchCol })
-          rows.push({ kind: 'segment', seg, depth: 0, segType: 'aller' })
-          rows.push(...dfs(flowDirections.get(seg.id).toId))
+          const branchSegRow: any = { kind: 'segment', seg, depth: 0, segType: 'aller' }
+          const subRows = dfs(flowDirections.get(seg.id).toId)
+          const isLeaf = !subRows.some((r: any) => r.kind === 'separation')
+          if (isLeaf) {
+            branchSegRow.leafBranch = true
+            for (const r of subRows) if (r.kind === 'segment') (r as any).leafBranch = true
+            const branchCol = findBranchColumn(seg)
+            if (branchCol) rows.push({ kind: 'col-header', name: branchCol })
+          } else {
+            rows.push({ kind: 'collecteur-header' })
+          }
+          rows.push(branchSegRow)
+          rows.push(...subRows)
         }
       }
       return rows
@@ -449,7 +458,7 @@ export function buildFlowRowsEF(segments, points, flowDirections, columns, colum
 
     const roleMap = new Map()
     for (const row of rows) {
-      if (row.kind === 'segment') roleMap.set(row.seg.id, 'aller')
+      if (row.kind === 'segment') roleMap.set(row.seg.id, (row as any).leafBranch ? 'leaf-branch' : 'aller')
     }
     return { rows, roleMap }
   }

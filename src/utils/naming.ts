@@ -182,7 +182,7 @@ function findAntenneColLoc(seg, allSegs, roleMap, allerDist, levels, lineYs, col
 // allerDist : Map<ptId, px> depuis buildECSDistances ; retourDist : depuis buildRetourDistances.
 // Aller : l'extrémité la plus proche de l'ECS (allerDist min) en premier.
 // Retour : l'extrémité la plus loin de l'ECS (retourDist max) en premier (sens du fluide).
-export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null, role = null, activeCalcId = null, allSegs = null, roleMap = null) {
+export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null, role = null, activeCalcId = null, allSegs = null, roleMap = null, flowDirections = null) {
   const isEF = activeCalcId === 'alimentation-ef'
   const ecsDistances = allerDist
   if (!seg.vertices?.length) return ''
@@ -233,7 +233,7 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
     const [firstL, secondL] = putStartFirst ? [startL, endL] : [endL, startL]
     return `${prefix} – ${firstL} → ${secondL}`
   }
-  if (ecsDistances) {
+  if (ecsDistances?.size) {
     // Aller : le plus proche de l'ECS en premier
     const startDist = ecsDistances.get(seg.startPointId) ?? Infinity
     const endDist   = ecsDistances.get(seg.endPointId)   ?? Infinity
@@ -247,6 +247,13 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
     }
 
     return `${prefix} – ${firstL} → ${secondL}`
+  }
+  if (isEF && flowDirections) {
+    const fd = (flowDirections as Map<string, { fromId: string; toId: string }>).get(seg.id)
+    if (fd) {
+      const [firstL, secondL] = seg.startPointId === fd.fromId ? [startL, endL] : [endL, startL]
+      return `${prefix} – ${firstL} → ${secondL}`
+    }
   }
   return `${prefix} – ${startL} → ${endL}`
 }
@@ -375,11 +382,11 @@ export function buildRetourDistances(allSegs, specialPts) {
 }
 
 // Nom d'affichage final (avec suffixe " - n°x" si doublons, triés par sens d'écoulement).
-export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts, role = null, activeCalcId = null, roleMap = null) {
+export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts, role = null, activeCalcId = null, roleMap = null, flowDirections = null) {
   if (seg.name) return seg.name
   const allerDist  = buildECSDistances(allSegs, specialPts)
   const retourDist = buildRetourDistances(allSegs, specialPts)
-  const base = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, role, activeCalcId, allSegs, roleMap)
+  const base = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, role, activeCalcId, allSegs, roleMap, flowDirections)
 
   // Pour les antennes en alimentation-ecs avec roleMap : comparer par nom complet (inclut colonne)
   // afin que deux antennes de la même colonne soient bien groupées pour la numérotation.
@@ -390,11 +397,11 @@ export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, 
   if (isAlimAntenne) {
     dupes = allSegs.filter(s => !s.name &&
       getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist,
-        roleMap.get(s.id) ?? null, activeCalcId, allSegs, roleMap) === base)
+        roleMap.get(s.id) ?? null, activeCalcId, allSegs, roleMap, flowDirections) === base)
   } else {
-    const baseRoute = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId)
+    const baseRoute = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId, null, null, flowDirections)
     dupes = allSegs.filter(s => !s.name &&
-      getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId) === baseRoute)
+      getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId, null, null, flowDirections) === baseRoute)
   }
 
   if (dupes.length <= 1) return base

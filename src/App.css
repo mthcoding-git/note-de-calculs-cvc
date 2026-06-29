@@ -396,7 +396,9 @@
   padding: 10px 0;
   gap: 4px;
   flex-shrink: 0;
-  z-index: 2;
+  position: relative;
+  z-index: 20;
+  overflow: visible;
 }
 .icon-sidebar-btn {
   position: relative;
@@ -505,28 +507,63 @@
 }
 .canvas-area { flex: 1; position: relative; overflow: hidden; }
 
-/* ── Toggle barre résultats ───────────────────────────── */
+/* ── Onglets tableau résultats ────────────────────────── */
+.rt-bar-label {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 12px 0 6px;
+  margin-right: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  border-right: 1px solid #cbd5e1;
+  white-space: nowrap;
+  user-select: none;
+}
 .rt-toggle-bar {
   flex-shrink: 0;
   display: flex;
-  justify-content: center;
-  padding: 3px 8px;
-  background: #f9fafb;
-  border-top: 1px solid #e5e7eb;
+  align-items: flex-end;
+  background: #f1f5f9;
+  border-top: 1px solid #cbd5e1;
+  padding: 0 12px;
+  gap: 4px;
 }
 .rt-toggle-btn {
-  padding: 2px 20px;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
-  background: #fff;
+  height: 28px;
+  padding: 0 16px;
+  border: 1px solid #cbd5e1;
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  background: #e2e8f0;
+  color: #64748b;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
   cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
-  color: #374151;
-  transition: background 0.12s;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
 }
-.rt-toggle-btn:hover { background: #f3f4f6; }
-.rt-toggle-btn.active { background: #eef2ff; color: #4338ca; border-color: #6366f1; font-weight: 700; }
+.rt-toggle-btn:hover {
+  background: #cbd5e1;
+  color: #1e293b;
+  border-color: #94a3b8;
+}
+.rt-toggle-btn.active {
+  height: 32px;
+  background: #fff;
+  color: #4338ca;
+  font-weight: 600;
+  border-color: #c7d2fe;
+  border-top: 2px solid #6366f1;
+  box-shadow: 0 -3px 10px rgba(99,102,241,0.12);
+}
 
 /* ── Poignée de redimensionnement ────────────────────── */
 .rt-resizer {
@@ -541,7 +578,6 @@
 /* ── Panneau résultats ────────────────────────────────── */
 .rt-panel {
   flex-shrink: 0;
-  height: 320px;
   overflow-y: auto;
   border-top: 2px solid #d1d5db;
   background: #fff;

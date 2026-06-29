@@ -16,6 +16,7 @@ export interface Material {
   name: string
   enabled: boolean
   lambda: number
+  epsilon?: number
   minDi?: number
   dns: DnEntry[]
 }
@@ -80,6 +81,8 @@ export interface Column {
   id: string
   name: string
   isGap?: boolean
+  isPPZone?: boolean
+  colId?: string
   x?: number
 }
 

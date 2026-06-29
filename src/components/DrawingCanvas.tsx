@@ -7,7 +7,7 @@ const HIT        = 8     // segment click radius
 const PT_HIT     = 10    // point click/snap radius
 const DRAW_SNAP  = 14    // snap-to-point radius during drawing
 const SNAP       = 10
-const ZOOM_F     = 1.08
+const ZOOM_F     = 1.12
 
 const snap = v => Math.round(v / SNAP) * SNAP
 const dist = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
@@ -106,7 +106,7 @@ function nameValve(segId, segToCol, existingValves, segments?, points?, levels?,
       ? getNodeLocation(pt, levels ?? [], lineYs ?? [], columns ?? [], columnXs ?? [], chaufferie, null, points ?? [])
       : 'ECS'
   }
-  const base    = `VE ${colName}`
+  const base    = `Vanne d'équilibrage ${colName}`
   const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const re      = new RegExp(`^${escaped} n°(\\d+)$`)
   const used    = new Set(
@@ -831,8 +831,13 @@ export default function DrawingCanvas({
   selectedValveId,
   onSelectedValveChange,
   pdcParams,
+  pdcResults,
+  pdcCumResults,
+  pdcCumAlimResults,
   segToCol,
   onExitSpecialMode,
+  pressionSourceAlimEF = null,
+  pressionSourceAlimEFStatic = null,
 }) {
   const svgRef    = useRef(null)
   const spaceRef  = useRef(false)
@@ -1318,7 +1323,7 @@ if (drawing) commitDrawing()
       const onSeg = nearestOnSegments(snapped, hitSegs)
       const sp = (onSeg && onSeg.d < HIT) ? onSeg.pt : snapped
       const newPt = {
-        id: uid('eq'), name: placingEquipment.name, x: sp.x, y: sp.y,
+        id: uid('eq'), name: placingEquipment.type === 'arriveeEF' ? null : placingEquipment.name, x: sp.x, y: sp.y,
         type: placingEquipment.type,
         ...(placingEquipment.type === 'pump'
           ? { rotation: placingEquipment.rotation ?? 0, size: placingEquipment.size ?? 12 }
@@ -1792,9 +1797,11 @@ if (drawing) commitDrawing()
           if (col.isPPZone) {
             const hasGroupe = (points ?? []).some(p => p.type === 'groupe' && p.colId === col.colId)
             if (!hasGroupe) return <g key={col.id} />
+            const prevCol = (columns ?? [])[i - 1]
+            const showLeftBorder = !prevCol || !(prevCol.isGap && !prevCol.isPPZone)
             return (
               <g key={col.id} style={{ pointerEvents: 'none' }}>
-                <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
+                {showLeftBorder && <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />}
               </g>
             )
           }
@@ -1980,7 +1987,7 @@ if (drawing) commitDrawing()
             : editStyle === 'match'   ? '#16a34a'
             : editStyle === 'missing' ? missingColor
             : editStyle === 'other'   ? '#9ca3af'
-            : sel ? '#2563eb' : col
+            : sel ? (isEF ? '#f97316' : '#2563eb') : col
           const strokeW = isGrayed ? 1
             : editStyle === 'match' ? 3 : editStyle === 'missing' ? 2 : editStyle === 'other' ? 1 : sel ? 2.5 : 1.5
           const segDash = sel ? 'none' : dash
@@ -2099,7 +2106,7 @@ if (drawing) commitDrawing()
                 // lines: [{text, red?}]
                 const lines = []
                 if (canvasDisplay?.nomTroncon) {
-                  const name = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, roleMap?.get(seg.id), activeCalcId, roleMap)
+                  const name = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, roleMap?.get(seg.id), activeCalcId, roleMap, flowDirections)
                   if (name) lines.push({ text: name })
                 }
                 if (canvasDisplay?.length && seg.length_override != null) {
@@ -2108,11 +2115,11 @@ if (drawing) commitDrawing()
                 if (canvasDisplay?.material || canvasDisplay?.dn) {
                   const mat = materials?.find(m => m.id === seg.materialId)
                   if (canvasDisplay?.material && canvasDisplay?.dn && seg.dn) {
-                    lines.push({ text: mat ? `${mat.name} DN${seg.dn}` : `DN${seg.dn}` })
+                    lines.push({ text: mat ? `${mat.name} ${seg.dn}` : seg.dn })
                   } else if (canvasDisplay?.material && mat) {
                     lines.push({ text: mat.name })
                   } else if (canvasDisplay?.dn && seg.dn) {
-                    lines.push({ text: `DN${seg.dn}` })
+                    lines.push({ text: seg.dn })
                   }
                 }
                 if (canvasDisplay?.insulation && seg.insulationId) {
@@ -2122,9 +2129,9 @@ if (drawing) commitDrawing()
                 if (canvasDisplay?.debit) {
                   if (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') {
                     const ar = alimentationResults?.get(seg.id)
-                    if (ar?.method === 'collective' && ar.collective?.Qp != null)
-                      lines.push({ text: `${ar.collective.Qp.toFixed(2)} l/s` })
-                  } else {
+                    if (ar?.flowRateForPdc != null && ar.flowRateForPdc > 0)
+                      lines.push({ text: `${ar.flowRateForPdc.toFixed(2)} l/s` })
+                  } else if (roleMap?.get(seg.id) !== 'antenne') {
                     const flow = networkFlows?.get(seg.id)
                     if (flow?.flowRate != null) lines.push({ text: `${flow.flowRate.toFixed(3)} m³/h` })
                   }
@@ -2132,16 +2139,16 @@ if (drawing) commitDrawing()
                 if (canvasDisplay?.vitesse) {
                   if (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') {
                     const ar = alimentationResults?.get(seg.id)
+                    const flowLs = ar?.flowRateForPdc ?? null
                     const dnDef = (() => {
                       const mat = seg.materialId ? materials?.find(m => m.id === seg.materialId) : null
                       return mat && seg.dn ? mat.dns?.find(d => d.dn === seg.dn) : null
                     })()
                     const di_mm = seg.di_override ?? dnDef?.di ?? null
-                    const c = ar?.method === 'collective' ? ar.collective : null
-                    const area = c && di_mm ? Math.PI * (di_mm / 1000) ** 2 / 4 : null
-                    const v = area && c?.Qp > 0 ? (c.Qp * 1e-3) / area : null
+                    const area = di_mm ? Math.PI * (di_mm / 1000) ** 2 / 4 : null
+                    const v = area && flowLs != null && flowLs > 0 ? (flowLs * 1e-3) / area : null
                     if (v != null) lines.push({ text: `${sf(v, 2)} m/s`, orange: v > 1.5 && v <= 2.0, red: v > 2.0 })
-                  } else {
+                  } else if (roleMap?.get(seg.id) !== 'antenne') {
                     const flow = networkFlows?.get(seg.id)
                     if (flow?.velocity != null) {
                       const v = flow.velocity
@@ -2156,6 +2163,15 @@ if (drawing) commitDrawing()
                 if (canvasDisplay?.deltaT && activeCalcId !== 'alimentation-ecs' && activeCalcId !== 'alimentation-ef') {
                   const sr = thermalResults?.segResults?.get(seg.id)
                   if (sr?.deltaT != null) lines.push({ text: `ΔT ${sf(sr.deltaT, 2)} °C` })
+                }
+                if (canvasDisplay?.dpTroncon && activeCalcId === 'bouclage-ecs') {
+                  const dp = pdcResults?.get(seg.id)?.dpTotal
+                  if (dp != null) {
+                    const u = pdcParams?.uniteAffichage ?? 'Pa'
+                    const txt = u === 'mmCE' ? `ΔP ${(dp / 9.81).toFixed(0)} mmCE`
+                      : `ΔP ${Math.round(dp)} Pa`
+                    lines.push({ text: txt })
+                  }
                 }
                 if (!lines.length) return null
                 const vs = seg.vertices
@@ -2194,7 +2210,7 @@ if (drawing) commitDrawing()
                 )
               })()}
               {seg.showName && (() => {
-                const label = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, null, activeCalcId)
+                const label = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, null, activeCalcId, null, flowDirections)
                 if (!label) return null
                 const raw = label.split(' → ')
                 const lines = raw.length >= 2
@@ -2327,6 +2343,50 @@ if (drawing) commitDrawing()
             )
           }
 
+          const resolveNodePression = (ptId: string) => {
+            const isAlimMode = activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef'
+            if (!isAlimMode || !flowDirections) return { pDispo: null, pStat: null }
+            const inSegId = Array.from(flowDirections.entries()).find(([, d]) => d != null && d.toId === ptId)?.[0] ?? null
+            if (!inSegId) return { pDispo: null, pStat: null }
+            const pDispo = canvasDisplay?.pressionDispo ? (pdcCumAlimResults?.segPressionAval?.get(inSegId) ?? null) : null
+            const pStat  = canvasDisplay?.pressionStat  ? (pdcCumAlimResults?.segPStatAval?.get(inSegId)   ?? null) : null
+            return { pDispo, pStat }
+          }
+
+          const PressBadge = ({ x, y, p, isErr, prefix }: { x: number; y: number; p: number | null; isErr: boolean; prefix?: string }) => {
+            if (p == null) return null
+            const lbl = prefix ? `${prefix} ${(p / 100000).toFixed(2)} bar` : `${(p / 100000).toFixed(2)} bar`
+            const W = lbl.length * 5 + 4
+            return (
+              <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                <rect x={x} y={y - 6} width={W} height={11}
+                  fill={isErr ? '#fef2f2' : 'rgba(255,255,255,0.92)'}
+                  stroke={isErr ? '#dc2626' : '#6b7280'} strokeWidth={0.4} rx={2} />
+                <text x={x + 2} y={y + 3.5} fontSize={7.5}
+                  fill={isErr ? '#dc2626' : '#374151'} fontWeight="600">{lbl}</text>
+              </g>
+            )
+          }
+
+          const resolveDpNoeud = (ptId: string): number | null => {
+            if (!canvasDisplay?.dpNoeud || activeCalcId !== 'bouclage-ecs') return null
+            return pdcCumResults?.nodeCumDp?.get(ptId) ?? null
+          }
+
+          const DpBadge = ({ x, y, dp }: { x: number; y: number; dp: number | null }) => {
+            if (dp == null) return null
+            const u = pdcParams?.uniteAffichage ?? 'Pa'
+            const lbl = u === 'mmCE' ? `${(dp / 9.81).toFixed(0)} mc` : `${Math.round(dp)} Pa`
+            const W = lbl.length * 5 + 4
+            return (
+              <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                <rect x={x} y={y - 6} width={W} height={11}
+                  fill="rgba(255,255,255,0.92)" stroke="#6b7280" strokeWidth={0.4} rx={2} />
+                <text x={x + 2} y={y + 3.5} fontSize={7.5} fill="#374151" fontWeight="600">{lbl}</text>
+              </g>
+            )
+          }
+
           if (pt.isLocked) {
             const lockedClick = ev => {
               if (drawMode === 'editParams') return
@@ -2346,6 +2406,7 @@ if (drawing) commitDrawing()
                   strokeWidth={1.5}
                   style={{ pointerEvents: 'none' }} />
                 <TempBadge x={pt.x + 8} y={pt.y} T={lockedTemp} />
+                <DpBadge x={pt.x + 8} y={pt.y + (lockedTemp != null ? 13 : 0)} dp={resolveDpNoeud(pt.id)} />
               </g>
             )
           }
@@ -2367,6 +2428,7 @@ if (drawing) commitDrawing()
                   <polygon points={`${-6*ts},${-7*ts} ${-6*ts},${7*ts} ${8*ts},0`} fill={sel || dragged ? '#2563eb' : '#4f46e5'} />
                 </g>
                 <TempBadge x={pt.x + r + 2} y={pt.y} T={pumpTemp} />
+                <DpBadge x={pt.x + r + 2} y={pt.y + (pumpTemp != null ? 13 : 0)} dp={resolveDpNoeud(pt.id)} />
               </g>
             )
           }
@@ -2379,10 +2441,11 @@ if (drawing) commitDrawing()
             const label = pt.name ?? autoName ?? 'PP'
             const labelCol = sel || dragged ? '#2563eb' : showName ? '#0c4a6e' : '#7dd3fc'
             const equipLines = []
-            if (canvasDisplay?.equipment && pt.equipements) {
+            if (canvasDisplay?.equipment) {
+              const equips = pt.equipements ?? {}
               const items = (alimentationParams?.appareils ?? [])
-                .filter(a => (pt.equipements[a.id] ?? 0) > 0)
-                .map(a => `${EQUIP_ABBR[a.id] ?? a.id}×${pt.equipements[a.id]}`)
+                .filter(a => (equips[a.id] ?? 0) > 0)
+                .map(a => `${EQUIP_ABBR[a.id] ?? a.id}×${equips[a.id]}`)
               if (items.length > 0) {
                 const CHAR_W = 3.9, SEP = ' · ', SEP_W = SEP.length * CHAR_W
                 const maxW = w - 8
@@ -2401,20 +2464,19 @@ if (drawing) commitDrawing()
               }
             }
             const hasEquip = equipLines.length > 0
-            // h: fixed 30 when no equip; expands to fit name + equip lines when shown
             const h = hasEquip ? Math.max(30, 20 + equipLines.length * 9) : 30
             const nameFontSize = hasEquip ? 7 : 9
-            // Center the [name + equip] block vertically inside the rect
-            const contentH = hasEquip ? 8 + 2 + equipLines.length * 9 : 0
-            const contentTop = hasEquip ? pt.y - h / 2 + (h - contentH) / 2 : pt.y
-            const equipStartY = contentTop + 10
+            // Center equip lines at pt.y, name floats just above
+            const equipBlockH = hasEquip ? (equipLines.length - 1) * 9 + 6.5 : 0
+            const equipStartY = pt.y - equipBlockH / 2
+            const nameY = hasEquip ? equipStartY - 9 : pt.y
             return (
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={ev => { ev.stopPropagation(); selClick(ev) }}>
                 <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
                 <g style={{ pointerEvents: 'none' }}>
                   <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
                     fill={bg} stroke={col} strokeWidth={1.2} rx={3} />
-                  <text x={pt.x} y={hasEquip ? contentTop : pt.y}
+                  <text x={pt.x} y={nameY}
                     fontSize={nameFontSize} fill={labelCol}
                     fontWeight={showName ? '600' : '700'}
                     textAnchor="middle"
@@ -2431,6 +2493,18 @@ if (drawing) commitDrawing()
                     </text>
                   ))}
                 </g>
+                {(() => {
+                  const { pDispo, pStat } = resolveNodePression(pt.id)
+                  if (pDispo == null && pStat == null) return null
+                  const bothP = pDispo != null && pStat != null
+                  const bx = pt.x + w / 2 + 4
+                  return (
+                    <>
+                      <PressBadge x={bx} y={pt.y + (bothP ? -7 : 0)} p={pDispo} isErr={pDispo != null && pDispo < 30000} prefix={bothP ? 'dispo' : undefined} />
+                      <PressBadge x={bx} y={pt.y + (bothP ? 7 : 0)}  p={pStat}  isErr={pStat  != null && pStat  > 400000} prefix={bothP ? 'stat' : undefined} />
+                    </>
+                  )
+                })()}
               </g>
             )
           }
@@ -2439,6 +2513,14 @@ if (drawing) commitDrawing()
             const fs = Math.max(6, Math.min(9, h * 0.28))
             const col = sel || dragged ? '#1d4ed8' : '#2563eb'
             const bg  = sel || dragged ? '#bfdbfe' : '#dbeafe'
+            const efPDispo = (canvasDisplay?.pressionDispo && activeCalcId === 'alimentation-ef')
+              ? pressionSourceAlimEF
+              : null
+            const efPStat = (canvasDisplay?.pressionStat && activeCalcId === 'alimentation-ef')
+              ? pressionSourceAlimEFStatic
+              : null
+            const bothEFP = efPDispo != null && efPStat != null
+            const bxEF = pt.x + w / 2 + 4
             return (
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
                 <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
@@ -2447,6 +2529,8 @@ if (drawing) commitDrawing()
                   <text x={pt.x} y={pt.y - h * 0.15} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Arrivée</text>
                   <text x={pt.x} y={pt.y + h * 0.28} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>EF</text>
                 </g>
+                <PressBadge x={bxEF} y={pt.y + (bothEFP ? -7 : 0)} p={efPDispo} isErr={efPDispo != null && efPDispo < 30000} prefix={bothEFP ? 'dispo' : undefined} />
+                <PressBadge x={bxEF} y={pt.y + (bothEFP ? 7 : 0)}  p={efPStat}  isErr={efPStat  != null && efPStat  > 400000} prefix={bothEFP ? 'stat' : undefined} />
               </g>
             )
           }
@@ -2500,6 +2584,15 @@ if (drawing) commitDrawing()
                     </g>
                   )
                 })()}
+                {canvasDisplay?.dpNoeud && activeCalcId === 'bouclage-ecs' && (() => {
+                  const retDps = Array.from(flowDirections?.entries() ?? [])
+                    .filter(([, dir]) => dir.toId === pt.id)
+                    .map(([sid]) => pdcCumResults?.segCumDp?.get(sid))
+                    .filter((v): v is number => v != null)
+                  if (retDps.length === 0) return null
+                  const maxDp = Math.max(...retDps)
+                  return <DpBadge x={pt.x + w / 2 + 4} y={pt.y + h / 2 + 8} dp={maxDp} />
+                })()}
               </g>
             )
           }
@@ -2536,6 +2629,33 @@ if (drawing) commitDrawing()
             ? incomingTemps[0].T
             : resolveNodeTemp(pt.id)
 
+          const incomingDps = (() => {
+            if (!canvasDisplay?.dpNoeud || activeCalcId !== 'bouclage-ecs' || !flowDirections) return []
+            const res: { dp: number; dx: number; dy: number }[] = []
+            for (const [sid, dir] of flowDirections) {
+              if (dir.toId !== pt.id) continue
+              const dp = pdcCumResults?.segCumDp?.get(sid) ?? null
+              if (dp == null) continue
+              const seg = renderSegs.find(s => s.id === sid)
+              if (!seg) continue
+              const vs = seg.vertices
+              if (vs.length < 2) continue
+              let dx, dy
+              if (seg.endPointId === pt.id) {
+                dx = vs[vs.length - 2].x - vs[vs.length - 1].x
+                dy = vs[vs.length - 2].y - vs[vs.length - 1].y
+              } else {
+                dx = vs[1].x - vs[0].x
+                dy = vs[1].y - vs[0].y
+              }
+              const len = Math.hypot(dx, dy) || 1
+              res.push({ dp, dx: dx / len, dy: dy / len })
+            }
+            return res
+          })()
+          const isDpJunction = incomingDps.length > 1
+          const bothBadges = !!canvasDisplay?.temperatureNoeud && !!canvasDisplay?.dpNoeud
+
           return (
             <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
               <rect x={pt.x - PT_R - 6} y={pt.y - PT_R - 6} width={(PT_R + 6) * 2} height={(PT_R + 6) * 2} fill="transparent" />
@@ -2546,6 +2666,24 @@ if (drawing) commitDrawing()
               {isJunction && incomingTemps.map(({ T, dx, dy }, i) => (
                 <TempBadge key={i} x={pt.x + dx * 16} y={pt.y + dy * 16} T={T} />
               ))}
+              {!isDpJunction && incomingDps.length === 1 && (
+                <DpBadge x={pt.x + PT_R + 2} y={pt.y + (bothBadges && singleTemp != null && !isJunction ? 13 : 0)} dp={incomingDps[0].dp} />
+              )}
+              {isDpJunction && incomingDps.map(({ dp, dx, dy }, i) => (
+                <DpBadge key={i} x={pt.x + dx * 16} y={pt.y + dy * 16 + (bothBadges ? 13 : 0)} dp={dp} />
+              ))}
+              {(() => {
+                const { pDispo, pStat } = resolveNodePression(pt.id)
+                if (pDispo == null && pStat == null) return null
+                const bothP = pDispo != null && pStat != null
+                const bx = pt.x + PT_R + 2
+                return (
+                  <>
+                    <PressBadge x={bx} y={pt.y + (bothP ? -7 : 0)} p={pDispo} isErr={pDispo != null && pDispo < 30000} />
+                    <PressBadge x={bx} y={pt.y + (bothP ? 7 : 0)}  p={pStat}  isErr={pStat  != null && pStat  > 400000} />
+                  </>
+                )
+              })()}
             </g>
           )
         })}

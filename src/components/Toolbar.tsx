@@ -65,13 +65,17 @@ const DISPLAY_OPTIONS = [
   { key: 'nomTroncon',       label: 'Nom du tronçon',          calcIds: null },
   { key: 'material',         label: 'Matériau',                calcIds: null },
   { key: 'dn',               label: 'DN',                      calcIds: null },
-  { key: 'length',           label: 'Longueur (m)',            calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
+  { key: 'length',           label: 'Longueur',                calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
   { key: 'insulation',       label: 'Isolant & épaisseur',     calcIds: ['bouclage-ecs'] },
   { key: 'debit',            label: 'Débit',                   calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
-  { key: 'vitesse',          label: 'Vitesse (m/s)',           calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
-  { key: 'temperatureNoeud', label: 'T° nœuds (°C)',           calcIds: ['bouclage-ecs'] },
-  { key: 'deltaT',           label: 'ΔT tronçon (°C)',         calcIds: ['bouclage-ecs'] },
-  { key: 'equipment',        label: 'Équipements (groupes PP)', calcIds: ['alimentation-ecs', 'alimentation-ef'] },
+  { key: 'vitesse',          label: 'Vitesse',                 calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
+  { key: 'temperatureNoeud', label: 'T° nœuds',               calcIds: ['bouclage-ecs'] },
+  { key: 'deltaT',           label: 'ΔT tronçon',             calcIds: ['bouclage-ecs'] },
+  { key: 'dpNoeud',          label: 'ΔP depuis prod. ECS',    calcIds: ['bouclage-ecs'] },
+  { key: 'dpTroncon',        label: 'ΔP tronçon',             calcIds: ['bouclage-ecs'] },
+  { key: 'pressionDispo',    label: 'Pression disponible',    calcIds: ['alimentation-ecs', 'alimentation-ef'] },
+  { key: 'pressionStat',     label: 'Pression statique',      calcIds: ['alimentation-ecs', 'alimentation-ef'] },
+  { key: 'equipment',        label: 'Équipements (groupes PP)', calcIds: ['alimentation-ecs', 'alimentation-ef', 'bouclage-ecs'] },
 ]
 
 export default function Toolbar({
