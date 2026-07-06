@@ -79,9 +79,9 @@
 
 .tb-btn {
   position: relative;
-  display: flex; align-items: center; gap: 5px;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
   padding: 5px 10px; border: 1.5px solid #d1d5db;
-  border-radius: 5px; background: #fff;
+  border-radius: 5px; background: #fff; min-width: 90px;
   cursor: pointer; font-size: 12px; font-weight: 500; color: #374151;
   white-space: nowrap; transition: all 0.12s;
 }
@@ -133,6 +133,94 @@
   cursor: pointer; white-space: nowrap; user-select: none;
 }
 .tb-checkbox-label input[type="checkbox"] { width: 13px; height: 13px; accent-color: #4f46e5; cursor: pointer; }
+
+/* ── Popover accessoires ─────────────────────────────── */
+.tb-acc-popover {
+  position: fixed;
+  z-index: 300;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.13), 0 2px 6px rgba(0,0,0,0.05);
+  padding: 8px;
+  overflow: visible;
+}
+.tb-acc-grid {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+}
+.tb-acc-vsep {
+  width: 1px;
+  height: 22px;
+  background: #e2e8f0;
+  flex-shrink: 0;
+  margin: 0 4px;
+}
+.tb-acc-item {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.1s, border-color 0.1s;
+}
+.tb-acc-item:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.tb-acc-item.tb-acc-item-active {
+  background: #dbeafe;
+  border-color: #3b82f6;
+}
+/* Tooltip flèche (pointe vers le haut car tooltip est en dessous) */
+.tb-acc-item::before {
+  content: '';
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-bottom-color: #1e293b;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s 0s;
+  z-index: 401;
+}
+/* Tooltip texte */
+.tb-acc-item::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e293b;
+  color: #f1f5f9;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.22);
+  transition: opacity 0.12s 0s;
+  z-index: 400;
+  letter-spacing: 0.01em;
+}
+.tb-acc-item:hover::before,
+.tb-acc-item:hover::after {
+  opacity: 1;
+  transition-delay: 0.25s;
+}
 
 .pipe-btn { gap: 7px; }
 .pipe-prev-aller {

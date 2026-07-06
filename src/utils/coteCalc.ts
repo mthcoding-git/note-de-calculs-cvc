@@ -1,3 +1,5 @@
+import { findLevelIndexAt } from './levelUtils'
+
 const DEFAULT_HAUTEUR = 2.70
 
 /**
@@ -7,15 +9,11 @@ const DEFAULT_HAUTEUR = 2.70
  * - Au-dessus de la toiture → cote = somme de toutes les hauteurs
  */
 export function getNodeDefaultCote(pt: any, levels: any[], lineYs: number[]): number {
-  for (let i = 0; i < levels.length; i++) {
-    const yBot = lineYs[i]
-    const yTop = lineYs[i + 1]
-    if (yTop === undefined) continue
-    if (pt.y > yTop && pt.y <= yBot) {
-      let cote = 0
-      for (let j = 0; j < i; j++) cote += levels[j].hauteur ?? DEFAULT_HAUTEUR
-      return Math.round(cote * 100) / 100
-    }
+  const li = findLevelIndexAt(pt.y, lineYs)
+  if (li >= 0) {
+    let cote = 0
+    for (let j = 0; j < li; j++) cote += levels[j].hauteur ?? DEFAULT_HAUTEUR
+    return Math.round(cote * 100) / 100
   }
   // Au-dessus de la toiture
   let cote = 0

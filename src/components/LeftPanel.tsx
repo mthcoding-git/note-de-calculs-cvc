@@ -1,10 +1,10 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
+import type { CalcMode } from '../types'
 import { getDisplayName } from '../utils/naming'
 import { EQUIPMENT_TYPES, FITTING_TYPES } from '../utils/pdcCalc'
 import { NumInput } from './NumInput'
-
-let _uid = 0
-const uid = (p = 'x') => `${p}-${Date.now()}-${++_uid}`
+import { uid } from '../utils/idGen'
+import { getModeFlags } from '../utils/calcModeFlags'
 
 const asNum = (v: any): number | null => {
   if (v == null || v === '') return null
@@ -21,7 +21,7 @@ function Section({ title = null, children, noPad = false }) {
   )
 }
 
-function Field({ label, unit, children }) {
+function Field({ label, unit = undefined, children }) {
   return (
     <div className="lp-field">
       <label className="lp-label">
@@ -34,7 +34,8 @@ function Field({ label, unit, children }) {
 
 
 // ── Levels ─────────────────────────────────────────────
-function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange }) {
+function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, chaufferie, onAddChaufferie, editChaufferie, onEditChaufferieChange, placingChaufferie, activeCalcId, locauxEF, onAddLocalEF, placingLocalEF, editLocauxEF, onEditLocauxEFChange }) {
+  const { isAlimEF, isChauffage } = getModeFlags(activeCalcId)
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const rename        = (id, name)  => onLevelsChange(levels.map(l => l.id === id ? { ...l, name } : l))
@@ -128,6 +129,7 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange }) {
                     />
                     <span className="lp-level-expanded-unit">m</span>
                   </div>
+                  {!isChauffage && (
                   <div className="lp-level-expanded-row">
                     <span className="lp-level-expanded-label">T° ambiante</span>
                     <NumInput
@@ -140,6 +142,69 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange }) {
                     />
                     <span className="lp-level-expanded-unit">°C</span>
                   </div>
+                  )}
+                  {!isAlimEF && (() => {
+                    const placed = chaufferie?.placed && chaufferie?.enabled
+                    const isThisLevel = chaufferie?.levelId === lvl.id
+                    if (placed && !isThisLevel) return null
+                    if (placed && isThisLevel) return (
+                      <button
+                        onClick={() => onEditChaufferieChange?.(!editChaufferie)}
+                        style={{
+                          marginTop: 6, width: '100%', padding: '4px 0', fontSize: 11, fontWeight: 600,
+                          background: editChaufferie ? '#eef2ff' : '#f8fafc',
+                          color: editChaufferie ? '#4338ca' : '#6b7280',
+                          border: `1px solid ${editChaufferie ? '#818cf8' : '#e5e7eb'}`,
+                          borderRadius: 5, cursor: 'pointer',
+                        }}>
+                        ✎ Modifier local ECS
+                      </button>
+                    )
+                    return (
+                      <button
+                        onClick={() => onAddChaufferie?.()}
+                        style={{
+                          marginTop: 6, width: '100%', padding: '4px 0', fontSize: 11, fontWeight: 600,
+                          background: placingChaufferie ? '#eef2ff' : '#f8fafc',
+                          color: placingChaufferie ? '#4338ca' : '#6b7280',
+                          border: `1px solid ${placingChaufferie ? '#818cf8' : '#e5e7eb'}`,
+                          borderRadius: 5, cursor: 'pointer',
+                        }}>
+                        Ajouter un local ECS
+                      </button>
+                    )
+                  })()}
+                  {isAlimEF && (() => {
+                    const hasOnThisLevel = (locauxEF ?? []).some(l => l.levelId === lvl.id)
+                    return (
+                      <>
+                        {hasOnThisLevel && (
+                          <button
+                            onClick={() => onEditLocauxEFChange?.(!editLocauxEF)}
+                            style={{
+                              marginTop: 6, width: '100%', padding: '4px 0', fontSize: 11, fontWeight: 600,
+                              background: editLocauxEF ? '#eef2ff' : '#f8fafc',
+                              color: editLocauxEF ? '#4338ca' : '#6b7280',
+                              border: `1px solid ${editLocauxEF ? '#818cf8' : '#e5e7eb'}`,
+                              borderRadius: 5, cursor: 'pointer',
+                            }}>
+                            ✎ Modifier les locaux EF
+                          </button>
+                        )}
+                        <button
+                          onClick={() => onAddLocalEF?.()}
+                          style={{
+                            marginTop: 6, width: '100%', padding: '4px 0', fontSize: 11, fontWeight: 600,
+                            background: placingLocalEF ? '#eef2ff' : '#f8fafc',
+                            color: placingLocalEF ? '#4338ca' : '#6b7280',
+                            border: `1px solid ${placingLocalEF ? '#818cf8' : '#e5e7eb'}`,
+                            borderRadius: 5, cursor: 'pointer',
+                          }}>
+                          Ajouter un local EF
+                        </button>
+                      </>
+                    )
+                  })()}
                 </div>
               )}
             </div>
@@ -443,6 +508,8 @@ function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon 
   const setEpsilon  = (id, v) => onChange(m => m.map(x => x.id === id ? { ...x, epsilon: v } : x))
   const setName     = (id, v) => onChange(m => m.map(x => x.id === id ? { ...x, name: v } : x))
   const removeMat   = id      => onChange(m => m.filter(x => x.id !== id))
+  const setEncrassement         = (id, v) => onChange(m => m.map(x => x.id === id ? { ...x, encrassement: v } : x))
+  const setEncrassementEpaisseur = (id, v) => onChange(m => m.map(x => x.id === id ? { ...x, encrassementEpaisseur: v } : x))
   const setDnField  = (mid, idx, key, v) => onChange(m => m.map(x => {
     if (x.id !== mid) return x
     const dns = x.dns.map((d, i) => i === idx ? { ...d, [key]: key === 'dn' ? v : (typeof v === 'number' ? v : parseFloat(v) || 0) } : d)
@@ -496,6 +563,27 @@ function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon 
                     onChange={v => { if (v != null) setEpsilon(mat.id, v) }} />
                   <span className="lp-unit">m</span>
                   <span style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic' }}>(rugosité)</span>
+                </div>
+              )}
+              {!compact && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                    <span>Présence de tartre</span>
+                    <input type="checkbox" style={{ width: 'auto', margin: 0, marginTop: 2 }}
+                      checked={mat.encrassement ?? false}
+                      onChange={() => setEncrassement(mat.id, !(mat.encrassement ?? false))} />
+                  </label>
+                  {mat.encrassement && (<>
+                    <span style={{ whiteSpace: 'nowrap' }}>ép.</span>
+                    <div style={{ width: 42, flexShrink: 0 }}>
+                      <NumInput step={0.1} min={0}
+                        value={mat.encrassementEpaisseur ?? null}
+                        placeholder=""
+                        allowEmpty
+                        onChange={v => setEncrassementEpaisseur(mat.id, v ?? undefined)} />
+                    </div>
+                    <span className="lp-unit">mm</span>
+                  </>)}
                 </div>
               )}
               <table className="lp-dn-table">
@@ -690,16 +778,19 @@ function EditParamsPanel({
   editParam, onEditParamChange,
   activeCalcId, alimentationParams,
 }) {
-  const isAlim = activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef'
-  const isEF   = activeCalcId === 'alimentation-ef'
+  const { isAlimEF: isEF, isAlimMode: isAlim, isChauffage } = getModeFlags(activeCalcId)
   const set = patch => onEditParamChange({ ...editParam, ...patch })
   const { paramType, segType, materialId, dn, insulationId, thickness,
           length, flowVelocityMode, flowVelocityValue } = editParam
 
-  const validTypes = isEF ? ['material', 'length'] : isAlim ? ['type', 'material', 'length'] : ['type', 'material', 'insulation', 'length', 'flowVelocity']
+  const isBouclageECS = !isEF && !isAlim && !isChauffage
+  const validTypes = isEF ? ['material', 'length']
+    : isAlim   ? ['type', 'material', 'length']
+    : isChauffage ? ['type', 'material', 'length']
+    : ['type', 'material', 'insulation', 'length', 'flowVelocity']
   useEffect(() => {
     if (!validTypes.includes(paramType)) set({ paramType: 'material' })
-  }, [isAlim, paramType])
+  }, [isAlim, isChauffage, paramType])
 
   const enabledMats = materials.filter(m => m.enabled)
   const enabledIns  = insulations.filter(i => i.enabled)
@@ -727,9 +818,9 @@ function EditParamsPanel({
         <select value={paramType} onChange={e => set({ paramType: e.target.value, materialId: null, dn: null, insulationId: null, thickness: null, length: null, flowVelocityValue: null })}>
           {!isEF && <option value="type">Réseau (Aller / Retour ECS)</option>}
           <option value="material">Matériau & DN</option>
-          {!isAlim && <option value="insulation">Isolant & épaisseur</option>}
+          {!isAlim && !isChauffage && <option value="insulation">Isolant & épaisseur</option>}
           <option value="length">Longueur</option>
-          {!isAlim && <option value="flowVelocity">Débit / Vitesse</option>}
+          {isBouclageECS && <option value="flowVelocity">Débit / vitesse</option>}
         </select>
       </div>
 
@@ -805,6 +896,7 @@ function EditParamsPanel({
           </div>
         </div>
       )}
+
       {paramType === 'flowVelocity' && (
         <div className="lp-field">
           <label className="lp-label">Valeur à appliquer</label>
@@ -822,7 +914,7 @@ function EditParamsPanel({
             ))}
           </div>
           <NumInput min={0}
-            step={flowVelocityMode === 'flowRate' ? 0.001 : 0.001}
+            step={0.001}
             value={flowVelocityValue ?? null}
             placeholder={flowVelocityMode === 'flowRate' ? 'm³/h' : 'm/s'}
             allowEmpty
@@ -911,10 +1003,10 @@ function EditParamsPanel({
   )
 }
 
-function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chaufferie, networkFlows, onSelectIds, onConnHighlight, activeCalcId }) {
+function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chaufferie, networkFlows, onSelectIds, onConnHighlight, activeCalcId, flowDirections = null, roleMap = null }) {
   const [showConnHighlight,   setShowConnHighlight]   = useState(false)
   const [showManualHighlight, setShowManualHighlight] = useState(false)
-  const isEF = activeCalcId === 'alimentation-ef'
+  const { isAlimEF: isEF } = getModeFlags(activeCalcId)
 
   const connIssues = useMemo(() => {
     const ptCount = new Map()
@@ -960,7 +1052,7 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
         fontSize: 10, padding: '3px 8px', borderRadius: 3, cursor: 'pointer', lineHeight: 1.5,
         background: '#f9fafb', border: '1px solid transparent', color: '#6b7280', marginBottom: 2,
       }}>
-      {getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points, null, activeCalcId)}
+      {getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(s.id) ?? null, activeCalcId, roleMap ?? null, flowDirections ?? null)}
     </div>
   )
 
@@ -1644,6 +1736,39 @@ function FittingLibrarySection({ pdcParams, onChange }) {
 }
 
 
+interface LeftPanelProps {
+  activeSection: string
+  activeCalcId: CalcMode | null
+  alimentationParams: any; onAlimentationParamsChange: any
+  alimentationParamsEF: any; onAlimentationParamsEFChange: any
+  pdcParams: any; onPdcParamsChange: any
+  pdcParamsAlimECS: any; onPdcParamsAlimECSChange: any; totalQpAlimM3h?: number
+  pdcParamsAlimEF: any; onPdcParamsAlimEFChange: any; totalQpAlimEFM3h?: number
+  selectedAmontId: string | null; onSelectAmontId: any; amontTronconResults: any
+  pressionSourceAlimECSStatic?: number | null
+  levels: any[]; lineYs: number[]; onLevelsChange: any; onLineYsChange: any
+  editLinesEnabled: boolean; onEditLinesChange: any
+  materials: any[]; onMaterialsChange: any
+  materialsEF: any[]; onMaterialsEFChange: any
+  insulations: any[]; onInsulationsChange: any
+  columns: any[]; columnXs: number[]
+  onColumnsChange: any; onColumnXsChange: any; onRemoveColumn: any; onAddColumn: any
+  onAddGap: any; onMoveGaine: any
+  chaufferie: any; onChaufferieChange: any; onAddChaufferie: any
+  editChaufferie: boolean; onEditChaufferieChange: any; placingChaufferie: boolean
+  locauxEF: any[]; onAddLocalEF: any; placingLocalEF: boolean
+  editLocauxEF: boolean; onEditLocauxEFChange: any
+  chauffageParams?: any; onChauffageParamsChange?: any
+  segments: any[]; points: any[]; networkFlows: any
+  flowDirections?: any; roleMap?: any
+  drawMode: string; editParam: any; onEditParamChange: any
+  onSelectIds: any; onConnHighlight: any
+  groupesEditMode: boolean; onGroupesEditModeChange: any
+  showGroupeNames: boolean; onShowGroupeNamesChange: any
+  onAddGroupe: any; onRemoveGroupe: any
+  selectedIds: string[]; onUpdateSegment: any
+}
+
 export default function LeftPanel({
   activeSection,
   activeCalcId,
@@ -1659,14 +1784,19 @@ export default function LeftPanel({
   materialsEF, onMaterialsEFChange,
   insulations, onInsulationsChange,
   columns, columnXs, onColumnsChange, onColumnXsChange, onRemoveColumn, onAddColumn, onAddGap, onMoveGaine,
-  chaufferie,
+  chaufferie, onChaufferieChange, onAddChaufferie, editChaufferie, onEditChaufferieChange, placingChaufferie,
+  locauxEF, onAddLocalEF, placingLocalEF, editLocauxEF, onEditLocauxEFChange,
+  chauffageParams, onChauffageParamsChange,
   segments, points, networkFlows,
+  flowDirections, roleMap,
   drawMode, editParam, onEditParamChange,
   onSelectIds, onConnHighlight,
   groupesEditMode, onGroupesEditModeChange, showGroupeNames, onShowGroupeNamesChange,
   onAddGroupe, onRemoveGroupe,
   selectedIds, onUpdateSegment,
-}) {
+}: LeftPanelProps) {
+  const { isBouclage, isAlimECS, isAlimEF, isChauffage } = getModeFlags(activeCalcId)
+
   if (drawMode === 'editParams') {
     return (
       <div className="left-panel">
@@ -1675,7 +1805,7 @@ export default function LeftPanel({
           <div className="lp-section-body">
             <EditParamsPanel
               segments={segments} points={points}
-              materials={activeCalcId === 'alimentation-ef' ? materialsEF : materials} insulations={insulations}
+              materials={isAlimEF ? materialsEF : materials} insulations={insulations}
               levels={levels} lineYs={lineYs}
               columns={columns} columnXs={columnXs}
               chaufferie={chaufferie}
@@ -1700,6 +1830,8 @@ export default function LeftPanel({
         onSelectIds={onSelectIds}
         onConnHighlight={onConnHighlight}
         activeCalcId={activeCalcId}
+        flowDirections={flowDirections}
+        roleMap={roleMap}
       />
     )
   }
@@ -1709,6 +1841,17 @@ export default function LeftPanel({
       <LevelsSection
         levels={levels} lineYs={lineYs}
         onLevelsChange={onLevelsChange} onLineYsChange={onLineYsChange}
+        chaufferie={chaufferie}
+        onAddChaufferie={onAddChaufferie}
+        editChaufferie={editChaufferie}
+        onEditChaufferieChange={onEditChaufferieChange}
+        placingChaufferie={placingChaufferie}
+        activeCalcId={activeCalcId}
+        onAddLocalEF={onAddLocalEF}
+        placingLocalEF={placingLocalEF}
+        locauxEF={locauxEF}
+        editLocauxEF={editLocauxEF}
+        onEditLocauxEFChange={onEditLocauxEFChange}
       />
       <ColumnsSection
         columns={columns} columnXs={columnXs}
@@ -1731,15 +1874,15 @@ export default function LeftPanel({
     </>
   )
 
-  const activePdcP = activeCalcId === 'alimentation-ecs' ? pdcParamsAlimECS
-    : activeCalcId === 'alimentation-ef' ? pdcParamsAlimEF
+  const activePdcP = isAlimECS ? pdcParamsAlimECS
+    : isAlimEF ? pdcParamsAlimEF
     : pdcParams
-  const activePdcOnChange = activeCalcId === 'alimentation-ecs' ? onPdcParamsAlimECSChange
-    : activeCalcId === 'alimentation-ef' ? onPdcParamsAlimEFChange
+  const activePdcOnChange = isAlimECS ? onPdcParamsAlimECSChange
+    : isAlimEF ? onPdcParamsAlimEFChange
     : onPdcParamsChange
 
-  const activeMaterials = activeCalcId === 'alimentation-ef' ? materialsEF : materials
-  const activeMaterialsChange = activeCalcId === 'alimentation-ef' ? onMaterialsEFChange : onMaterialsChange
+  const activeMaterials = isAlimEF ? materialsEF : materials
+  const activeMaterialsChange = isAlimEF ? onMaterialsEFChange : onMaterialsChange
 
   let content: React.ReactNode = null
   switch (activeSection) {
@@ -1758,7 +1901,7 @@ export default function LeftPanel({
       content = <MaterialsSection materials={activeMaterials} onChange={activeMaterialsChange} showEpsilon={true} />
       break
     case 'isolation':
-      if (activeCalcId === 'alimentation-ef') {
+      if (isAlimEF) {
         content = null
       } else {
         content = <InsulationsSection insulations={insulations} onChange={onInsulationsChange} />
@@ -1766,22 +1909,24 @@ export default function LeftPanel({
       break
     case 'equipements':
       content = <>
-        {activeCalcId === 'alimentation-ef' ? (
+        {isChauffage ? null : isAlimEF ? (
           alimentationParamsEF != null && (
             <AlimentationParamsSection params={alimentationParamsEF} onChange={onAlimentationParamsEFChange} />
           )
-        ) : (activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs') ? (
+        ) : (isBouclage || isAlimECS) ? (
           <AlimentationParamsSection params={alimentationParams} onChange={onAlimentationParamsChange} />
         ) : null}
       </>
       break
     case 'pdc':
-      if (activeCalcId === 'bouclage-ecs') {
+      if (isChauffage) {
+        content = <div className="lp-section"><p className="lp-hint" style={{ padding: '12px 14px' }}>Les pertes de charge sont disponibles en mode Pertes de charge — Chauffage (à venir).</p></div>
+      } else if (isBouclage) {
         content = <>
           <PdcParamsSection params={pdcParams} onChange={onPdcParamsChange} />
           <FittingLibrarySection pdcParams={pdcParams} onChange={onPdcParamsChange} />
         </>
-      } else if (activeCalcId === 'alimentation-ecs') {
+      } else if (isAlimECS) {
         content = <>
           <PdcParamsSection
             params={pdcParamsAlimECS} onChange={onPdcParamsAlimECSChange}
@@ -1793,7 +1938,7 @@ export default function LeftPanel({
           />
           <FittingLibrarySection pdcParams={pdcParamsAlimECS} onChange={onPdcParamsAlimECSChange} />
         </>
-      } else if (activeCalcId === 'alimentation-ef' && pdcParamsAlimEF != null) {
+      } else if (isAlimEF && pdcParamsAlimEF != null) {
         content = <>
           <PdcParamsSection
             params={pdcParamsAlimEF} onChange={onPdcParamsAlimEFChange}

@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
+import type { CalcMode } from '../types'
 import { getDisplayName } from '../utils/naming'
+import { getModeFlags } from '../utils/calcModeFlags'
 import { sf } from '../utils/fmt'
 import { FITTING_TYPES, EQUIPMENT_TYPES, type TronconAmontEF, type TronconAmontResult } from '../utils/pdcCalc'
 import { NumInput } from './NumInput'
@@ -442,7 +444,7 @@ function SegEquipPanel({ seg, set, pdcParams }) {
 }
 
 function ValvePanel({ valve, onUpdate, valveKvResult, activeCalcId, segToCol }) {
-  const isBouclage = activeCalcId === 'bouclage-ecs'
+  const { hasKv: showKv } = getModeFlags(activeCalcId)
   const r          = valveKvResult  // ValveKvResult | undefined
   const colName    = segToCol?.get(valve.segmentId) ?? null
 
@@ -471,7 +473,7 @@ function ValvePanel({ valve, onUpdate, valveKvResult, activeCalcId, segToCol }) 
         )
       })()}
 
-      {isBouclage && (
+      {showKv && (
         <>
           <hr className="rp-divider" />
           {colName && (
@@ -592,6 +594,84 @@ function ChaufferiePanel({ chaufferie, onChange, levels }) {
   )
 }
 
+function LocalEFPanel({ lef, onChange, onDelete, levels }) {
+  const set = (key, val) => onChange({ ...lef, [key]: val })
+  const width  = Math.round(lef.x2 - lef.x1)
+  const height = Math.round(lef.height)
+
+  return (
+    <div className="rp-section">
+      <h3 className="rp-title">Local EF</h3>
+
+      <label className="lp-checkbox-label" style={{ marginBottom: 8 }}>
+        <input type="checkbox"
+          checked={!!lef.enabled}
+          onChange={e => set('enabled', e.target.checked)} />
+        <span style={{ fontSize: 11, color: '#374151' }}>Afficher le local EF</span>
+      </label>
+
+      <Field label="Niveau">
+        <select
+          value={lef.levelId ?? ''}
+          onChange={e => set('levelId', e.target.value)}>
+          {levels.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
+      </Field>
+
+      <Field label="Largeur" unit="px">
+        <NumInput min={20} step={10}
+          value={width}
+          onChange={v => {
+            const w = Math.max(20, v ?? 20)
+            set('x2', lef.x1 + w)
+          }} />
+      </Field>
+
+      <Field label="Hauteur" unit="px">
+        <NumInput min={20} step={10}
+          value={height}
+          onChange={v => set('height', Math.max(20, v ?? 20))} />
+      </Field>
+
+      <div style={{ marginTop: 16, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+        <button
+          onClick={onDelete}
+          style={{
+            width: '100%', padding: '6px 0', fontSize: 12, fontWeight: 600,
+            background: '#fef2f2', color: '#dc2626',
+            border: '1px solid #fecaca', borderRadius: 5, cursor: 'pointer',
+          }}>
+          Supprimer le local EF
+        </button>
+      </div>
+    </div>
+  )
+}
+
+interface RightPanelProps {
+  selectedIds: string[]; segments: any[]; points: any[]
+  onUpdate: any; materials: any[]; insulations: any[]
+  levels: any[]; lineYs: number[]; columns: any[]; columnXs: number[]
+  chaufferie: any; onChaufferieChange: any; editChaufferie: boolean
+  flowDirections: any; networkFlows: any; globalParams: any
+  thermalResults: any; roleMap: any
+  drawMode: string; onExitEditParams: any
+  selectedValveId: string | null; valves: any[]; onValveUpdate: any
+  activeCalcId: CalcMode | null; alimentationParams: any; alimentationResults: any
+  pdcParams: any; pdcResults: any; pdcCumResults: any; pdcCumAlimResults: any
+  segToCol: any; valveKvResults: any
+  selectedAmontId: string | null; tronçonsAmont: any[]
+  onUpdateAmontTroncon: any; onRemoveAmontTroncon: any
+  amontTronconResults: any; totalQpAlimM3h?: number
+  pressionSourceAlimECS?: number | null; pressionSourceAlimECSStatic?: number | null
+  pressionSourceAlimEF?: number | null; pressionSourceAlimEFStatic?: number | null
+  pdcParamsAlimECS?: any
+  groupDisplayNames?: any
+  locauxEF?: any[]; onLocauxEFChange: any
+  selectedLocalEFId?: string | null; onSelectedLocalEFChange: any
+  chauffageFlows?: any; chauffageParams?: any; onChauffageParamsChange?: any; chauffageThermal?: any
+}
+
 export default function RightPanel({
   selectedIds, segments, points, onUpdate, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie, onChaufferieChange,
@@ -605,15 +685,29 @@ export default function RightPanel({
   pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null,
   pdcParamsAlimECS = null,
   groupDisplayNames = null,
-}) {
+  locauxEF = [], onLocauxEFChange,
+  selectedLocalEFId = null, onSelectedLocalEFChange,
+  chauffageFlows, chauffageParams, onChauffageParamsChange, chauffageThermal,
+}: RightPanelProps) {
   const [resultsView, setResultsView] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
 
-  // In editChaufferie mode, chaufferie panel takes priority
   if (editChaufferie && chaufferie?.placed) {
     return (
       <ChaufferiePanel
         chaufferie={chaufferie}
         onChange={onChaufferieChange}
+        levels={levels ?? []}
+      />
+    )
+  }
+
+  const selectedLEF = selectedLocalEFId ? (locauxEF ?? []).find(l => l.id === selectedLocalEFId) : null
+  if (selectedLEF) {
+    return (
+      <LocalEFPanel
+        lef={selectedLEF}
+        onChange={updated => onLocauxEFChange?.((locauxEF ?? []).map(l => l.id === updated.id ? updated : l))}
+        onDelete={() => { onLocauxEFChange?.((locauxEF ?? []).filter(l => l.id !== selectedLocalEFId)); onSelectedLocalEFChange?.(null) }}
         levels={levels ?? []}
       />
     )
@@ -673,7 +767,7 @@ export default function RightPanel({
       allSegs={segments} levels={levels} lineYs={lineYs}
       columns={columns} columnXs={columnXs} chaufferie={chaufferie}
       points={points}
-      flowData={networkFlows?.get(seg.id)}
+      flowData={chauffageFlows?.get(seg.id) ?? networkFlows?.get(seg.id)}
       globalParams={globalParams}
       thermalData={thermalResults?.segResults.get(seg.id)}
       roleMap={roleMap}
@@ -732,6 +826,10 @@ export default function RightPanel({
         columns={columns}
         columnXs={columnXs}
         thermalResults={thermalResults}
+        chauffageFlows={chauffageFlows}
+        chauffageParams={chauffageParams}
+        onChauffageParamsChange={onChauffageParamsChange}
+        chauffageThermal={chauffageThermal}
       />
     )
   }

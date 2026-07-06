@@ -1,16 +1,26 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import { getDisplayName, getNodeLocation } from '../utils/naming'
+import type { CalcMode } from '../types'
+import { getDisplayName } from '../utils/naming'
+import { getModeFlags } from '../utils/calcModeFlags'
+import { EMETTEUR_TYPES } from '../data/emetteurs'
 import { sf } from '../utils/fmt'
+import { AccessorySymbol } from './AccessorySymbol'
+import { uid } from '../utils/idGen'
+import { findLevelIndexAt } from '../utils/levelUtils'
+import {
+  SNAP, HIT,
+  snap, dist, ortho, toCanvas, ptInRect, segInRect,
+  closestTOnPolyline, positionFromT, polylineLen,
+  nameValve, nearestOnSegments, getDragConstraint, deleteNodeFromNetwork,
+  getSegmentDir, collapseCollinear, collapseSegs, elbowVertices,
+  computeSegDeltaLimits, mergeCoincidentNodes, computeSegMove, computeNodeMove,
+  getFrontierYs, applyFrontierSplits, applySpecialPtSnap,
+} from '../utils/canvasGeometry'
 
 const PT_R       = 4
-const HIT        = 8     // segment click radius
 const PT_HIT     = 10    // point click/snap radius
 const DRAW_SNAP  = 14    // snap-to-point radius during drawing
-const SNAP       = 10
 const ZOOM_F     = 1.12
-
-const snap = v => Math.round(v / SNAP) * SNAP
-const dist = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
 
 const EQUIP_ABBR = {
   evier: 'EV', lavabo: 'LB', bidet: 'BD', baignoire: 'BG', douche: 'DU',
@@ -19,782 +29,67 @@ const EQUIP_ABBR = {
   machine_linge: 'LL', machine_vaiss: 'LV',
 }
 
-function ortho(last, mouse) {
-  return Math.abs(mouse.x - last.x) >= Math.abs(mouse.y - last.y)
-    ? { x: snap(mouse.x), y: last.y }
-    : { x: last.x, y: snap(mouse.y) }
-}
 
-function toCanvas(e, el, tf) {
-  const r = el.getBoundingClientRect()
-  return { x: (e.clientX - r.left - tf.x) / tf.k, y: (e.clientY - r.top - tf.y) / tf.k }
-}
 
-function ptInRect(pt, r) {
-  return pt.x >= Math.min(r.x1, r.x2) && pt.x <= Math.max(r.x1, r.x2)
-      && pt.y >= Math.min(r.y1, r.y2) && pt.y <= Math.max(r.y1, r.y2)
-}
 
-function segInRect(seg, r) {
-  return seg.vertices.some(v => ptInRect(v, r))
-}
 
-// Parametric position (t ∈ [0,1]) of the closest point on a polyline to pos.
-// Always returns { t, x, y, angle, dist } — callers decide on the distance threshold.
-function closestTOnPolyline(pos, vertices) {
-  if (!vertices || vertices.length < 2) return null
-  let subLens = [], totalLen = 0
-  for (let i = 0; i < vertices.length - 1; i++) {
-    const l = Math.hypot(vertices[i+1].x - vertices[i].x, vertices[i+1].y - vertices[i].y)
-    subLens.push(l); totalLen += l
-  }
-  if (totalLen === 0) return null
-  let bestT = 0, bestX = vertices[0].x, bestY = vertices[0].y, bestAngle = 0, bestDist = Infinity
-  let acc = 0
-  for (let i = 0; i < vertices.length - 1; i++) {
-    const a = vertices[i], b = vertices[i+1]
-    const dx = b.x - a.x, dy = b.y - a.y
-    const l2 = dx*dx + dy*dy
-    if (!l2) { acc += subLens[i]; continue }
-    const t_sub = Math.max(0, Math.min(1, ((pos.x-a.x)*dx + (pos.y-a.y)*dy) / l2))
-    const px = a.x + t_sub*dx, py = a.y + t_sub*dy
-    const d = Math.hypot(pos.x - px, pos.y - py)
-    if (d < bestDist) {
-      bestDist = d; bestX = px; bestY = py
-      bestT = (acc + t_sub * subLens[i]) / totalLen
-      bestAngle = Math.atan2(dy, dx) * 180 / Math.PI
-    }
-    acc += subLens[i]
-  }
-  return { t: bestT, x: bestX, y: bestY, angle: bestAngle, dist: bestDist }
-}
 
-// Given t ∈ [0,1] on a polyline, return the real x,y,angle.
-function positionFromT(vertices, t) {
-  if (!vertices || vertices.length < 2) return { x: 0, y: 0, angle: 0 }
-  let subLens = [], totalLen = 0
-  for (let i = 0; i < vertices.length - 1; i++) {
-    const l = Math.hypot(vertices[i+1].x - vertices[i].x, vertices[i+1].y - vertices[i].y)
-    subLens.push(l); totalLen += l
-  }
-  if (totalLen === 0) return { x: vertices[0].x, y: vertices[0].y, angle: 0 }
-  const target = Math.max(0, Math.min(1, t)) * totalLen
-  let acc = 0
-  for (let i = 0; i < vertices.length - 1; i++) {
-    const a = vertices[i], b = vertices[i+1]
-    const dx = b.x - a.x, dy = b.y - a.y
-    if (acc + subLens[i] >= target || i === vertices.length - 2) {
-      const localT = subLens[i] > 0 ? Math.min(1, (target - acc) / subLens[i]) : 0
-      return { x: a.x + dx*localT, y: a.y + dy*localT, angle: Math.atan2(dy, dx) * 180 / Math.PI }
-    }
-    acc += subLens[i]
-  }
-  return { x: vertices[vertices.length-1].x, y: vertices[vertices.length-1].y, angle: 0 }
-}
-
-// Auto-name a valve from its segment's column — VE [colName] n°1, VE [colName] n°2, …
-function nameValve(segId, segToCol, existingValves, segments?, points?, levels?, lineYs?, columns?, columnXs?, chaufferie?) {
-  const col = segToCol?.get(segId)
-  let colName: string
-  if (col != null) {
-    colName = col
-  } else {
-    const seg = segments?.find(s => s.id === segId)
-    const ptId = seg?.startPointId
-    const pt   = ptId ? points?.find(p => p.id === ptId) : null
-    colName = pt
-      ? getNodeLocation(pt, levels ?? [], lineYs ?? [], columns ?? [], columnXs ?? [], chaufferie, null, points ?? [])
-      : 'ECS'
-  }
-  const base    = `Vanne d'équilibrage ${colName}`
-  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const re      = new RegExp(`^${escaped} n°(\\d+)$`)
-  const used    = new Set(
-    (existingValves ?? []).flatMap(v => {
-      const m = v.name?.match(re)
-      return m ? [parseInt(m[1], 10)] : []
-    })
-  )
-  let n = 1
-  while (used.has(n)) n++
-  return `${base} n°${n}`
-}
-
-// Nearest point on any polyline segment, within HIT
-function nearestOnSegments(pos, segs) {
-  let bestSeg = null, bestPt = null, bestDist = HIT
-  for (const seg of segs) {
-    const vs = seg.vertices
-    for (let i = 0; i < vs.length - 1; i++) {
-      const a = vs[i], b = vs[i + 1]
-      const dx = b.x - a.x, dy = b.y - a.y
-      const l2 = dx * dx + dy * dy
-      if (!l2) continue
-      const t = Math.max(0, Math.min(1, ((pos.x - a.x) * dx + (pos.y - a.y) * dy) / l2))
-      const proj = { x: a.x + t * dx, y: a.y + t * dy }
-      const d = dist(pos, proj)
-      if (d < bestDist) { bestDist = d; bestPt = { x: snap(proj.x), y: snap(proj.y) }; bestSeg = { seg, subIdx: i } }
-    }
-  }
-  return bestSeg ? { pt: bestPt, ...bestSeg, d: bestDist } : null
-}
-
-// Returns 'h', 'v', or 'free' based on connected segment directions at ptId
-// T-junction: 2h+1v → 'h' (horizontal base, vertical arm follows); 1h+2v → 'v'
-function getDragConstraint(ptId, segs) {
-  const connected = segs.filter(s => s.startPointId === ptId || s.endPointId === ptId)
-  if (!connected.length) return 'free'
-  // Endpoint nodes (single segment) can move freely in both directions
-  if (connected.length === 1) return 'free'
-  const dirs = connected.map(seg => {
-    const vs = seg.vertices
-    if (vs.length < 2) return 'free'
-    const [a, b] = seg.startPointId === ptId ? [vs[0], vs[1]] : [vs[vs.length - 2], vs[vs.length - 1]]
-    return Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
-  })
-  const hCount = dirs.filter(d => d === 'h').length
-  const vCount = dirs.filter(d => d === 'v').length
-  if (vCount === 0) return 'h'
-  if (hCount === 0) return 'v'
-  if (hCount >= 2 && vCount === 1) return 'h'
-  if (vCount >= 2 && hCount === 1) return 'v'
-  return 'free'
-}
-
-// Delete a pass-through node (exactly 2 incident segments of same type).
-// Handles all 3 orientation cases (1in+1out, 2in, 2out) by reversing as needed.
-// Returns null if deletion is not allowed (endpoint or junction with ≥3 segments).
-function deleteNodeFromNetwork(ptId, segs, pts) {
-  const ending   = segs.filter(s => s.endPointId   === ptId)
-  const starting = segs.filter(s => s.startPointId === ptId)
-  const total    = ending.length + starting.length
-
-  if (total !== 2) return null
-
-  let sA, sB, vsA, vsB, startId, endId
-
-  if (ending.length === 1 && starting.length === 1) {
-    // Normal case: sA ends at node, sB starts at node
-    sA = ending[0];   sB = starting[0]
-    if (sA.type !== sB.type) return null
-    vsA = sA.vertices; vsB = sB.vertices
-    if (vsA.length < 2 || vsB.length < 2) return null
-    startId = sA.startPointId; endId = sB.endPointId
-    // vertices: A→...→NODE→...→B
-    const verts = [...vsA, ...vsB.slice(1)]
-    return {
-      newSegs: segs.filter(s => s.id !== sA.id && s.id !== sB.id)
-                   .concat([{ ...sA, id: uid('T'), vertices: verts, startPointId: startId, endPointId: endId }]),
-      newPts: pts.filter(p => p.id !== ptId),
-    }
-  }
-
-  if (ending.length === 2) {
-    // Both end at node: sA ends at NODE, sB ends at NODE → reverse sB
-    sA = ending[0]; sB = ending[1]
-    if (sA.type !== sB.type) return null
-    vsA = sA.vertices; vsB = [...sB.vertices].reverse()
-    if (vsA.length < 2 || vsB.length < 2) return null
-    startId = sA.startPointId; endId = sB.startPointId
-    const verts = [...vsA, ...vsB.slice(1)]
-    return {
-      newSegs: segs.filter(s => s.id !== sA.id && s.id !== sB.id)
-                   .concat([{ ...sA, id: uid('T'), vertices: verts, startPointId: startId, endPointId: endId }]),
-      newPts: pts.filter(p => p.id !== ptId),
-    }
-  }
-
-  // Both start at node: sA starts at NODE, sB starts at NODE → reverse sA
-  sA = starting[0]; sB = starting[1]
-  if (sA.type !== sB.type) return null
-  vsA = [...sA.vertices].reverse(); vsB = sB.vertices
-  if (vsA.length < 2 || vsB.length < 2) return null
-  startId = sA.endPointId; endId = sB.endPointId
-  const verts = [...vsA, ...vsB.slice(1)]
-  return {
-    newSegs: segs.filter(s => s.id !== sA.id && s.id !== sB.id)
-                 .concat([{ ...sA, id: uid('T'), vertices: verts, startPointId: startId, endPointId: endId }]),
-    newPts: pts.filter(p => p.id !== ptId),
-  }
-}
-
-// Direction of a segment ('h', 'v', or null)
-function getSegmentDir(seg) {
-  const vs = seg.vertices
-  if (vs.length < 2) return null
-  const dx = Math.abs(vs[vs.length - 1].x - vs[0].x)
-  const dy = Math.abs(vs[vs.length - 1].y - vs[0].y)
-  if (dx === 0 && dy === 0) return null
-  return dx >= dy ? 'h' : 'v'
-}
-
-// Remove intermediate vertices that make two consecutive edges share the same axis,
-// and skip zero-length edges (duplicate consecutive vertices).
-// [A, M, B] where A→M and M→B are both horizontal → [A, B].
-// [A, A, B] (zero-length first edge) → [A, B].
-function collapseCollinear(vertices) {
-  if (vertices.length < 2) return vertices
-  const result = [vertices[0]]
-  for (let i = 1; i < vertices.length; i++) {
-    const curr = vertices[i]
-    const prev = result[result.length - 1]
-    if (curr.x === prev.x && curr.y === prev.y) continue  // arête longueur zéro
-    if (result.length >= 2) {
-      const pp   = result[result.length - 2]
-      const abH  = Math.abs(prev.x - pp.x)   >= Math.abs(prev.y - pp.y)
-      const bcH  = Math.abs(curr.x - prev.x) >= Math.abs(curr.y - prev.y)
-      if (abH === bcH) { result[result.length - 1] = curr; continue }
-    }
-    result.push(curr)
-  }
-  return result
-}
-
-function collapseSegs(segs) {
-  return segs.map(s => {
-    const vs = collapseCollinear(s.vertices)
-    return vs.length < s.vertices.length ? { ...s, vertices: vs } : s
-  })
-}
-
-// Déplace une extrémité de tronçon vers newPos en insérant un coude 90° si nécessaire
-// pour maintenir l'orthogonalité des arêtes adjacentes.
-// isEnd: true = extrémité finale, false = extrémité initiale
-function elbowVertices(vertices, isEnd, newPos) {
-  if (vertices.length < 2) {
-    return isEnd ? [...vertices.slice(0, -1), newPos] : [newPos, ...vertices.slice(1)]
-  }
-  if (isEnd) {
-    const prev = vertices[vertices.length - 2]
-    const curr = vertices[vertices.length - 1]
-    const horiz = Math.abs(curr.x - prev.x) >= Math.abs(curr.y - prev.y)
-    const elbow = horiz ? { x: newPos.x, y: curr.y } : { x: curr.x, y: newPos.y }
-    return collapseCollinear([...vertices.slice(0, -1), elbow, newPos])
-  } else {
-    const next = vertices[1]
-    const curr = vertices[0]
-    const horiz = Math.abs(next.x - curr.x) >= Math.abs(next.y - curr.y)
-    const elbow = horiz ? { x: newPos.x, y: curr.y } : { x: curr.x, y: newPos.y }
-    return collapseCollinear([newPos, elbow, ...vertices.slice(1)])
-  }
-}
-
-// Returns { minDelta, maxDelta } clamping the perpendicular movement of a segment sub-edge
-// so no moving node can cross a directly-connected static neighbor.
-function computeSegDeltaLimits(segId, subIdx, segs, pts) {
-  const seg = segs.find(s => s.id === segId)
-  if (!seg) return { minDelta: -Infinity, maxDelta: Infinity }
-  const vs = seg.vertices
-  if (vs.length < 2 || subIdx >= vs.length - 1) return { minDelta: -Infinity, maxDelta: Infinity }
-  const a = vs[subIdx], b = vs[subIdx + 1]
-  const edgeDir = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
-  const isVert  = edgeDir === 'v'
-  const barCoord = isVert ? a.x : a.y
-  const onBar   = v => (isVert ? v.x : v.y) === barCoord
-
-  // BFS: find all node IDs that will move with this column/bar (mirrors computeSegMove)
-  const movingNodeIds = new Set()
-  const visitedSids   = new Set()
-  const queue = [segId]
-  while (queue.length > 0) {
-    const sid = queue.shift()
-    if (visitedSids.has(sid)) continue
-    visitedSids.add(sid)
-    const s = segs.find(x => x.id === sid)
-    if (!s) continue
-    const hasBarEdge = s.vertices.some((v, i) => {
-      if (i >= s.vertices.length - 1) return false
-      const w = s.vertices[i + 1]
-      const parallel = isVert
-        ? Math.abs(w.y - v.y) > Math.abs(w.x - v.x)
-        : Math.abs(w.x - v.x) >= Math.abs(w.y - v.y)
-      return parallel && onBar(v)
-    })
-    if (!hasBarEdge && sid !== segId) continue
-    const sFirst = s.vertices[0], sLast = s.vertices[s.vertices.length - 1]
-    if (onBar(sFirst)) {
-      movingNodeIds.add(s.startPointId)
-      segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.startPointId || x.endPointId === s.startPointId)) queue.push(x.id) })
-    }
-    if (onBar(sLast)) {
-      movingNodeIds.add(s.endPointId)
-      segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.endPointId || x.endPointId === s.endPointId)) queue.push(x.id) })
-    }
-  }
-
-  // For each moving node, find perpendicular connections to static neighbors
-  let minDelta = -Infinity, maxDelta = Infinity
-  for (const nodeId of movingNodeIds) {
-    const pt = pts.find(p => p.id === nodeId)
-    if (!pt) continue
-    for (const s of segs) {
-      const isStart = s.startPointId === nodeId, isEnd = s.endPointId === nodeId
-      if (!isStart && !isEnd) continue
-      if (s.vertices.length < 2) continue
-      const nodeV  = isStart ? s.vertices[0]              : s.vertices[s.vertices.length - 1]
-      const innerV = isStart ? s.vertices[1]              : s.vertices[s.vertices.length - 2]
-      const edH    = Math.abs(innerV.x - nodeV.x) >= Math.abs(innerV.y - nodeV.y)
-      if (isVert ? !edH : edH) continue  // skip non-perpendicular sub-edges
-      const neighborId = isStart ? s.endPointId : s.startPointId
-      if (movingNodeIds.has(neighborId)) continue
-      const neighbor = pts.find(p => p.id === neighborId)
-      if (!neighbor) continue
-      const nodeCoord     = isVert ? pt.x      : pt.y
-      const neighborCoord = isVert ? neighbor.x : neighbor.y
-      if (neighborCoord > nodeCoord) maxDelta = Math.min(maxDelta, neighborCoord - nodeCoord)
-      else                           minDelta = Math.max(minDelta, neighborCoord - nodeCoord)
-    }
-  }
-  return { minDelta, maxDelta }
-}
-
-// After a segment move that brought two nodes to the same position, merge coincident nodes.
-// A zero-length segment (vertices collapsed to < 2 by collapseSegs) signals the merger.
-function mergeCoincidentNodes(segs, pts) {
-  let workSegs = [...segs], workPts = [...pts]
-  let changed = true
-  while (changed) {
-    changed = false
-    const zeroSeg = workSegs.find(s => s.vertices.length < 2)
-    if (!zeroSeg) break
-    const { startPointId: winner, endPointId: loser } = zeroSeg
-    if (winner === loser) {
-      workSegs = workSegs.filter(s => s.id !== zeroSeg.id)
-    } else {
-      workSegs = workSegs
-        .filter(s => s.id !== zeroSeg.id)
-        .map(s => ({
-          ...s,
-          startPointId: s.startPointId === loser ? winner : s.startPointId,
-          endPointId:   s.endPointId   === loser ? winner : s.endPointId,
-        }))
-        .filter(s => s.startPointId !== s.endPointId)
-      workPts = workPts.filter(p => p.id !== loser)
-    }
-    changed = true
-  }
-  return { newSegs: workSegs, newPts: workPts }
-}
-
-// Move a segment sub-edge perpendicularly by delta.
-// Horizontal edge: the entire connected horizontal bar (all sub-edges at same Y, reachable via shared nodes)
-//   moves together; connected vertical segments stretch.
-// Vertical edge: only this sub-edge moves (original per-sub-edge behaviour).
-function computeSegMove(segId, subIdx, delta, segs, pts) {
-  const seg = segs.find(s => s.id === segId)
-  if (!seg) return { newSegs: segs, newPts: pts }
-  const vs = seg.vertices
-  if (vs.length < 2 || subIdx < 0 || subIdx >= vs.length - 1) return { newSegs: segs, newPts: pts }
-  const a = vs[subIdx], b = vs[subIdx + 1]
-  const edgeDir = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
-
-  if (edgeDir === 'h') {
-    const barY = a.y
-    const onBarY = v => v.y === barY
-
-    // BFS : trouver tous les tronçons ayant un sous-trait horizontal au même Y, reliés entre eux
-    const barSegIds  = new Set()
-    const visitedSids = new Set()
-    const queue = [segId]
-    while (queue.length > 0) {
-      const sid = queue.shift()
-      if (visitedSids.has(sid)) continue
-      visitedSids.add(sid)
-      const s = segs.find(x => x.id === sid)
-      if (!s) continue
-      const hasBarEdge = s.vertices.some((v, i) => {
-        if (i >= s.vertices.length - 1) return false
-        const w = s.vertices[i + 1]
-        return Math.abs(w.x - v.x) >= Math.abs(w.y - v.y) && v.y === barY
-      })
-      if (!hasBarEdge && sid !== segId) continue
-      barSegIds.add(sid)
-      // Suivre les connexions aux extrémités situées sur la barre
-      if (onBarY(s.vertices[0]))
-        segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.startPointId || x.endPointId === s.startPointId)) queue.push(x.id) })
-      if (onBarY(s.vertices[s.vertices.length - 1]))
-        segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.endPointId || x.endPointId === s.endPointId)) queue.push(x.id) })
-    }
-
-    // Nœuds terminaux des tronçons de la barre qui sont au barY
-    const barNodeIds = new Set()
-    for (const sid of barSegIds) {
-      const s = segs.find(x => x.id === sid)
-      if (!s) continue
-      if (onBarY(s.vertices[0]))                        barNodeIds.add(s.startPointId)
-      if (onBarY(s.vertices[s.vertices.length - 1]))    barNodeIds.add(s.endPointId)
-    }
-
-    const applyDelta = v => ({ ...v, y: snap(v.y + delta) })
-    const newPts = pts.map(p => barNodeIds.has(p.id) ? applyDelta(p) : p)
-    const newSegs = segs.map(s => {
-      if (barSegIds.has(s.id))
-        return { ...s, vertices: s.vertices.map(v => onBarY(v) ? applyDelta(v) : v) }
-      // Tronçons verticaux connectés à la barre : étirer l'extrémité qui bouge
-      const v = [...s.vertices]; let changed = false
-      if (barNodeIds.has(s.startPointId)) { v[0]            = applyDelta(v[0]);            changed = true }
-      if (barNodeIds.has(s.endPointId))   { v[v.length - 1] = applyDelta(v[v.length - 1]); changed = true }
-      return changed ? { ...s, vertices: v } : s
-    })
-    return { newSegs: collapseSegs(newSegs), newPts }
-  }
-
-  // Arête verticale : BFS colonne — tous les tronçons verticaux au même X, reliés entre eux
-  const barX    = a.x
-  const onBarX  = v => v.x === barX
-  const applyDelta = v => ({ ...v, x: snap(v.x + delta) })
-
-  const colSegIds   = new Set()
-  const visitedSids = new Set()
-  const queue = [segId]
-  while (queue.length > 0) {
-    const sid = queue.shift()
-    if (visitedSids.has(sid)) continue
-    visitedSids.add(sid)
-    const s = segs.find(x => x.id === sid)
-    if (!s) continue
-    const hasColEdge = s.vertices.some((v, i) => {
-      if (i >= s.vertices.length - 1) return false
-      const w = s.vertices[i + 1]
-      return Math.abs(w.y - v.y) > Math.abs(w.x - v.x) && v.x === barX
-    })
-    if (!hasColEdge && sid !== segId) continue
-    colSegIds.add(sid)
-    if (onBarX(s.vertices[0]))
-      segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.startPointId || x.endPointId === s.startPointId)) queue.push(x.id) })
-    if (onBarX(s.vertices[s.vertices.length - 1]))
-      segs.forEach(x => { if (x.id !== sid && (x.startPointId === s.endPointId || x.endPointId === s.endPointId)) queue.push(x.id) })
-  }
-
-  const colNodeIds = new Set()
-  for (const sid of colSegIds) {
-    const s = segs.find(x => x.id === sid)
-    if (!s) continue
-    if (onBarX(s.vertices[0]))                      colNodeIds.add(s.startPointId)
-    if (onBarX(s.vertices[s.vertices.length - 1]))  colNodeIds.add(s.endPointId)
-  }
-
-  const newPts = pts.map(p => colNodeIds.has(p.id) ? applyDelta(p) : p)
-  const newSegs = segs.map(s => {
-    if (colSegIds.has(s.id))
-      return { ...s, vertices: s.vertices.map(v => onBarX(v) ? applyDelta(v) : v) }
-    const v = [...s.vertices]; let changed = false
-    if (colNodeIds.has(s.startPointId)) { v[0]            = applyDelta(v[0]);            changed = true }
-    if (colNodeIds.has(s.endPointId))   { v[v.length - 1] = applyDelta(v[v.length - 1]); changed = true }
-    return changed ? { ...s, vertices: v } : s
-  })
-  return { newSegs: collapseSegs(newSegs), newPts }
-}
-
-// Move a node to np maintaining orthogonality.
-// T-junction (2+ segs along movAxis): perpendicular arm moves rigidly.
-// T-junction: perpendicular arm (and its entire vertical chain) translates rigidly.
-// L-corner (exactly 1 seg per axis): a bend vertex is inserted in the perpendicular segment
-//   so the far end stays fixed and the corner "turns the corner".
-function computeNodeMove(ptId, np, segs, pts, constraintOverride = null) {
-  const origPt = pts.find(p => p.id === ptId)
-  if (!origPt) return { newSegs: segs, newPts: pts }
-  const dx = np.x - origPt.x, dy = np.y - origPt.y
-  if (dx === 0 && dy === 0) return { newSegs: segs, newPts: pts }
-  const constraint = constraintOverride ?? getDragConstraint(ptId, segs)
-  const movAxis = dx !== 0 ? 'h' : 'v'
-  const connected = segs.filter(s => s.startPointId === ptId || s.endPointId === ptId)
-
-  // Axis of a segment at a given node (looks at the two vertices touching that node)
-  const axisAt = (seg, fromPtId) => {
-    const vs = seg.vertices; if (vs.length < 2) return null
-    const isEnd = seg.endPointId === fromPtId
-    const [a, b] = isEnd ? [vs[vs.length - 2], vs[vs.length - 1]] : [vs[0], vs[1]]
-    return Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v'
-  }
-  const edgeAxisAt = seg => axisAt(seg, ptId)
-
-  // L-corner: exactly 2 connected segments with different axes (1 perp + 1 parallel).
-  // The node can move freely; the perpendicular segment gets a 90° elbow while its
-  // far end stays fixed; the parallel segment stretches.
-  const segsAlongAxis = connected.filter(s => edgeAxisAt(s) === movAxis).length
-  // L-corner: 2 segments, one perpendicular + one parallel (classic corner)
-  // Endpoint: 1 segment moving perpendicular to it → same elbow logic, far end stays fixed
-  const isLCorner = (connected.length === 2 && segsAlongAxis === 1) ||
-                    (connected.length === 1 && segsAlongAxis === 0)
-
-  // Returns true if every sub-edge of seg is perpendicular to movAxis.
-  const isFullyPerp = seg => {
-    const vs = seg.vertices
-    for (let i = 1; i < vs.length; i++) {
-      const ax = Math.abs(vs[i].x - vs[i-1].x) >= Math.abs(vs[i].y - vs[i-1].y) ? 'h' : 'v'
-      if (ax === movAxis) return false
-    }
-    return true
-  }
-
-  // BFS: far ends of fully-perpendicular segments → must translate rigidly with the moved node.
-  // Not needed for L-corners (far ends stay fixed; elbow handles the perpendicular segment).
-  // Cascades along perpendicular chains; stops at locked frontier nodes.
-  const rigidPtIds = new Set()
-  if (!isLCorner) {
-    const queue = []
-    for (const seg of connected) {
-      if (edgeAxisAt(seg) !== movAxis && isFullyPerp(seg)) {
-        const farPtId = seg.endPointId === ptId ? seg.startPointId : seg.endPointId
-        if (!rigidPtIds.has(farPtId)) { rigidPtIds.add(farPtId); queue.push(farPtId) }
-      }
-    }
-    while (queue.length > 0) {
-      const curPtId = queue.shift()
-      if (pts.find(p => p.id === curPtId)?.isLocked) continue
-      for (const seg of segs.filter(s => s.startPointId === curPtId || s.endPointId === curPtId)) {
-        if (axisAt(seg, curPtId) !== movAxis && isFullyPerp(seg)) {
-          const farPtId = seg.endPointId === curPtId ? seg.startPointId : seg.endPointId
-          if (farPtId !== ptId && !rigidPtIds.has(farPtId)) {
-            rigidPtIds.add(farPtId); queue.push(farPtId)
-          }
-        }
-      }
-    }
-  }
-
-  const newPts = pts.map(p => {
-    if (p.id === ptId) return { ...p, x: snap(origPt.x + dx), y: snap(origPt.y + dy) }
-    if (rigidPtIds.has(p.id)) return { ...p, x: snap(p.x + dx), y: snap(p.y + dy) }
-    return p
-  })
-
-  const newSegs = segs.map(seg => {
-    const isMainStart = seg.startPointId === ptId, isMainEnd = seg.endPointId === ptId
-    const isRigidStart = !isMainStart && rigidPtIds.has(seg.startPointId)
-    const isRigidEnd   = !isMainEnd   && rigidPtIds.has(seg.endPointId)
-
-    if (isMainStart || isMainEnd) {
-      const vs = seg.vertices; if (vs.length < 2) return seg
-      const segAxis = edgeAxisAt(seg)
-
-      if (segAxis !== movAxis) {
-        if (isLCorner) {
-          // L-corner: introduce a 90° bend — far end stays fixed, old position becomes elbow
-          const oldEndV = { x: origPt.x, y: origPt.y }
-          const newEndV = { x: snap(origPt.x + dx), y: snap(origPt.y + dy) }
-          return isMainEnd
-            ? { ...seg, vertices: collapseCollinear([...vs.slice(0, -1), oldEndV, newEndV]) }
-            : { ...seg, vertices: collapseCollinear([newEndV, oldEndV, ...vs.slice(1)]) }
-        }
-        // Non-L-corner: walk from the moving end, translating vertices through consecutive
-        // perpendicular sub-edges, stop at the first parallel one (which stretches).
-        const newVs = vs.map(v => ({ ...v }))
-        if (!isMainEnd) {
-          newVs[0] = { x: snap(vs[0].x + dx), y: snap(vs[0].y + dy) }
-          for (let i = 0; i < vs.length - 1; i++) {
-            const ax = Math.abs(vs[i+1].x - vs[i].x) >= Math.abs(vs[i+1].y - vs[i].y) ? 'h' : 'v'
-            if (ax !== movAxis) newVs[i+1] = { x: snap(vs[i+1].x + dx), y: snap(vs[i+1].y + dy) }
-            else break
-          }
-        } else {
-          const last = vs.length - 1
-          newVs[last] = { x: snap(vs[last].x + dx), y: snap(vs[last].y + dy) }
-          for (let i = last - 1; i >= 0; i--) {
-            const ax = Math.abs(vs[i+1].x - vs[i].x) >= Math.abs(vs[i+1].y - vs[i].y) ? 'h' : 'v'
-            if (ax !== movAxis) newVs[i] = { x: snap(vs[i].x + dx), y: snap(vs[i].y + dy) }
-            else break
-          }
-        }
-        return { ...seg, vertices: newVs }
-      }
-      // First sub-edge is parallel: stretch by moving only the endpoint vertex
-      const v = [...vs], idx = isMainEnd ? v.length - 1 : 0
-      v[idx] = { x: snap(v[idx].x + dx), y: snap(v[idx].y + dy) }
-      return { ...seg, vertices: v }
-    }
-
-    if (isRigidStart || isRigidEnd) {
-      if (isRigidStart && isRigidEnd) {
-        // Both ends rigid: translate entire segment (preserves internal geometry)
-        return { ...seg, vertices: seg.vertices.map(v => ({ x: snap(v.x + dx), y: snap(v.y + dy) })) }
-      }
-      const v = [...seg.vertices]
-      if (isRigidStart) {
-        const newStart = { x: snap(v[0].x + dx), y: snap(v[0].y + dy) }
-        return { ...seg, vertices: elbowVertices(v, false, newStart) }
-      }
-      const newEnd = { x: snap(v[v.length - 1].x + dx), y: snap(v[v.length - 1].y + dy) }
-      return { ...seg, vertices: elbowVertices(v, true, newEnd) }
-    }
-    return seg
-  })
-  return { newSegs: collapseSegs(newSegs), newPts }
+// Accessories that connect to the pipe via a perpendicular stem (not in-line)
+const ACC_WITH_STEM = new Set(['thermometre', 'manometre', 'purgeur_air', 'vase_expansion', 'ballon_anti_belier'])
+// Directional inline accessories: arrows and perpendicular elements follow flow direction
+const ACC_FLIP_Y = new Set(['clapet_anti_retour', 'disconnecteur', 'filtre_y', 'robinet_vidange'])
+// Gravity-aware inline accessories: perpendicular element always goes upper/right,
+// independent of flow direction (spring up on horizontal, right on vertical)
+const ACC_GRAVITY_FLIP = new Set(['reducteur_pression'])
+const ACC_STEM_V      = 4   // vertical stem length (gap between pipe and symbol bottom)
+const ACC_STEM_H      = 8   // horizontal stem length (vertical pipes only)
+// Distance from symbol center to its bottom visual edge (varies per symbol)
+const ACC_SYM_BOTTOM: Record<string, number> = {
+  thermometre:      8,    // bulbe cy=4.5 + r=3.5
+  purgeur_air:      4.5,  // rect body bottom at y=4.5
+  manometre:        6.5,  // circle r=6.5
+  vase_expansion:   6.5,  // circle r=6.5
+  ballon_anti_belier: 6.5, // circle cy=1 + r=5.5
 }
 
 
-// Renvoie les Y des lignes séparant un niveau sous-sol d'un niveau non-sous-sol
-function getFrontierYs(levels, lineYs) {
-  const ys = []
-  for (let i = 1; i < levels.length; i++) {
-    if (!!levels[i - 1].isSousSol !== !!levels[i].isSousSol) ys.push(lineYs[i])
-  }
-  return ys
+interface DrawingCanvasProps {
+  levels: any[]; lineYs: number[]; onLineYsChange: any
+  segments: any[]; onSegmentsChange: any
+  points: any[]; onPointsChange: any
+  onNetworkChange: any; onNetworkPatch: any
+  drawMode: string; pipeType: string
+  selectedIds: string[]; onSelectIds: any
+  editLevelsEnabled: boolean; editColumnsEnabled: boolean
+  columns: any[]; columnXs: number[]; onColumnXsChange: any; onPPZoneDrag: any
+  chaufferie: any; onChaufferieChange: any; editChaufferie: boolean; onEditChaufferieChange: any
+  placingChaufferie: boolean; onPlacingChaufferieDone: any
+  placingEquipment: any; onPlacingDone: any
+  editParam: any; onAssignParam: any
+  connHighlightIds: string[]; onConnHighlight: any
+  networkFlows: any; flowDirections: any
+  groupesEditMode: boolean; onRemoveGroupeById: any
+  showGroupeNames: boolean; groupDisplayNames: any
+  canvasDisplay: any; roleMap: any
+  materials: any[]; insulations: any[]
+  alimentationParams: any; alimentationResults: any
+  activeCalcId: CalcMode | null
+  thermalResults: any; fitViewRequest: any
+  valves: any[]; onValvesChange: any
+  selectedValveId: string | null; onSelectedValveChange: any
+  accessories: any[]; onAccessoriesChange: any
+  placingAccessoryType: string | null; onPlacingAccessoryDone: any
+  selectedAccessoryId: string | null; onSelectedAccessoryChange: any
+  pdcParams: any; pdcResults: any; pdcCumResults: any; pdcCumAlimResults: any
+  segToCol: any; onExitSpecialMode: any
+  pressionSourceAlimEF?: number | null; pressionSourceAlimEFStatic?: number | null
+  locauxEF?: any[]; onLocauxEFChange: any
+  placingLocalEF?: boolean; onPlacingLocalEFDone: any
+  editLocauxEF?: boolean; onEditLocauxEFChange: any
+  selectedLocalEFId?: string | null; onSelectedLocalEFChange: any
+  chauffageFlows?: any
+  chauffageParams?: any
 }
-
-// Découpe les segments verticaux aux Y frontières et crée des nœuds verrouillés (idempotent)
-// Étape 1 : supprime les nœuds verrouillés qui ne sont plus sur une frontière et fusionne leurs tronçons
-// Étape 2 : découpe les tronçons qui traversent une frontière
-function applyFrontierSplits(segs, pts, levels, lineYs) {
-  const frontierYs = getFrontierYs(levels, lineYs)
-  let workSegs = segs, workPts = pts, anyChanged = false
-
-  // Étape 1 — nettoyage des nœuds verrouillés invalides
-  // Règles : orphelin → supprimer ; hors frontière avec 2 tronçons → fusionner ;
-  //          hors frontière avec 1 tronçon → déverrouiller (nœud ordinaire)
-  let cleanupChanged = true
-  while (cleanupChanged) {
-    cleanupChanged = false
-    for (const pt of workPts) {
-      if (!pt.isLocked) continue
-      const segIn    = workSegs.find(s => s.endPointId   === pt.id)
-      const segOut   = workSegs.find(s => s.startPointId === pt.id)
-      const atFrontier = frontierYs.includes(pt.y)
-
-      if (!segIn && !segOut) {
-        // Orphelin : aucun tronçon connecté → supprimer
-        workPts = workPts.filter(p => p.id !== pt.id)
-        anyChanged = true; cleanupChanged = true; break
-      }
-
-      if (!atFrontier) {
-        if (segIn && segOut) {
-          // Hors frontière avec deux tronçons → fusionner
-          const mergedVerts = collapseCollinear([...segIn.vertices, ...segOut.vertices.slice(1)])
-          const merged = { ...segIn, id: uid('T'), vertices: mergedVerts, endPointId: segOut.endPointId }
-          workSegs = workSegs.filter(s => s.id !== segIn.id && s.id !== segOut.id).concat([merged])
-          workPts  = workPts.filter(p => p.id !== pt.id)
-        } else {
-          // Hors frontière avec un seul tronçon → déverrouiller
-          workPts = workPts.map(p => p.id === pt.id ? { ...p, isLocked: false } : p)
-        }
-        anyChanged = true; cleanupChanged = true; break
-      }
-    }
-  }
-
-  // Étape 2 — découpe aux frontières
-  if (frontierYs.length) {
-    let loopChanged = true
-    while (loopChanged) {
-      loopChanged = false
-      outer:
-      for (let si = 0; si < workSegs.length; si++) {
-        const seg = workSegs[si]
-        const vs  = seg.vertices
-        for (let vi = 0; vi < vs.length - 1; vi++) {
-          const a = vs[vi], b = vs[vi + 1]
-          if (Math.abs(b.y - a.y) <= Math.abs(b.x - a.x)) continue
-          const x = a.x
-          const yMin = Math.min(a.y, b.y), yMax = Math.max(a.y, b.y)
-          for (const fy of frontierYs) {
-            if (fy <= yMin || fy >= yMax) continue
-            anyChanged = true; loopChanged = true
-            const splitPos = { x, y: fy }
-            let splitPt = workPts.find(p => p.x === x && p.y === fy && p.isLocked)
-            if (!splitPt) {
-              splitPt = { id: uid('F'), name: '', x, y: fy, isLocked: true }
-              workPts = [...workPts, splitPt]
-            }
-            const seg1 = { ...seg, id: uid('T'), vertices: [...vs.slice(0, vi + 1), splitPos], endPointId: splitPt.id }
-            const seg2 = { ...seg, id: uid('T'), vertices: [splitPos, ...vs.slice(vi + 1)], startPointId: splitPt.id }
-            workSegs = workSegs.filter(s => s.id !== seg.id).concat([seg1, seg2])
-            break outer
-          }
-        }
-      }
-    }
-  }
-
-  return anyChanged ? { segs: workSegs, pts: workPts } : null
-}
-
-// Connexion automatique de Production ECS au réseau :
-// 1. Fusionne tout nœud ordinaire à l'intérieur du rectangle ECS (ECS survit)
-// 2. Si ECS n'a aucun tronçon connecté, le snapping sur le tronçon qui traverse son rectangle
-function applySpecialPtSnap(segs, pts, skipGroupeIds = null) {
-  let workSegs = segs, workPts = pts, anyChanged = false
-
-  for (const ecsOrig of pts.filter(p => p.type === 'productionECS' || p.type === 'arriveeEF' || p.type === 'groupe')) {
-    const ecs = workPts.find(p => p.id === ecsOrig.id)
-    if (!ecs) continue
-    // Ne pas snapper un groupe qui vient d'être déplacé par l'utilisateur
-    if (ecs.type === 'groupe' && skipGroupeIds?.has(ecs.id)) continue
-    const w = ecs.type === 'groupe' ? 60 : (ecs.size?.w ?? 44)
-    const h = ecs.type === 'groupe' ? 30 : (ecs.size?.h ?? 28)
-    const hw = w / 2, hh = h / 2
-
-    // 1. Fusionner les nœuds ordinaires à l'intérieur du rectangle ECS → garder ECS
-    let changed = true
-    while (changed) {
-      changed = false
-      const inside = workPts.find(p => {
-        if (p.id === ecs.id || p.isLocked || p.type === 'pump' || p.type === 'productionECS' || p.type === 'arriveeEF' || p.type === 'groupe') return false
-        if (Math.abs(p.x - ecs.x) > hw || Math.abs(p.y - ecs.y) > hh) return false
-        if (ecs.type === 'groupe') {
-          // Groupe déjà connecté : pas de connexion supplémentaire
-          const groupeConn = workSegs.filter(s => s.startPointId === ecs.id || s.endPointId === ecs.id).length
-          if (groupeConn >= 1) return false
-          // Seulement les extrémités libres (exactement 1 tronçon connecté)
-          const connCount = workSegs.filter(s => s.startPointId === p.id || s.endPointId === p.id).length
-          if (connCount !== 1) return false
-        }
-        return true
-      })
-      if (inside) {
-        const ecsPt = { x: ecs.x, y: ecs.y }
-        workSegs = workSegs.map(seg => {
-          let s = seg
-          if (s.startPointId === inside.id)
-            s = { ...s, vertices: elbowVertices(s.vertices, false, ecsPt), startPointId: ecs.id }
-          if (s.endPointId === inside.id)
-            s = { ...s, vertices: elbowVertices(s.vertices, true,  ecsPt), endPointId: ecs.id }
-          return s
-        }).filter(s => s.startPointId !== s.endPointId)
-        workPts = workPts.filter(p => p.id !== inside.id)
-        anyChanged = true; changed = true
-      }
-    }
-
-    // 2. Si aucun tronçon connecté : snapping sur le tronçon traversant le rectangle ECS
-    // (non applicable aux groupes de puisage : connexion aux extrémités seulement)
-    const hasConnected = workSegs.some(s => s.startPointId === ecs.id || s.endPointId === ecs.id)
-    if (!hasConnected && ecs.type !== 'groupe') {
-      let bestHit = null, bestD = Infinity
-      for (const seg of workSegs) {
-        const vs = seg.vertices
-        for (let i = 0; i < vs.length - 1; i++) {
-          const a = vs[i], b = vs[i + 1]
-          const dx = b.x - a.x, dy = b.y - a.y
-          const l2 = dx * dx + dy * dy
-          if (!l2) continue
-          const t = Math.max(0, Math.min(1, ((ecs.x - a.x) * dx + (ecs.y - a.y) * dy) / l2))
-          const proj = { x: a.x + t * dx, y: a.y + t * dy }
-          if (Math.abs(proj.x - ecs.x) > hw || Math.abs(proj.y - ecs.y) > hh) continue
-          const d = Math.hypot(proj.x - ecs.x, proj.y - ecs.y)
-          if (d < bestD) { bestD = d; bestHit = { seg, subIdx: i, proj } }
-        }
-      }
-      if (bestHit) {
-        const { seg, subIdx, proj } = bestHit
-        const sp = { x: snap(proj.x), y: snap(proj.y) }
-        const vs = seg.vertices
-        const seg1 = { ...seg, id: uid('T'), vertices: collapseCollinear([...vs.slice(0, subIdx + 1), sp]), endPointId: ecs.id }
-        const seg2 = { ...seg, id: uid('T'), vertices: collapseCollinear([sp, ...vs.slice(subIdx + 1)]), startPointId: ecs.id }
-        workSegs = workSegs.filter(s => s.id !== seg.id).concat([seg1, seg2])
-        workPts  = workPts.map(p => p.id === ecs.id ? { ...p, x: sp.x, y: sp.y } : p)
-        anyChanged = true
-      }
-    }
-  }
-
-  return anyChanged ? { segs: workSegs, pts: workPts } : null
-}
-
-let _c = 0
-const uid = p => `${p}-${Date.now()}-${++_c}`
-
 
 export default function DrawingCanvas({
   levels, lineYs, onLineYsChange,
@@ -806,9 +101,9 @@ export default function DrawingCanvas({
   selectedIds, onSelectIds,
   editLevelsEnabled, editColumnsEnabled,
   columns, columnXs, onColumnXsChange, onPPZoneDrag,
-  chaufferie, onChaufferieChange, editChaufferie,
-  placingEquipment, onPlacingDone,
+  chaufferie, onChaufferieChange, editChaufferie, onEditChaufferieChange,
   placingChaufferie, onPlacingChaufferieDone,
+  placingEquipment, onPlacingDone,
   editParam, onAssignParam,
   connHighlightIds, onConnHighlight,
   networkFlows,
@@ -830,6 +125,12 @@ export default function DrawingCanvas({
   onValvesChange,
   selectedValveId,
   onSelectedValveChange,
+  accessories,
+  onAccessoriesChange,
+  placingAccessoryType,
+  onPlacingAccessoryDone,
+  selectedAccessoryId,
+  onSelectedAccessoryChange,
   pdcParams,
   pdcResults,
   pdcCumResults,
@@ -838,13 +139,26 @@ export default function DrawingCanvas({
   onExitSpecialMode,
   pressionSourceAlimEF = null,
   pressionSourceAlimEFStatic = null,
-}) {
+  locauxEF = [],
+  onLocauxEFChange,
+  placingLocalEF = false,
+  onPlacingLocalEFDone,
+  editLocauxEF = false,
+  onEditLocauxEFChange,
+  selectedLocalEFId = null,
+  onSelectedLocalEFChange,
+  chauffageFlows,
+  chauffageParams,
+}: DrawingCanvasProps) {
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage } = getModeFlags(activeCalcId)
+
   const svgRef    = useRef(null)
   const spaceRef  = useRef(false)
   const ptDragRef    = useRef(null)   // {ptId, startX, startY, origX, origY, moved, constraint}
   const segDragRef   = useRef(null)   // {segId, dir, startScreenX, startScreenY, origPerp, moved}
   const blockDragRef = useRef(null)   // {startScreenX, startScreenY, moved}
   const valveDragRef = useRef(null)   // {valveId, segmentId, origT}
+  const accessoryDragRef = useRef(null)   // {accessoryId, segmentId, origT, moved}
 
   const [tf,        setTf]        = useState({ x: 80, y: 40, k: 1 })
 
@@ -870,6 +184,7 @@ export default function DrawingCanvas({
   const [dragLine,  setDragLine]  = useState(null)
   const [dragCol,   setDragCol]   = useState(null)   // {idx, screenX, origX}
   const [dragCh,    setDragCh]    = useState(null)   // {type, screenX, screenY, origX1, origX2, origHeight}
+  const [dragLEF,   setDragLEF]   = useState(null)   // {type, localEFId, screenX, screenY, origX1, origX2, origHeight}
   const [drawing,   setDrawing]   = useState(null)
   const [mouse,     setMouse]     = useState({ x: 0, y: 0 })
   const [rectSt,    setRectSt]    = useState(null)
@@ -879,6 +194,8 @@ export default function DrawingCanvas({
   const [blockDragState, setBlockDragState] = useState(null)  // live drag {dx, dy}
   const [previewVanne,  setPreviewVanne]  = useState(null)  // { x, y, angle, t, segId }
   const [valveDragT, setValveDragT] = useState(null)  // { valveId, t } live drag
+  const [previewAccessory, setPreviewAccessory] = useState(null)  // { x, y, angle, t, segId }
+  const [accessoryDragT, setAccessoryDragT] = useState(null)  // { accessoryId, t, segmentId } live drag
   const justMovedGroupeIdsRef = useRef(new Set())
 
   // ── Clear drawing on mode/type change ────────────────
@@ -909,9 +226,12 @@ export default function DrawingCanvas({
     const vs = seg.vertices
     const seg1 = { ...seg, id: uid('T'), vertices: [...vs.slice(0, subIdx + 1), sp], endPointId: junctionPt.id }
     const seg2 = { ...seg, id: uid('T'), vertices: [sp, ...vs.slice(subIdx + 1)], startPointId: junctionPt.id }
+    const seg1Len = polylineLen(seg1.vertices)
+    const seg2Len = polylineLen(seg2.vertices)
     onNetworkChange(
       s => s.filter(x => x.id !== seg.id).concat([seg1, seg2]),
-      p => existing ? p : [...p, junctionPt]
+      p => existing ? p : [...p, junctionPt],
+      { [seg.id]: { seg1Id: seg1.id, seg1Len, seg2Id: seg2.id, seg2Len } }
     )
     return junctionPt
   }, [onNetworkChange, points])
@@ -994,7 +314,7 @@ export default function DrawingCanvas({
   const deletePoint = useCallback((ptId) => {
     const result = deleteNodeFromNetwork(ptId, segments, points)
     if (!result) return
-    onNetworkChange(result.newSegs, result.newPts)
+    onNetworkChange(result.newSegs, result.newPts, undefined, result.segMerges)
     onSelectIds([])
   }, [segments, points, onNetworkChange, onSelectIds])
 
@@ -1020,8 +340,10 @@ export default function DrawingCanvas({
       if (e.key === 'Escape') {
         if (placingEquipment !== null) { onPlacingDone(); return }
         if (placingChaufferie) { onPlacingChaufferieDone(); return }
+        if (placingLocalEF) { onPlacingLocalEFDone?.(); return }
+        if (placingAccessoryType) { onPlacingAccessoryDone?.(); return }
 if (drawing) commitDrawing()
-        else { onSelectIds([]); onSelectedValveChange?.(null) }
+        else { onSelectIds([]); onSelectedValveChange?.(null); onSelectedAccessoryChange?.(null) }
         return
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
@@ -1036,6 +358,11 @@ if (drawing) commitDrawing()
         }
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedAccessoryId) {
+          onAccessoriesChange(acc => acc.filter(a => a.id !== selectedAccessoryId))
+          onSelectedAccessoryChange?.(null)
+          return
+        }
         if (selectedValveId) {
           onValvesChange(vs => vs.filter(v => v.id !== selectedValveId))
           onSelectedValveChange?.(null)
@@ -1050,9 +377,10 @@ if (drawing) commitDrawing()
 
         let newSegs = segments.filter(s => !delSegIds.has(s.id))
         let newPts  = [...points]
+        const segMerges = {}
         for (const ptId of delPtIds) {
           const pt = newPts.find(p => p.id === ptId)
-          if (pt?.type === 'productionECS' || pt?.type === 'arriveeEF') {
+          if (pt?.type === 'productionECS' || pt?.type === 'arriveeEF' || pt?.type === 'productionChauffage') {
             newPts = newPts.map(p => p.id === ptId ? { id: p.id, name: p.name ?? '', x: p.x, y: p.y } : p)
             continue
           }
@@ -1060,10 +388,18 @@ if (drawing) commitDrawing()
             newPts = newPts.filter(p => p.id !== ptId)
             continue
           }
+          if (pt?.type === 'emetteur') {
+            newPts = newPts.map(p => p.id !== ptId ? p : { id: p.id, name: p.name ?? '', x: p.x, y: p.y })
+            continue
+          }
           const result = deleteNodeFromNetwork(ptId, newSegs, newPts)
-          if (result) { newSegs = result.newSegs; newPts = result.newPts }
+          if (result) {
+            newSegs = result.newSegs
+            newPts  = result.newPts
+            Object.assign(segMerges, result.segMerges)
+          }
         }
-        if (delPtIds.length > 0 || delSegIds.size > 0) onNetworkChange(newSegs, newPts)
+        if (delPtIds.length > 0 || delSegIds.size > 0) onNetworkChange(newSegs, newPts, undefined, segMerges)
         onSelectIds([])
       }
     }
@@ -1071,7 +407,7 @@ if (drawing) commitDrawing()
     window.addEventListener('keydown', kd)
     window.addEventListener('keyup',   ku)
     return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku) }
-  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone, onRemoveGroupeById, selectedValveId, onSelectedValveChange, onValvesChange, drawMode, onExitSpecialMode])
+  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone, placingLocalEF, onPlacingLocalEFDone, onRemoveGroupeById, selectedValveId, onSelectedValveChange, onValvesChange, drawMode, onExitSpecialMode, placingAccessoryType, onPlacingAccessoryDone, selectedAccessoryId, onAccessoriesChange, onSelectedAccessoryChange])
 
   // ── zoom ─────────────────────────────────────────────
   const onWheel = useCallback(e => {
@@ -1097,7 +433,7 @@ if (drawing) commitDrawing()
       const d = dist(p, pos)
       const r = p.type === 'pump'
         ? Math.max(PT_HIT, p.size ?? 15)
-        : p.type === 'productionECS' || p.type === 'arriveeEF'
+        : p.type === 'productionECS' || p.type === 'arriveeEF' || p.type === 'productionChauffage'
         ? Math.max(PT_HIT, Math.max((p.size?.w ?? 44) / 2, (p.size?.h ?? 28) / 2))
         : p.type === 'groupe'
         ? Math.max(PT_HIT, 30)
@@ -1164,13 +500,38 @@ if (drawing) commitDrawing()
       } else if (dragCh.type === 'move') {
         const rawDx = (e.clientX - dragCh.screenX) / tf.k
         const mouseY = dragCh.origCenterY + (e.clientY - dragCh.screenY) / tf.k
-        let newLevelId = chaufferie.levelId
-        for (let i = 0; i < levels.length; i++) {
-          const yBot = lineYs[i], yTop = lineYs[i + 1]
-          if (yTop !== undefined && mouseY > yTop && mouseY <= yBot) { newLevelId = levels[i].id; break }
-        }
+        const liCh = findLevelIndexAt(mouseY, lineYs)
+        const newLevelId = liCh >= 0 ? levels[liCh].id : chaufferie.levelId
         onChaufferieChange({ ...chaufferie, x1: snap(dragCh.origX1 + rawDx), x2: snap(dragCh.origX2 + rawDx), levelId: newLevelId })
       }
+      return
+    }
+    if (dragLEF !== null) {
+      const lef = (locauxEF ?? []).find(l => l.id === dragLEF.localEFId)
+      if (!lef) return
+      const MIN_H = 40, MIN_W = 80, MIN_GAP = 40
+      let updated = lef
+      if (dragLEF.type === 'top') {
+        const rawH = dragLEF.origHeight - (e.clientY - dragLEF.screenY) / tf.k
+        const levelIdx = levels.findIndex(l => l.id === lef.levelId)
+        const yBottom = levelIdx >= 0 ? lineYs[levelIdx] : 0
+        const levelAboveY = (levelIdx >= 0 && levelIdx + 1 < lineYs.length) ? lineYs[levelIdx + 1] : yBottom - 2000
+        const maxH = yBottom - levelAboveY - MIN_GAP
+        updated = { ...lef, height: Math.round(Math.max(MIN_H, Math.min(Math.max(maxH, MIN_H), rawH))) }
+      } else if (dragLEF.type === 'left') {
+        const rawX1 = dragLEF.origX1 + (e.clientX - dragLEF.screenX) / tf.k
+        updated = { ...lef, x1: snap(Math.min(dragLEF.origX2 - MIN_W, rawX1)) }
+      } else if (dragLEF.type === 'right') {
+        const rawX2 = dragLEF.origX2 + (e.clientX - dragLEF.screenX) / tf.k
+        updated = { ...lef, x2: snap(Math.max(dragLEF.origX1 + MIN_W, rawX2)) }
+      } else if (dragLEF.type === 'move') {
+        const rawDx = (e.clientX - dragLEF.screenX) / tf.k
+        const mouseY = dragLEF.origCenterY + (e.clientY - dragLEF.screenY) / tf.k
+        const liLEF = findLevelIndexAt(mouseY, lineYs)
+        const newLevelId = liLEF >= 0 ? levels[liLEF].id : lef.levelId
+        updated = { ...lef, x1: snap(dragLEF.origX1 + rawDx), x2: snap(dragLEF.origX2 + rawDx), levelId: newLevelId }
+      }
+      onLocauxEFChange?.((locauxEF ?? []).map(l => l.id === dragLEF.localEFId ? updated : l))
       return
     }
     if (ptDragRef.current) {
@@ -1269,6 +630,18 @@ if (drawing) commitDrawing()
       }
       return
     }
+    if (accessoryDragRef.current) {
+      let best = null, bestDist = Infinity
+      for (const seg of segments) {
+        const r = closestTOnPolyline(pos, seg.vertices)
+        if (r && r.dist < bestDist) { bestDist = r.dist; best = { ...r, segId: seg.id } }
+      }
+      if (best) {
+        accessoryDragRef.current.moved = true
+        setAccessoryDragT({ accessoryId: accessoryDragRef.current.accessoryId, t: best.t, segmentId: best.segId })
+      }
+      return
+    }
     if (rectSt) setSelRect({ x1: rectSt.x, y1: rectSt.y, x2: pos.x, y2: pos.y })
 
     // Valve placement preview
@@ -1282,7 +655,19 @@ if (drawing) commitDrawing()
     } else if (previewVanne) {
       setPreviewVanne(null)
     }
-  }, [tf, panSt, dragLine, dragCol, dragCh, rectSt, onLineYsChange, onColumnXsChange, onPPZoneDrag, chaufferie, onChaufferieChange, levels, lineYs, drawMode, pipeType, segments, previewVanne])
+
+    // Accessory placement preview
+    if (placingAccessoryType) {
+      let best = null, bestDist = Infinity
+      for (const seg of segments) {
+        const r = closestTOnPolyline(pos, seg.vertices)
+        if (r && r.dist < bestDist) { bestDist = r.dist; best = { ...r, segId: seg.id } }
+      }
+      setPreviewAccessory(bestDist < 40 ? best : null)
+    } else if (previewAccessory) {
+      setPreviewAccessory(null)
+    }
+  }, [tf, panSt, dragLine, dragCol, dragCh, dragLEF, rectSt, onLineYsChange, onColumnXsChange, onPPZoneDrag, chaufferie, onChaufferieChange, levels, lineYs, drawMode, pipeType, segments, previewVanne, placingAccessoryType, previewAccessory, locauxEF, onLocauxEFChange])
 
   // ── mouse down ───────────────────────────────────────
   const onMouseDown = useCallback(e => {
@@ -1304,19 +689,33 @@ if (drawing) commitDrawing()
     if (placingEquipment !== null) {
       const snapped = { x: snap(pos.x), y: snap(pos.y) }
 
-      // productionECS : si un nœud existant est à portée, le convertir directement
-      // (évite les doublons après suppression d'une productionECS)
-      if (placingEquipment.type === 'productionECS') {
+      // productionECS / productionChauffage / émetteur : si un nœud existant est à portée, le convertir en priorité (avant onSeg)
+      if (placingEquipment.type === 'productionECS' || placingEquipment.type === 'productionChauffage') {
         const existingPt = points.find(p => dist(p, snapped) < PT_HIT)
         if (existingPt) {
           onNetworkChange(
             s => s,
             p => p.map(x => x.id === existingPt.id
-              ? { ...x, type: 'productionECS', name: placingEquipment.name ?? x.name, size: placingEquipment.size ?? x.size }
+              ? { ...x, type: placingEquipment.type, name: placingEquipment.name ?? x.name, size: placingEquipment.size ?? x.size }
               : x)
           )
           onPlacingDone()
           return
+        }
+      }
+
+      if (placingEquipment.type === 'emetteur') {
+        const existingPt = points.find(p => dist(p, snapped) < PT_HIT)
+        if (existingPt) {
+          const nodeSegs = segments.filter(s => s.startPointId === existingPt.id || s.endPointId === existingPt.id).length
+          if (nodeSegs > 2) return  // trop de tronçons, blocage
+          onNetworkChange(s => s, p => p.map(x => x.id === existingPt.id
+            ? { ...x, type: 'emetteur', emetteurType: placingEquipment.emetteurType,
+                deltaT_emetteur: placingEquipment.deltaT ?? null,
+                ...(placingEquipment.puissance != null ? { puissance: placingEquipment.puissance } : {}),
+                size: placingEquipment.size ?? { w: 28, h: 18 } }
+            : x))
+          return  // mode reste actif (placement multiple)
         }
       }
 
@@ -1327,7 +726,9 @@ if (drawing) commitDrawing()
         type: placingEquipment.type,
         ...(placingEquipment.type === 'pump'
           ? { rotation: placingEquipment.rotation ?? 0, size: placingEquipment.size ?? 12 }
-          : { size: placingEquipment.size ?? { w: 44, h: 28 } }),
+          : placingEquipment.type === 'emetteur'
+            ? { size: placingEquipment.size ?? { w: 28, h: 18 }, emetteurType: placingEquipment.emetteurType, deltaT_emetteur: placingEquipment.deltaT ?? null, ...(placingEquipment.puissance != null ? { puissance: placingEquipment.puissance } : {}) }
+            : { size: placingEquipment.size ?? { w: 44, h: 28 } }),
       }
       const renameId = placingEquipment.renameFirstPump ?? null
       const ptsUpdate = p => [
@@ -1341,28 +742,41 @@ if (drawing) commitDrawing()
         const vs = seg.vertices
         const seg1 = { ...seg, id: uid('T'), vertices: [...vs.slice(0, subIdx + 1), sp], endPointId: newPt.id }
         const seg2 = { ...seg, id: uid('T'), vertices: [sp, ...vs.slice(subIdx + 1)], startPointId: newPt.id }
-        onNetworkChange(s => s.filter(x => x.id !== seg.id).concat([seg1, seg2]), ptsUpdate)
+        const seg1Len = polylineLen(seg1.vertices)
+        const seg2Len = polylineLen(seg2.vertices)
+        onNetworkChange(
+          s => s.filter(x => x.id !== seg.id).concat([seg1, seg2]),
+          ptsUpdate,
+          { [seg.id]: { seg1Id: seg1.id, seg1Len, seg2Id: seg2.id, seg2Len } }
+        )
       } else {
         onNetworkChange(s => s, ptsUpdate)
       }
-      onPlacingDone()
+      if (placingEquipment.type !== 'emetteur') onPlacingDone()
       return
     }
 
     // ── Chaufferie placement mode ──
+    // ── Chaufferie placement mode ──
     if (placingChaufferie) {
-      let li = 0
-      for (let i = 0; i < levels.length; i++) {
-        const yBot = lineYs[i], yTop = lineYs[i + 1]
-        if (yTop !== undefined && pos.y > yTop && pos.y <= yBot) { li = i; break }
-      }
-      if (levels.length > 0 && lineYs.length > levels.length && pos.y <= lineYs[levels.length]) {
-        li = levels.length - 1
-      }
+      let li = findLevelIndexAt(pos.y, lineYs)
+      if (li < 0) li = (levels.length > 0 && lineYs.length > levels.length && pos.y <= lineYs[levels.length]) ? levels.length - 1 : 0
       const w = chaufferie.x2 - chaufferie.x1
       const newX1 = snap(pos.x - w / 2)
       onChaufferieChange({ ...chaufferie, placed: true, enabled: true, levelId: levels[li]?.id ?? chaufferie.levelId, x1: newX1, x2: newX1 + w })
       onPlacingChaufferieDone()
+      return
+    }
+
+    // ── Local EF placement mode ──
+    if (placingLocalEF) {
+      let li = findLevelIndexAt(pos.y, lineYs)
+      if (li < 0) li = (levels.length > 0 && lineYs.length > levels.length && pos.y <= lineYs[levels.length]) ? levels.length - 1 : 0
+      const LEF_W = 270, LEF_H = 150
+      const newX1 = snap(pos.x - LEF_W / 2)
+      const newLEF = { id: uid('lef'), enabled: true, levelId: levels[li]?.id ?? levels[0]?.id, x1: newX1, x2: newX1 + LEF_W, height: LEF_H }
+      onLocauxEFChange?.([...(locauxEF ?? []), newLEF])
+      onPlacingLocalEFDone?.()
       return
     }
 
@@ -1377,6 +791,20 @@ if (drawing) commitDrawing()
         const name = nameValve(best.segId, segToCol, valves ?? [], segments, points, levels, lineYs, columns, columnXs, chaufferie)
         onValvesChange(vs => [...vs, { id: uid('vv'), segmentId: best.segId, t: best.t, name }])
       }
+      return
+    }
+
+    // ── Accessory placement mode ──
+    if (placingAccessoryType) {
+      let best = null, bestDist = Infinity
+      for (const seg of segments) {
+        const r = closestTOnPolyline(pos, seg.vertices)
+        if (r && r.dist < bestDist) { bestDist = r.dist; best = { ...r, segId: seg.id } }
+      }
+      if (best && bestDist < 18) {
+        onAccessoriesChange(acc => [...acc, { id: uid('ac'), segmentId: best.segId, t: best.t, type: placingAccessoryType }])
+      }
+      // persiste (pas de onPlacingAccessoryDone ici) — l'utilisateur place autant qu'il veut
       return
     }
 
@@ -1401,6 +829,10 @@ if (drawing) commitDrawing()
 
       if (!drawing) {
         const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
+        // Bloquer le démarrage depuis un émetteur déjà saturé (2 tronçons)
+        if (ptId && points.find(p => p.id === ptId)?.type === 'emetteur') {
+          if (segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length >= 2) return
+        }
         if (onSeg && !ptId) {
           const newPt = splitSegment(onSeg, sp)
           setDrawing({ vertices: [{ x: newPt.x, y: newPt.y }], startPtId: newPt.id, type: pipeType })
@@ -1415,10 +847,15 @@ if (drawing) commitDrawing()
           if (d < rawNearD) { rawNearD = d; rawNearPt = p }
         }
         if (rawNearPt) {
+          const rawSegs = segments.filter(s => s.startPointId === rawNearPt.id || s.endPointId === rawNearPt.id).length
+          if (rawNearPt.type === 'emetteur' && rawSegs >= 2) return
           finalize({ x: rawNearPt.x, y: rawNearPt.y }, rawNearPt.id)
         } else {
           const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
           if (ptId) {
+            const snapPt = points.find(p => p.id === ptId)
+            const snapSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length
+            if (snapPt?.type === 'emetteur' && snapSegs >= 2) return
             finalize(sp, ptId)
           } else if (onSeg) {
             const newPt = splitSegment(onSeg, sp)
@@ -1442,7 +879,23 @@ if (drawing) commitDrawing()
         const vpos = positionFromT(seg.vertices, valve.t)
         if (Math.hypot(pos.x - vpos.x, pos.y - vpos.y) < 12) {
           onSelectedValveChange(valve.id)
+          onSelectedAccessoryChange?.(null)
           valveDragRef.current = { valveId: valve.id, segmentId: valve.segmentId, origT: valve.t, moved: false }
+          return
+        }
+      }
+    }
+
+    // ── Accessory click/drag (select mode) ──
+    if (!editParam && drawMode === 'select') {
+      for (const acc of (accessories ?? [])) {
+        const seg = segments.find(s => s.id === acc.segmentId)
+        if (!seg) continue
+        const apos = positionFromT(seg.vertices, acc.t)
+        if (Math.hypot(pos.x - apos.x, pos.y - apos.y) < 14) {
+          onSelectedAccessoryChange?.(acc.id)
+          onSelectedValveChange?.(null)
+          accessoryDragRef.current = { accessoryId: acc.id, segmentId: acc.segmentId, origT: acc.t, moved: false }
           return
         }
       }
@@ -1471,6 +924,7 @@ if (drawing) commitDrawing()
     const np = nearPt(pos)
     if (np) {
       onSelectedValveChange(null)
+      onSelectedAccessoryChange?.(null)
       onSelectIds(ids => e.shiftKey
         ? ids.includes(np.id) ? ids.filter(i => i !== np.id) : [...ids, np.id]
         : [np.id])
@@ -1493,6 +947,7 @@ if (drawing) commitDrawing()
     const nsInfo = nearestOnSegments(pos, hitSegs)
     if (nsInfo) {
       onSelectedValveChange?.(null)
+      onSelectedAccessoryChange?.(null)
       const ns = nsInfo.seg
       const { subIdx } = nsInfo
       onSelectIds(ids => e.shiftKey
@@ -1508,6 +963,10 @@ if (drawing) commitDrawing()
 
     // Empty space → rectangle de sélection (glisser) ou désélection (clic)
     onSelectedValveChange?.(null)
+    onSelectedAccessoryChange?.(null)
+    onSelectedLocalEFChange?.(null)
+    onEditLocauxEFChange?.(false)
+    onEditChaufferieChange?.(false)
     setRectSt(pos)
     setSelRect({ x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y })
   }, [tf, lineYs, drawMode, drawing, pipeType, nearPt,
@@ -1515,7 +974,9 @@ if (drawing) commitDrawing()
       segments, points, selectedIds, onNetworkChange, onSelectIds,
       placingEquipment, onPlacingDone,
       placingChaufferie, onPlacingChaufferieDone, levels, lineYs, chaufferie, onChaufferieChange,
+      placingLocalEF, onPlacingLocalEFDone, locauxEF, onLocauxEFChange, onSelectedLocalEFChange,
       columns, columnXs, valves, onValvesChange, selectedValveId, onSelectedValveChange,
+      accessories, onAccessoriesChange, placingAccessoryType, onSelectedAccessoryChange,
       connHighlightIds, onConnHighlight])
 
   // ── mouse up ──────────────────────────────────────────
@@ -1524,6 +985,7 @@ if (drawing) commitDrawing()
     setDragLine(null)
     setDragCol(null)
     setDragCh(null)
+    setDragLEF(null)
 
     // Commit valve drag
     if (valveDragRef.current) {
@@ -1538,6 +1000,19 @@ if (drawing) commitDrawing()
       return
     }
 
+    // Commit accessory drag
+    if (accessoryDragRef.current) {
+      const { accessoryId, moved } = accessoryDragRef.current
+      if (moved && accessoryDragT?.accessoryId === accessoryId) {
+        onAccessoriesChange(acc => acc.map(a => a.id === accessoryId
+          ? { ...a, t: accessoryDragT.t, segmentId: accessoryDragT.segmentId ?? a.segmentId }
+          : a))
+      }
+      accessoryDragRef.current = null
+      setAccessoryDragT(null)
+      return
+    }
+
     // Commit point drag
     if (ptDragRef.current && ptDragRef.current.moved && ptDragPos) {
       const { ptId } = ptDragRef.current
@@ -1546,14 +1021,64 @@ if (drawing) commitDrawing()
       // Priority 1: overlapping another point → merge (productionECS > pump > regular)
       const dragged = points.find(p => p.id === ptId)
       if (dragged?.type === 'groupe') justMovedGroupeIdsRef.current.add(ptId)
+
+      // Détection de proximité : PT_HIT classique OU nœud dans le rectangle de l'émetteur (28×18)
+      const EM_W2 = 14, EM_H2 = 9  // demi-dimensions émetteur
+      const inEmetteurRect = (emCenter, testPt) =>
+        Math.abs(testPt.x - emCenter.x) <= EM_W2 && Math.abs(testPt.y - emCenter.y) <= EM_H2
+      // Est-ce que p et np sont "proches" (en tenant compte du rect émetteur) ?
+      const isNear = (p) => {
+        if (p.type === 'emetteur') return inEmetteurRect(p, np)           // nœud entrant dans le rect de l'émetteur fixe
+        if (dragged?.type === 'emetteur') return inEmetteurRect(np, p)    // nœud fixe dans le rect de l'émetteur déplacé
+        return dist(p, np) < PT_HIT
+      }
+
+      // Émetteur : retour à l'origine UNIQUEMENT si le nœud cible a strictement >2 tronçons
+      if (dragged?.type === 'emetteur') {
+        const blockingNode = points.find(p => {
+          if (p.id === ptId || !isNear(p)) return false
+          if (p.type === 'groupe' && segments.filter(s => s.startPointId === p.id || s.endPointId === p.id).length >= 1) return false
+          return segments.filter(s => s.startPointId === p.id || s.endPointId === p.id).length > 2
+        })
+        if (blockingNode) {
+          setPtDragPos(null)
+          ptDragRef.current = null
+          return
+        }
+      }
+
+      // Nœud quelconque → émetteur : retour à l'origine si le merge donnerait >2 tronçons à l'émetteur
+      if (dragged?.type !== 'emetteur') {
+        const segsOfDragged = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length
+        const blockEmetteur = points.find(p => {
+          if (p.id === ptId || !isNear(p)) return false
+          if (p.type !== 'emetteur') return false
+          return segsOfDragged > 2
+        })
+        if (blockEmetteur) {
+          setPtDragPos(null)
+          ptDragRef.current = null
+          return
+        }
+      }
+
       const overlap = points.find(p => {
-        if (p.id === ptId || dist(p, np) >= PT_HIT) return false
-        // Ne pas merger vers un groupe déjà connecté à un tronçon
+        if (p.id === ptId || !isNear(p)) return false
         if (p.type === 'groupe' && segments.filter(s => s.startPointId === p.id || s.endPointId === p.id).length >= 1) return false
+        // Émetteur déplacé → nœud cible >2 tronçons : bloquer
+        if (dragged?.type === 'emetteur') {
+          const segsOfP = segments.filter(s => s.startPointId === p.id || s.endPointId === p.id).length
+          if (segsOfP > 2) return false
+        }
+        // Nœud quelconque déplacé → émetteur cible : bloquer uniquement si le nœud déplacé a >2 tronçons
+        if (p.type === 'emetteur') {
+          const segsOfDragged = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length
+          if (segsOfDragged > 2) return false
+        }
         return true
       })
       if (overlap && dragged) {
-        const rank = p => p?.type === 'productionECS' ? 3 : p?.type === 'groupe' ? 2 : p?.type === 'pump' ? 1 : 0
+        const rank = p => (p?.type === 'productionECS' || p?.type === 'productionChauffage') ? 3 : p?.type === 'groupe' ? 2 : (p?.type === 'pump' || p?.type === 'emetteur') ? 1 : 0
         const draggedWins = rank(dragged) > rank(overlap)
         const winner = draggedWins ? dragged : overlap
         const loser  = draggedWins ? overlap : dragged
@@ -1582,10 +1107,13 @@ if (drawing) commitDrawing()
         )
         const hitSeg = nearestOnSegments(np, segments.filter(s => !exclude.has(s.id)))
 
-        if (hitSeg && hitSeg.d < SNAP && dragged?.type !== 'groupe') {
+        const segsOfDraggedForP2 = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length
+        if (hitSeg && hitSeg.d < SNAP && dragged?.type !== 'groupe' && !(dragged?.type === 'emetteur' && segsOfDraggedForP2 >= 1)) {
           const { seg, subIdx } = hitSeg
           const seg1 = { ...seg, id: uid('T'), vertices: [...seg.vertices.slice(0, subIdx + 1), np], endPointId: ptId }
           const seg2 = { ...seg, id: uid('T'), vertices: [np, ...seg.vertices.slice(subIdx + 1)], startPointId: ptId }
+          const seg1Len = polylineLen(seg1.vertices)
+          const seg2Len = polylineLen(seg2.vertices)
           onNetworkChange(
             s => {
               let r = s.filter(x => x.id !== seg.id)
@@ -1596,7 +1124,8 @@ if (drawing) commitDrawing()
               })
               return r.concat([seg1, seg2])
             },
-            p => p.map(x => x.id === ptId ? { ...x, ...np } : x)
+            p => p.map(x => x.id === ptId ? { ...x, ...np } : x),
+            { [seg.id]: { seg1Id: seg1.id, seg1Len, seg2Id: seg2.id, seg2Len } }
           )
         } else {
           // Priority 3: move with cascade (maintains orthogonality for T/L junctions)
@@ -1613,7 +1142,13 @@ if (drawing) commitDrawing()
       if (segDragState && segDragState.delta !== 0) {
         const moved = computeSegMove(segDragState.segId, segDragState.subIdx, segDragState.delta, segments, points)
         const { newSegs, newPts } = mergeCoincidentNodes(moved.newSegs, moved.newPts)
-        onNetworkChange(newSegs, newPts)
+        // Annuler si un émetteur se retrouverait avec >2 tronçons, ou s'il a été absorbé par un nœud classique
+        const emetteurIds = new Set(points.filter(p => p.type === 'emetteur').map(p => p.id))
+        const hasInvalidEmetteur =
+          newPts.some(p => p.type === 'emetteur' &&
+            newSegs.filter(s => s.startPointId === p.id || s.endPointId === p.id).length > 2) ||
+          [...emetteurIds].some(id => !newPts.find(p => p.id === id))
+        if (!hasInvalidEmetteur) onNetworkChange(newSegs, newPts)
       }
       setSegDragState(null)
       segDragRef.current = null
@@ -1653,7 +1188,7 @@ if (drawing) commitDrawing()
       }
       setRectSt(null); setSelRect(null)
     }
-  }, [rectSt, selRect, segments, points, selectedIds, onSelectIds, ptDragPos, segDragState, blockDragState, onNetworkChange, lineYs, onValvesChange, valveDragT])
+  }, [rectSt, selRect, segments, points, selectedIds, onSelectIds, ptDragPos, segDragState, blockDragState, onNetworkChange, lineYs, onValvesChange, valveDragT, onAccessoriesChange, accessoryDragT])
 
   // ── double-click → end segment ────────────────────────
   const onDblClick = useCallback(e => {
@@ -1715,7 +1250,10 @@ if (drawing) commitDrawing()
     : dragCh?.type === 'top' ? 'ns-resize'
     : dragCh?.type === 'left' || dragCh?.type === 'right' ? 'ew-resize'
     : dragCh?.type === 'move' ? 'move'
-    : placingEquipment !== null || placingChaufferie ? 'crosshair'
+    : dragLEF?.type === 'top' ? 'ns-resize'
+    : dragLEF?.type === 'left' || dragLEF?.type === 'right' ? 'ew-resize'
+    : dragLEF?.type === 'move' ? 'move'
+    : placingEquipment !== null || placingChaufferie || placingLocalEF ? 'crosshair'
     : panSt ? 'grabbing'
     : blockDragRef.current?.moved ? 'move'
     : segDragState ? 'move'
@@ -1754,6 +1292,96 @@ if (drawing) commitDrawing()
   const visRenderSegs = renderSegs
   const visRenderPts  = renderPts
 
+  // ── SVG sub-layer render functions ───────────────────────────────────────
+  // Each captures component state via closure; same output as inline JSX.
+
+  const renderBackground = () => (
+    <>
+      {zones.map((z, i) => (
+        <g key={z.id}>
+          <rect x={0} y={z.yTop} width={contentW} height={z.yBot - z.yTop}
+            fill={i % 2 === 0 ? '#ffffff' : '#f8fafc'} />
+          <text x={14} y={(z.yTop + z.yBot) / 2 + 5}
+            fontSize={12} fill="#d1d8e0" fontWeight="700"
+            style={{ userSelect: 'none', pointerEvents: 'none' }}>
+            {z.name}
+          </text>
+        </g>
+      ))}
+      {(columns ?? []).map((col, i) => {
+        const x1 = (columnXs ?? [])[i], x2 = (columnXs ?? [])[i + 1]
+        if (x1 === undefined || x2 === undefined) return null
+        let yBot, yTop
+        if (col.levelIds === 'all') {
+          yBot = lineYs[0]; yTop = lineYs[lineYs.length - 1]
+        } else {
+          const idxs = (Array.isArray(col.levelIds) ? col.levelIds : [])
+            .map(id => levels.findIndex(l => l.id === id)).filter(x => x >= 0)
+          if (!idxs.length) return null
+          yBot = lineYs[Math.min(...idxs)]
+          yTop = lineYs[Math.max(...idxs) + 1]
+        }
+        // PP zone gap column: render its left separator border
+        if (col.isPPZone) {
+          const hasGroupe = (points ?? []).some(p => p.type === 'groupe' && p.colId === col.colId)
+          if (!hasGroupe) return <g key={col.id} />
+          const prevCol = (columns ?? [])[i - 1]
+          const showLeftBorder = !prevCol || !(prevCol.isGap && !prevCol.isPPZone)
+          return (
+            <g key={col.id} style={{ pointerEvents: 'none' }}>
+              {showLeftBorder && <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />}
+            </g>
+          )
+        }
+        if (col.isGap) return <g key={col.id} />
+        // Regular pipe column: left border + name; also draw right border if next col won't
+        const nextCol = (columns ?? [])[i + 1]
+        // Draw right border only if next entity won't draw its own left border (i.e. regular gap or no next col)
+        const drawRightBorder = !nextCol || (nextCol.isGap && !nextCol.isPPZone)
+        return (
+          <g key={col.id} style={{ pointerEvents: 'none' }}>
+            <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
+            {drawRightBorder && <line x1={x2} y1={yTop} x2={x2} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />}
+            <text x={(x1 + x2) / 2} y={yTop + 16} fontSize={12} fill="#b8c0cc" fontWeight="600"
+              textAnchor="middle" style={{ userSelect: 'none' }}>
+              {col.name}
+            </text>
+          </g>
+        )
+      })}
+    </>
+  )
+
+  const renderLevelLines = () => (
+    <>
+      {lineYs.map((y, i) => {
+        const isToiture  = i === lineYs.length - 1
+        const isFrontier = frontierYs.includes(y)
+        return (
+          <g key={`ln${i}`}>
+            <line x1={0} y1={y} x2={contentW} y2={y}
+              stroke={isToiture ? '#94a3b8' : isFrontier ? '#8899b0' : '#cbd5e1'}
+              strokeWidth={isToiture || isFrontier ? 1.5 : 1}
+              strokeDasharray={isToiture ? '8,5' : 'none'} />
+            {isToiture && (
+              <text x={14} y={y - 5} fontSize={10} fill="#94a3b8" fontWeight="600"
+                style={{ userSelect: 'none', pointerEvents: 'none' }}>Toiture</text>
+            )}
+            {isFrontier && (
+              <text x={14} y={y - 5} fontSize={10} fill="#8899b0" fontWeight="600"
+                style={{ userSelect: 'none', pointerEvents: 'none' }}>Séparation sous-sol</text>
+            )}
+            {editLevelsEnabled && (
+              <rect x={0} y={y - 6} width={contentW} height={12}
+                fill="transparent" style={{ cursor: 'ns-resize' }}
+                onMouseDown={ev => { ev.stopPropagation(); setDragLine({ idx: i, screenY: ev.clientY, origY: y }) }} />
+            )}
+          </g>
+        )
+      })}
+    </>
+  )
+
   return (
     <svg
       ref={svgRef}
@@ -1766,61 +1394,7 @@ if (drawing) commitDrawing()
     >
       <g transform={`translate(${tf.x},${tf.y}) scale(${tf.k})`}>
 
-        {/* Zone backgrounds */}
-        {zones.map((z, i) => (
-          <g key={z.id}>
-            <rect x={0} y={z.yTop} width={contentW} height={z.yBot - z.yTop}
-              fill={i % 2 === 0 ? '#ffffff' : '#f8fafc'} />
-            <text x={14} y={(z.yTop + z.yBot) / 2 + 5}
-              fontSize={12} fill="#d1d8e0" fontWeight="700"
-              style={{ userSelect: 'none', pointerEvents: 'none' }}>
-              {z.name}
-            </text>
-          </g>
-        ))}
-
-        {/* Column lines */}
-        {(columns ?? []).map((col, i) => {
-          const x1 = (columnXs ?? [])[i], x2 = (columnXs ?? [])[i + 1]
-          if (x1 === undefined || x2 === undefined) return null
-          let yBot, yTop
-          if (col.levelIds === 'all') {
-            yBot = lineYs[0]; yTop = lineYs[lineYs.length - 1]
-          } else {
-            const idxs = (Array.isArray(col.levelIds) ? col.levelIds : [])
-              .map(id => levels.findIndex(l => l.id === id)).filter(x => x >= 0)
-            if (!idxs.length) return null
-            yBot = lineYs[Math.min(...idxs)]
-            yTop = lineYs[Math.max(...idxs) + 1]
-          }
-          // PP zone gap column: render its left separator border
-          if (col.isPPZone) {
-            const hasGroupe = (points ?? []).some(p => p.type === 'groupe' && p.colId === col.colId)
-            if (!hasGroupe) return <g key={col.id} />
-            const prevCol = (columns ?? [])[i - 1]
-            const showLeftBorder = !prevCol || !(prevCol.isGap && !prevCol.isPPZone)
-            return (
-              <g key={col.id} style={{ pointerEvents: 'none' }}>
-                {showLeftBorder && <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />}
-              </g>
-            )
-          }
-          if (col.isGap) return <g key={col.id} />
-          // Regular pipe column: left border + name; also draw right border if next col won't
-          const nextCol = (columns ?? [])[i + 1]
-          // Draw right border only if next entity won't draw its own left border (i.e. regular gap or no next col)
-          const drawRightBorder = !nextCol || (nextCol.isGap && !nextCol.isPPZone)
-          return (
-            <g key={col.id} style={{ pointerEvents: 'none' }}>
-              <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
-              {drawRightBorder && <line x1={x2} y1={yTop} x2={x2} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />}
-              <text x={(x1 + x2) / 2} y={yTop + 16} fontSize={12} fill="#b8c0cc" fontWeight="600"
-                textAnchor="middle" style={{ userSelect: 'none' }}>
-                {col.name}
-              </text>
-            </g>
-          )
-        })}
+        {renderBackground()}
 
         {/* Regular column boundary drag handles — skip PP zone boundaries */}
         {editColumnsEnabled && (columnXs ?? []).map((x, i) => {
@@ -1859,7 +1433,54 @@ if (drawing) commitDrawing()
           )
         })}
 
-        {/* Chaufferie / Local EF */}
+        {/* Locaux EF */}
+        {(locauxEF ?? []).filter(lef => lef.enabled).map(lef => {
+          const levelIdx = levels.findIndex(l => l.id === lef.levelId)
+          if (levelIdx < 0 || levelIdx >= lineYs.length) return null
+          const yBot = lineYs[levelIdx]
+          const yTop = yBot - lef.height
+          const { x1, x2 } = lef
+          const H = 6
+          const isSel = selectedLocalEFId === lef.id
+          return (
+            <g key={lef.id}>
+              <rect x={x1} y={yTop} width={x2 - x1} height={lef.height}
+                fill="rgba(0,0,0,0.02)" stroke="#6b7280" strokeWidth={1.5}
+                style={{ pointerEvents: 'none' }} />
+              <text x={(x1 + x2) / 2} y={yTop + 13}
+                fontSize={10} fill="#6b7280" fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none', pointerEvents: 'none' }}>Local EF</text>
+              {editLocauxEF && (isSel ? (
+                <>
+                  <rect x={x1 + H} y={yTop + H} width={x2 - x1 - H * 2} height={lef.height - H * 2}
+                    fill="transparent" style={{ cursor: 'move' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLEF({ type: 'move', localEFId: lef.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: lef.height, origCenterY: yBot - lef.height / 2 }) }} />
+                  <rect x={x1} y={yTop - H} width={x2 - x1} height={H * 2}
+                    fill="transparent" style={{ cursor: 'ns-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLEF({ type: 'top', localEFId: lef.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: lef.height }) }} />
+                  <rect x={x1 - H} y={yTop} width={H * 2} height={lef.height}
+                    fill="transparent" style={{ cursor: 'ew-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLEF({ type: 'left', localEFId: lef.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: lef.height }) }} />
+                  <rect x={x2 - H} y={yTop} width={H * 2} height={lef.height}
+                    fill="transparent" style={{ cursor: 'ew-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLEF({ type: 'right', localEFId: lef.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: lef.height }) }} />
+                </>
+              ) : (
+                <rect x={x1} y={yTop} width={x2 - x1} height={lef.height}
+                  fill="transparent" style={{ cursor: 'pointer' }}
+                  onMouseDown={ev => {
+                    ev.stopPropagation()
+                    onSelectedLocalEFChange?.(lef.id)
+                    onSelectIds([])
+                    onSelectedValveChange?.(null)
+                    onSelectedAccessoryChange?.(null)
+                  }} />
+              ))}
+            </g>
+          )
+        })}
+
+        {/* Chaufferie / Local ECS */}
         {chaufferie?.enabled && (() => {
           const levelIdx = levels.findIndex(l => l.id === chaufferie.levelId)
           if (levelIdx < 0 || levelIdx >= lineYs.length) return null
@@ -1867,10 +1488,9 @@ if (drawing) commitDrawing()
           const yTop = yBot - chaufferie.height
           const { x1, x2 } = chaufferie
           const H = 6
-          const isEFLocal = activeCalcId === 'alimentation-ef'
-          const localStroke = isEFLocal ? '#3b82f6' : '#818cf8'
-          const localFill   = isEFLocal ? 'rgba(219,234,254,0.5)' : 'rgba(238,242,255,0.5)'
-          const localLabel  = isEFLocal ? 'Local EF' : 'Local ECS'
+          const localStroke = '#6b7280'
+          const localFill   = 'rgba(0,0,0,0.02)'
+          const localLabel  = isAlimEF ? 'Local EF' : 'Local ECS'
           return (
             <g key="chaufferie">
               <rect x={x1} y={yTop} width={x2 - x1} height={chaufferie.height}
@@ -1899,39 +1519,13 @@ if (drawing) commitDrawing()
           )
         })()}
 
-        {/* Level lines */}
-        {lineYs.map((y, i) => {
-          const isToiture  = i === lineYs.length - 1
-          const isFrontier = frontierYs.includes(y)
-          return (
-            <g key={`ln${i}`}>
-              <line x1={0} y1={y} x2={contentW} y2={y}
-                stroke={isToiture ? '#94a3b8' : isFrontier ? '#8899b0' : '#cbd5e1'}
-                strokeWidth={isToiture || isFrontier ? 1.5 : 1}
-                strokeDasharray={isToiture ? '8,5' : 'none'} />
-              {isToiture && (
-                <text x={14} y={y - 5} fontSize={10} fill="#94a3b8" fontWeight="600"
-                  style={{ userSelect: 'none', pointerEvents: 'none' }}>Toiture</text>
-              )}
-              {isFrontier && (
-                <text x={14} y={y - 5} fontSize={10} fill="#8899b0" fontWeight="600"
-                  style={{ userSelect: 'none', pointerEvents: 'none' }}>Séparation sous-sol</text>
-              )}
-              {editLevelsEnabled && (
-                <rect x={0} y={y - 6} width={contentW} height={12}
-                  fill="transparent" style={{ cursor: 'ns-resize' }}
-                  onMouseDown={ev => { ev.stopPropagation(); setDragLine({ idx: i, screenY: ev.clientY, origY: y }) }} />
-              )}
-            </g>
-          )
-        })}
+        {renderLevelLines()}
 
         {/* Segments */}
         {visRenderSegs.map(seg => {
           const sel  = selectedIds.includes(seg.id)
-          const isEF = activeCalcId === 'alimentation-ef'
-          const col  = isEF ? '#2563eb' : (seg.type === 'retour' ? '#f97316' : '#dc2626')
-          const dash = (!isEF && seg.type === 'retour') ? '10,6' : 'none'
+          const col  = isAlimEF ? '#2563eb' : (seg.type === 'retour' ? '#f97316' : '#dc2626')
+          const dash = (seg.type === 'retour' && !isAlimEF) ? '10,6' : 'none'
           const path = seg.vertices.map((v, i) => `${i ? 'L' : 'M'}${v.x},${v.y}`).join(' ')
 
           // Edit-params coloring
@@ -1960,7 +1554,7 @@ if (drawing) commitDrawing()
               }
             } else if (paramType === 'flowVelocity') {
               // Antennes bouclage-ecs : toujours grisées, non assignables
-              if (activeCalcId === 'bouclage-ecs' && roleMap?.get(seg.id) === 'antenne') {
+              if (isBouclage && roleMap?.get(seg.id) === 'antenne') {
                 editStyle = 'other'
               } else {
                 const hasAny = seg.flowRate != null || seg.velocity != null
@@ -1982,12 +1576,12 @@ if (drawing) commitDrawing()
           const isGrayed      = connHighlightIds?.length > 0 && !connHighlightIds.includes(seg.id)
 
           // match=green · missing=red(ECS)/blue(EF) · other=gray · dash always follows segment type
-          const missingColor = isEF ? '#93c5fd' : '#ef4444'
+          const missingColor = isAlimEF ? '#93c5fd' : '#ef4444'
           const strokeColor = isGrayed      ? '#d1d5db'
             : editStyle === 'match'   ? '#16a34a'
             : editStyle === 'missing' ? missingColor
             : editStyle === 'other'   ? '#9ca3af'
-            : sel ? (isEF ? '#f97316' : '#2563eb') : col
+            : sel ? (isAlimEF ? '#f97316' : '#2563eb') : col
           const strokeW = isGrayed ? 1
             : editStyle === 'match' ? 3 : editStyle === 'missing' ? 2 : editStyle === 'other' ? 1 : sel ? 2.5 : 1.5
           const segDash = sel ? 'none' : dash
@@ -2001,7 +1595,7 @@ if (drawing) commitDrawing()
                   if (drawMode === 'delete') return
                   ev.stopPropagation()
                   if (editParam) {
-                    const isLockedAntenne = activeCalcId === 'bouclage-ecs'
+                    const isLockedAntenne = isBouclage
                       && editParam.paramType === 'flowVelocity'
                       && roleMap?.get(seg.id) === 'antenne'
                     if (!isLockedAntenne) onAssignParam(seg.id)
@@ -2127,7 +1721,7 @@ if (drawing) commitDrawing()
                   if (ins) lines.push({ text: seg.thickness != null ? `${ins.name} ${seg.thickness}mm` : ins.name })
                 }
                 if (canvasDisplay?.debit) {
-                  if (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') {
+                  if (isAlimMode) {
                     const ar = alimentationResults?.get(seg.id)
                     if (ar?.flowRateForPdc != null && ar.flowRateForPdc > 0)
                       lines.push({ text: `${ar.flowRateForPdc.toFixed(2)} l/s` })
@@ -2137,7 +1731,7 @@ if (drawing) commitDrawing()
                   }
                 }
                 if (canvasDisplay?.vitesse) {
-                  if (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') {
+                  if (isAlimMode) {
                     const ar = alimentationResults?.get(seg.id)
                     const flowLs = ar?.flowRateForPdc ?? null
                     const dnDef = (() => {
@@ -2155,16 +1749,16 @@ if (drawing) commitDrawing()
                       const segRole = roleMap?.get(seg.id)
                       const vMax = segRole === 'collecteur-retour' ? 1.0 : 0.5
                       const isRedMin    = seg.type === 'retour' && v < 0.2
-                      const isOrangeMax = seg.type === 'retour' && v > vMax
+                      const isOrangeMax = v > vMax
                       lines.push({ text: `${sf(v, 2)} m/s`, red: isRedMin, orange: isOrangeMax && !isRedMin })
                     }
                   }
                 }
-                if (canvasDisplay?.deltaT && activeCalcId !== 'alimentation-ecs' && activeCalcId !== 'alimentation-ef') {
+                if (canvasDisplay?.deltaT && !isAlimMode) {
                   const sr = thermalResults?.segResults?.get(seg.id)
                   if (sr?.deltaT != null) lines.push({ text: `ΔT ${sf(sr.deltaT, 2)} °C` })
                 }
-                if (canvasDisplay?.dpTroncon && activeCalcId === 'bouclage-ecs') {
+                if (canvasDisplay?.dpTroncon && isBouclage) {
                   const dp = pdcResults?.get(seg.id)?.dpTotal
                   if (dp != null) {
                     const u = pdcParams?.uniteAffichage ?? 'Pa'
@@ -2199,11 +1793,11 @@ if (drawing) commitDrawing()
                 return (
                   <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
                     <rect x={bx} y={by} width={bgW} height={bgH}
-                      fill="rgba(255,255,255,0.9)" stroke={col} strokeWidth={0.4} rx={2} />
+                      fill="rgba(255,255,255,0.9)" stroke="#d1d5db" strokeWidth={0.4} rx={2} />
                     {lines.map((line, i) => (
                       <text key={i} x={bx + PAD} y={by + PAD + (i + 1) * LH - 1}
                         fontSize={8.5}
-                        fill={line.red ? '#dc2626' : line.orange ? '#f97316' : col}
+                        fill={line.red ? '#dc2626' : line.orange ? '#f97316' : '#0f172a'}
                         fontWeight="600">{line.text}</text>
                     ))}
                   </g>
@@ -2247,28 +1841,29 @@ if (drawing) commitDrawing()
           const { x, y, angle } = positionFromT(liveSeg.vertices, liveT)
           const sel = selectedValveId === valve.id
           const S = 6
-          const color = sel ? '#2563eb' : '#1e3a5f'
-          // T always points world-up on horizontal segs, world-right on vertical segs
-          const ar = angle * Math.PI / 180
-          const isHoriz = Math.abs(Math.cos(ar)) >= Math.abs(Math.sin(ar))
-          const tDir = isHoriz
-            ? (Math.cos(ar) >= 0 ? -1 : 1)
-            : (Math.sin(ar) >= 0 ? -1 : 1)
-          const TH = S + 1  // T stem length
+          const TH = S + 2
+          const color = sel ? '#2563eb' : '#000'
           return (
             <g key={valve.id}
-              transform={`translate(${x},${y}) rotate(${angle})`}
+              transform={`translate(${x},${y})`}
               style={{ cursor: liveDrag ? 'grabbing' : 'grab' }}>
               <circle r={14} fill="transparent" />
-              <polygon points={`${-S},${-S*0.85} ${-S},${S*0.85} 0,0`}
-                fill={color} style={{ pointerEvents: 'none' }} />
-              <polygon points={`${S},${-S*0.85} ${S},${S*0.85} 0,0`}
-                fill={color} style={{ pointerEvents: 'none' }} />
-              {/* T mark — always points world-up (horiz) or world-right (vert) */}
-              <line x1="0" y1="0" x2="0" y2={tDir * TH}
-                stroke={color} strokeWidth="1.5" strokeLinecap="round" style={{ pointerEvents: 'none' }} />
-              <line x1={-(S * 0.6)} y1={tDir * TH} x2={S * 0.6} y2={tDir * TH}
-                stroke={color} strokeWidth="1.5" strokeLinecap="round" style={{ pointerEvents: 'none' }} />
+              {/* T perpendiculaire : haut sur horizontale, droite sur verticale.
+                  Normalise l'angle pour rester dans le demi-plan upper-right. */}
+              {(() => {
+                const norm = ((angle % 360) + 360) % 360
+                const da = (norm > 90 && norm <= 270) ? angle + 180 : angle
+                return (
+                  <g transform={`rotate(${da})`} style={{ pointerEvents: 'none' }}>
+                    <polygon points={`${-S},${-S*0.85} ${-S},${S*0.85} 0,0`} fill={color} />
+                    <polygon points={`${S},${-S*0.85} ${S},${S*0.85} 0,0`} fill={color} />
+                    <line x1="0" y1="0" x2="0" y2={-TH}
+                      stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+                    <line x1={-(S * 0.65)} y1={-TH} x2={S * 0.65} y2={-TH}
+                      stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+                  </g>
+                )
+              })()}
               {sel && (
                 <circle r={9} fill="none" stroke="#2563eb" strokeWidth={1.5}
                   style={{ pointerEvents: 'none' }} />
@@ -2279,26 +1874,138 @@ if (drawing) commitDrawing()
 
         {/* Prévisualisation vanne */}
         {previewVanne && (
-          <g transform={`translate(${previewVanne.x},${previewVanne.y}) rotate(${previewVanne.angle})`}
+          <g transform={`translate(${previewVanne.x},${previewVanne.y})`}
             style={{ pointerEvents: 'none', opacity: 0.5 }}>
             {(() => {
-              const S = 6, TH = S + 1
-              const ar = previewVanne.angle * Math.PI / 180
-              const isHoriz = Math.abs(Math.cos(ar)) >= Math.abs(Math.sin(ar))
-              const tDir = isHoriz ? (Math.cos(ar) >= 0 ? -1 : 1) : (Math.sin(ar) >= 0 ? -1 : 1)
+              const S = 6.5, TH = S + 2
               return (
                 <>
-                  <polygon points={`${-S},${-S*0.85} ${-S},${S*0.85} 0,0`} fill="#4f46e5" />
-                  <polygon points={`${S},${-S*0.85} ${S},${S*0.85} 0,0`} fill="#4f46e5" />
-                  <line x1="0" y1="0" x2="0" y2={tDir * TH}
-                    stroke="#4f46e5" strokeWidth="1.5" strokeLinecap="round" />
-                  <line x1={-(S * 0.6)} y1={tDir * TH} x2={S * 0.6} y2={tDir * TH}
-                    stroke="#4f46e5" strokeWidth="1.5" strokeLinecap="round" />
+                  {(() => {
+                    const pNorm = ((previewVanne.angle % 360) + 360) % 360
+                    const pDa = (pNorm > 90 && pNorm <= 270) ? previewVanne.angle + 180 : previewVanne.angle
+                    return (
+                      <g transform={`rotate(${pDa})`}>
+                        <polygon points={`${-S},${-S*0.85} ${-S},${S*0.85} 0,0`} fill="rgba(0,0,0,0.4)" />
+                        <polygon points={`${S},${-S*0.85} ${S},${S*0.85} 0,0`} fill="rgba(0,0,0,0.4)" />
+                        <line x1="0" y1="0" x2="0" y2={-TH} stroke="rgba(0,0,0,0.4)" strokeWidth="1.5" strokeLinecap="round" />
+                        <line x1={-(S * 0.65)} y1={-TH} x2={S * 0.65} y2={-TH} stroke="rgba(0,0,0,0.4)" strokeWidth="1.5" strokeLinecap="round" />
+                      </g>
+                    )
+                  })()}
                 </>
               )
             })()}
           </g>
         )}
+
+        {/* Accessoires visuels */}
+        {(accessories ?? []).map(acc => {
+          const liveDrag = accessoryDragT?.accessoryId === acc.id
+          const liveSeg = liveDrag && accessoryDragT.segmentId
+            ? visRenderSegs.find(s => s.id === accessoryDragT.segmentId)
+            : visRenderSegs.find(s => s.id === acc.segmentId)
+          if (!liveSeg) return null
+          const liveT = liveDrag ? accessoryDragT.t : acc.t
+          const { x, y, angle } = positionFromT(liveSeg.vertices, liveT)
+          const sel = selectedAccessoryId === acc.id
+
+          if (ACC_WITH_STEM.has(acc.type)) {
+            // Symbol always upright. Stem ends at the bottom edge of the symbol.
+            // symY = center of symbol; bottom edge of symbol is at symY + symBottom = -ACC_STEM_V.
+            const isHoriz = Math.abs(Math.sin(angle * Math.PI / 180)) < 0.5
+            const symBottom = ACC_SYM_BOTTOM[acc.type] ?? 8
+            const symX = isHoriz ? 0 : ACC_STEM_H
+            const symY = -(ACC_STEM_V + symBottom)
+            const stemEndY = -ACC_STEM_V
+            return (
+              <g key={acc.id}
+                transform={`translate(${x},${y})`}
+                style={{ cursor: liveDrag ? 'grabbing' : 'grab' }}>
+                <circle cx={symX} cy={symY} r={14} fill="transparent" />
+                {/* Horizontal part (vertical pipes only) */}
+                {!isHoriz && (
+                  <line x1="0" y1="0" x2={ACC_STEM_H} y2="0"
+                    stroke="#000" strokeWidth="1.2" strokeLinecap="round"
+                    style={{ pointerEvents: 'none' }} />
+                )}
+                {/* Vertical part — ends at bottom edge of symbol */}
+                <line x1={symX} y1="0" x2={symX} y2={stemEndY}
+                  stroke="#000" strokeWidth="1.2" strokeLinecap="round"
+                  style={{ pointerEvents: 'none' }} />
+                <g transform={`translate(${symX},${symY})`} style={{ pointerEvents: 'none' }}>
+                  <AccessorySymbol type={acc.type} />
+                </g>
+                {sel && (
+                  <circle cx={symX} cy={symY} r={13}
+                    fill="none" stroke="#2563eb" strokeWidth={1.5}
+                    style={{ pointerEvents: 'none' }} />
+                )}
+              </g>
+            )
+          }
+
+          // Angle effectif = angle du fluide (uniquement pour les 4 accessoires directionnels)
+          const flowDir = flowDirections?.get(liveSeg.id)
+          const flowReversed = ACC_FLIP_Y.has(acc.type) && flowDir != null && flowDir.fromId === liveSeg.endPointId
+          const effectiveAngle = flowReversed ? angle + 180 : angle
+          const cosEff = Math.cos(effectiveAngle * Math.PI / 180)
+          const sinEff = Math.sin(effectiveAngle * Math.PI / 180)
+          const needsFlip = cosEff < -0.001 || (Math.abs(cosEff) < 0.001 && sinEff < -0.001)
+          const flipY = (ACC_FLIP_Y.has(acc.type) || ACC_GRAVITY_FLIP.has(acc.type)) && needsFlip ? -1 : 1
+          return (
+            <g key={acc.id}
+              transform={`translate(${x},${y}) rotate(${effectiveAngle}) scale(1,${flipY})`}
+              style={{ cursor: liveDrag ? 'grabbing' : 'grab' }}>
+              <circle r={16} fill="transparent" />
+              <g style={{ pointerEvents: 'none' }}>
+                <AccessorySymbol type={acc.type} counterAngle={-effectiveAngle} />
+              </g>
+              {sel && (
+                <circle r={13} fill="none" stroke="#2563eb" strokeWidth={1.5}
+                  style={{ pointerEvents: 'none' }} />
+              )}
+            </g>
+          )
+        })}
+
+        {/* Prévisualisation accessoire */}
+        {previewAccessory && placingAccessoryType && (() => {
+          if (ACC_WITH_STEM.has(placingAccessoryType)) {
+            const isHoriz = Math.abs(Math.sin(previewAccessory.angle * Math.PI / 180)) < 0.5
+            const symBottom = ACC_SYM_BOTTOM[placingAccessoryType] ?? 8
+            const symX = isHoriz ? 0 : ACC_STEM_H
+            const symY = -(ACC_STEM_V + symBottom)
+            const stemEndY = -ACC_STEM_V
+            return (
+              <g transform={`translate(${previewAccessory.x},${previewAccessory.y})`}
+                style={{ pointerEvents: 'none', opacity: 0.5 }}>
+                {!isHoriz && (
+                  <line x1="0" y1="0" x2={ACC_STEM_H} y2="0"
+                    stroke="#000" strokeWidth="1.2" strokeLinecap="round" />
+                )}
+                <line x1={symX} y1="0" x2={symX} y2={stemEndY}
+                  stroke="#000" strokeWidth="1.2" strokeLinecap="round" />
+                <g transform={`translate(${symX},${symY})`}>
+                  <AccessorySymbol type={placingAccessoryType} />
+                </g>
+              </g>
+            )
+          }
+          const prevSeg = visRenderSegs.find(s => s.id === previewAccessory.segId)
+          const prevFlowDir = prevSeg ? flowDirections?.get(prevSeg.id) : null
+          const prevFlowReversed = ACC_FLIP_Y.has(placingAccessoryType) && prevFlowDir != null && prevSeg && prevFlowDir.fromId === prevSeg.endPointId
+          const prevEffAngle = prevFlowReversed ? previewAccessory.angle + 180 : previewAccessory.angle
+          const prevCosEff = Math.cos(prevEffAngle * Math.PI / 180)
+          const prevSinEff = Math.sin(prevEffAngle * Math.PI / 180)
+          const prevNeedsFlip = prevCosEff < -0.001 || (Math.abs(prevCosEff) < 0.001 && prevSinEff < -0.001)
+          const prevFlipY = (ACC_FLIP_Y.has(placingAccessoryType) || ACC_GRAVITY_FLIP.has(placingAccessoryType)) && prevNeedsFlip ? -1 : 1
+          return (
+            <g transform={`translate(${previewAccessory.x},${previewAccessory.y}) rotate(${prevEffAngle}) scale(1,${prevFlipY})`}
+              style={{ pointerEvents: 'none', opacity: 0.5 }}>
+              <AccessorySymbol type={placingAccessoryType} counterAngle={-prevEffAngle} />
+            </g>
+          )
+        })()}
 
         {/* Nœuds */}
         {visRenderPts.map(pt => {
@@ -2308,7 +2015,7 @@ if (drawing) commitDrawing()
           // Temperature helpers
           const resolveNodeTemp = (ptId) => {
             if (!canvasDisplay?.temperatureNoeud) return null
-            if (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') return null
+            if (isAlimMode) return null
             const mix = thermalResults?.nodeTemps?.get(ptId)
             if (mix != null) return mix
             if (!flowDirections) return null
@@ -2344,12 +2051,16 @@ if (drawing) commitDrawing()
           }
 
           const resolveNodePression = (ptId: string) => {
-            const isAlimMode = activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef'
             if (!isAlimMode || !flowDirections) return { pDispo: null, pStat: null }
             const inSegId = Array.from(flowDirections.entries()).find(([, d]) => d != null && d.toId === ptId)?.[0] ?? null
-            if (!inSegId) return { pDispo: null, pStat: null }
-            const pDispo = canvasDisplay?.pressionDispo ? (pdcCumAlimResults?.segPressionAval?.get(inSegId) ?? null) : null
-            const pStat  = canvasDisplay?.pressionStat  ? (pdcCumAlimResults?.segPStatAval?.get(inSegId)   ?? null) : null
+            if (inSegId) {
+              const pDispo = canvasDisplay?.pressionDispo ? (pdcCumAlimResults?.segPressionAval?.get(inSegId) ?? null) : null
+              const pStat  = canvasDisplay?.pressionStat  ? (pdcCumAlimResults?.segPStatAval?.get(inSegId)   ?? null) : null
+              return { pDispo, pStat }
+            }
+            // Fallback : nœud source (productionECS) — utilise les pressions au nœud
+            const pDispo = canvasDisplay?.pressionDispo ? (pdcCumAlimResults?.nodePression?.get(ptId) ?? null) : null
+            const pStat  = canvasDisplay?.pressionStat  ? (pdcCumAlimResults?.nodePStat?.get(ptId)    ?? null) : null
             return { pDispo, pStat }
           }
 
@@ -2369,7 +2080,7 @@ if (drawing) commitDrawing()
           }
 
           const resolveDpNoeud = (ptId: string): number | null => {
-            if (!canvasDisplay?.dpNoeud || activeCalcId !== 'bouclage-ecs') return null
+            if (!canvasDisplay?.dpNoeud || !isBouclage) return null
             return pdcCumResults?.nodeCumDp?.get(ptId) ?? null
           }
 
@@ -2396,6 +2107,9 @@ if (drawing) commitDrawing()
                 : [pt.id])
             }
             const lockedTemp = resolveNodeTemp(pt.id)
+            const { pDispo: lkPDispo, pStat: lkPStat } = resolveNodePression(pt.id)
+            const lkBothP = lkPDispo != null && lkPStat != null
+            const lkBx = pt.x + 8
             return (
               <g key={pt.id} onClick={lockedClick} style={{ cursor: 'pointer' }}>
                 <circle cx={pt.x} cy={pt.y} r={10} fill="transparent" />
@@ -2405,8 +2119,10 @@ if (drawing) commitDrawing()
                   stroke={sel ? '#f59e0b' : '#94a3b8'}
                   strokeWidth={1.5}
                   style={{ pointerEvents: 'none' }} />
-                <TempBadge x={pt.x + 8} y={pt.y} T={lockedTemp} />
-                <DpBadge x={pt.x + 8} y={pt.y + (lockedTemp != null ? 13 : 0)} dp={resolveDpNoeud(pt.id)} />
+                <TempBadge x={lkBx} y={pt.y} T={lockedTemp} />
+                <DpBadge x={lkBx} y={pt.y + (lockedTemp != null ? 13 : 0)} dp={resolveDpNoeud(pt.id)} />
+                <PressBadge x={lkBx} y={pt.y + (lkBothP ? -7 : 0)} p={lkPDispo} isErr={lkPDispo != null && lkPDispo < 30000} prefix="disp." />
+                <PressBadge x={lkBx} y={pt.y + (lkBothP ? 7 : 0)}  p={lkPStat}  isErr={lkPStat  != null && lkPStat  > 400000} prefix="stat." />
               </g>
             )
           }
@@ -2424,8 +2140,8 @@ if (drawing) commitDrawing()
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
                 <circle cx={pt.x} cy={pt.y} r={r + 4} fill="transparent" />
                 <g transform={`translate(${pt.x},${pt.y}) rotate(${pt.rotation ?? 180})`} style={{ pointerEvents: 'none' }}>
-                  <circle r={r} fill={sel || dragged ? '#dbeafe' : 'rgba(238,242,255,0.97)'} stroke={sel || dragged ? '#2563eb' : '#4f46e5'} strokeWidth={1.5} />
-                  <polygon points={`${-6*ts},${-7*ts} ${-6*ts},${7*ts} ${8*ts},0`} fill={sel || dragged ? '#2563eb' : '#4f46e5'} />
+                  <circle r={r} fill={sel || dragged ? '#dbeafe' : '#fff'} stroke={sel || dragged ? '#2563eb' : '#000'} strokeWidth={1.5} />
+                  <polygon points={`${-6*ts},${-7*ts} ${-6*ts},${7*ts} ${8*ts},0`} fill={sel || dragged ? '#2563eb' : '#000'} />
                 </g>
                 <TempBadge x={pt.x + r + 2} y={pt.y} T={pumpTemp} />
                 <DpBadge x={pt.x + r + 2} y={pt.y + (pumpTemp != null ? 13 : 0)} dp={resolveDpNoeud(pt.id)} />
@@ -2500,8 +2216,8 @@ if (drawing) commitDrawing()
                   const bx = pt.x + w / 2 + 4
                   return (
                     <>
-                      <PressBadge x={bx} y={pt.y + (bothP ? -7 : 0)} p={pDispo} isErr={pDispo != null && pDispo < 30000} prefix={bothP ? 'dispo' : undefined} />
-                      <PressBadge x={bx} y={pt.y + (bothP ? 7 : 0)}  p={pStat}  isErr={pStat  != null && pStat  > 400000} prefix={bothP ? 'stat' : undefined} />
+                      <PressBadge x={bx} y={pt.y + (bothP ? -7 : 0)} p={pDispo} isErr={pDispo != null && pDispo < 30000} prefix="disp." />
+                      <PressBadge x={bx} y={pt.y + (bothP ? 7 : 0)}  p={pStat}  isErr={pStat  != null && pStat  > 400000} prefix="stat." />
                     </>
                   )
                 })()}
@@ -2511,12 +2227,12 @@ if (drawing) commitDrawing()
           if (pt.type === 'arriveeEF') {
             const w = pt.size?.w ?? 44, h = pt.size?.h ?? 28
             const fs = Math.max(6, Math.min(9, h * 0.28))
-            const col = sel || dragged ? '#1d4ed8' : '#2563eb'
-            const bg  = sel || dragged ? '#bfdbfe' : '#dbeafe'
-            const efPDispo = (canvasDisplay?.pressionDispo && activeCalcId === 'alimentation-ef')
+            const col = sel || dragged ? '#2563eb' : '#000'
+            const bg  = sel || dragged ? '#dbeafe' : '#fff'
+            const efPDispo = (canvasDisplay?.pressionDispo && isAlimEF)
               ? pressionSourceAlimEF
               : null
-            const efPStat = (canvasDisplay?.pressionStat && activeCalcId === 'alimentation-ef')
+            const efPStat = (canvasDisplay?.pressionStat && isAlimEF)
               ? pressionSourceAlimEFStatic
               : null
             const bothEFP = efPDispo != null && efPStat != null
@@ -2529,8 +2245,55 @@ if (drawing) commitDrawing()
                   <text x={pt.x} y={pt.y - h * 0.15} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Arrivée</text>
                   <text x={pt.x} y={pt.y + h * 0.28} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>EF</text>
                 </g>
-                <PressBadge x={bxEF} y={pt.y + (bothEFP ? -7 : 0)} p={efPDispo} isErr={efPDispo != null && efPDispo < 30000} prefix={bothEFP ? 'dispo' : undefined} />
-                <PressBadge x={bxEF} y={pt.y + (bothEFP ? 7 : 0)}  p={efPStat}  isErr={efPStat  != null && efPStat  > 400000} prefix={bothEFP ? 'stat' : undefined} />
+                <PressBadge x={bxEF} y={pt.y + (bothEFP ? -7 : 0)} p={efPDispo} isErr={efPDispo != null && efPDispo < 30000} prefix="disp." />
+                <PressBadge x={bxEF} y={pt.y + (bothEFP ? 7 : 0)}  p={efPStat}  isErr={efPStat  != null && efPStat  > 400000} prefix="stat." />
+              </g>
+            )
+          }
+
+          if (pt.type === 'productionChauffage') {
+            const w = pt.size?.w ?? 44, h = pt.size?.h ?? 28
+            const fs = Math.max(6, Math.min(9, h * 0.28))
+            const col = sel || dragged ? '#2563eb' : '#000'
+            return (
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+                <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
+                <g style={{ pointerEvents: 'none' }}>
+                  <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
+                    fill={sel || dragged ? '#dbeafe' : '#fff'}
+                    stroke={col} strokeWidth={1.5} rx={3} />
+                  <text x={pt.x} y={pt.y - h * 0.15} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Production</text>
+                  <text x={pt.x} y={pt.y + h * 0.28} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Chauffage</text>
+                </g>
+              </g>
+            )
+          }
+
+          if (pt.type === 'emetteur') {
+            const w = 28, h = 18
+            const col = sel || dragged ? '#2563eb' : '#000'
+            const bg  = sel || dragged ? '#dbeafe' : '#fff'
+            const emDef = EMETTEUR_TYPES.find(e => e.id === pt.emetteurType)
+            return (
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+                <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
+                <g style={{ pointerEvents: 'none' }}>
+                  <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
+                    fill={bg} stroke={col} strokeWidth={1.2} rx={2} />
+                  {[-w/4 + 1, 1, w/4 - 1].map((ox, i) => (
+                    <line key={i}
+                      x1={pt.x + ox} y1={pt.y - h/2 + 3}
+                      x2={pt.x + ox} y2={pt.y + h/2 - 3}
+                      stroke={col} strokeWidth={0.9} />
+                  ))}
+                </g>
+                {emDef && (
+                  <text x={pt.x} y={pt.y - h/2 - 3}
+                    fontSize={6} fill={col} textAnchor="middle"
+                    style={{ userSelect: 'none', pointerEvents: 'none' }}>
+                    {emDef.label}
+                  </text>
+                )}
               </g>
             )
           }
@@ -2538,7 +2301,7 @@ if (drawing) commitDrawing()
           if (pt.type === 'productionECS') {
             const w = pt.size?.w ?? 44, h = pt.size?.h ?? 28
             const fs = Math.max(6, Math.min(9, h * 0.28))
-            const col = sel || dragged ? '#2563eb' : '#4f46e5'
+            const col = sel || dragged ? '#2563eb' : '#000'
 
             // Départ = T_from du tronçon aller sortant, Retour = T_to du tronçon retour entrant
             let T_dep = null, T_ret = null
@@ -2557,7 +2320,7 @@ if (drawing) commitDrawing()
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
                 <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
                 <g style={{ pointerEvents: 'none' }}>
-                  <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h} fill={sel || dragged ? '#dbeafe' : 'rgba(238,242,255,0.97)'} stroke={col} strokeWidth={1.5} rx={3} />
+                  <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h} fill={sel || dragged ? '#dbeafe' : '#fff'} stroke={col} strokeWidth={1.5} rx={3} />
                   <text x={pt.x} y={pt.y - h * 0.15} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Production</text>
                   <text x={pt.x} y={pt.y + h * 0.28} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>ECS</text>
                 </g>
@@ -2584,7 +2347,7 @@ if (drawing) commitDrawing()
                     </g>
                   )
                 })()}
-                {canvasDisplay?.dpNoeud && activeCalcId === 'bouclage-ecs' && (() => {
+                {canvasDisplay?.dpNoeud && isBouclage && (() => {
                   const retDps = Array.from(flowDirections?.entries() ?? [])
                     .filter(([, dir]) => dir.toId === pt.id)
                     .map(([sid]) => pdcCumResults?.segCumDp?.get(sid))
@@ -2592,6 +2355,18 @@ if (drawing) commitDrawing()
                   if (retDps.length === 0) return null
                   const maxDp = Math.max(...retDps)
                   return <DpBadge x={pt.x + w / 2 + 4} y={pt.y + h / 2 + 8} dp={maxDp} />
+                })()}
+                {(() => {
+                  const { pDispo, pStat } = resolveNodePression(pt.id)
+                  if (pDispo == null && pStat == null) return null
+                  const bothP = pDispo != null && pStat != null
+                  const bx = pt.x + w / 2 + 4
+                  return (
+                    <>
+                      <PressBadge x={bx} y={pt.y + (bothP ? -7 : 0)} p={pDispo} isErr={pDispo != null && pDispo < 30000} prefix="disp." />
+                      <PressBadge x={bx} y={pt.y + (bothP ? 7 : 0)}  p={pStat}  isErr={pStat  != null && pStat  > 400000} prefix="stat." />
+                    </>
+                  )
                 })()}
               </g>
             )
@@ -2630,7 +2405,7 @@ if (drawing) commitDrawing()
             : resolveNodeTemp(pt.id)
 
           const incomingDps = (() => {
-            if (!canvasDisplay?.dpNoeud || activeCalcId !== 'bouclage-ecs' || !flowDirections) return []
+            if (!canvasDisplay?.dpNoeud || !isBouclage || !flowDirections) return []
             const res: { dp: number; dx: number; dy: number }[] = []
             for (const [sid, dir] of flowDirections) {
               if (dir.toId !== pt.id) continue
@@ -2679,8 +2454,8 @@ if (drawing) commitDrawing()
                 const bx = pt.x + PT_R + 2
                 return (
                   <>
-                    <PressBadge x={bx} y={pt.y + (bothP ? -7 : 0)} p={pDispo} isErr={pDispo != null && pDispo < 30000} />
-                    <PressBadge x={bx} y={pt.y + (bothP ? 7 : 0)}  p={pStat}  isErr={pStat  != null && pStat  > 400000} />
+                    <PressBadge x={bx} y={pt.y + (bothP ? -7 : 0)} p={pDispo} isErr={pDispo != null && pDispo < 30000} prefix="disp." />
+                    <PressBadge x={bx} y={pt.y + (bothP ? 7 : 0)}  p={pStat}  isErr={pStat  != null && pStat  > 400000} prefix="stat." />
                   </>
                 )
               })()}
@@ -2692,12 +2467,12 @@ if (drawing) commitDrawing()
         {previewPath && (
           <>
             <path d={previewPath}
-              stroke={activeCalcId === 'alimentation-ef' ? '#2563eb' : pipeType === 'retour' ? '#f97316' : '#dc2626'} strokeWidth={1.5}
-              strokeDasharray={activeCalcId !== 'alimentation-ef' && pipeType === 'retour' ? '10,6' : '5,3'}
+              stroke={isAlimEF ? '#2563eb' : pipeType === 'retour' ? '#f97316' : '#dc2626'} strokeWidth={1.5}
+              strokeDasharray={!isAlimEF && pipeType === 'retour' ? '10,6' : '5,3'}
               fill="none" opacity={0.6} style={{ pointerEvents: 'none' }} />
             {drawing.vertices.map((v, i) =>
               <rect key={i} x={v.x - 2.5} y={v.y - 2.5} width={5} height={5}
-                fill={activeCalcId === 'alimentation-ef' ? '#2563eb' : pipeType === 'retour' ? '#f97316' : '#dc2626'}
+                fill={isAlimEF ? '#2563eb' : pipeType === 'retour' ? '#f97316' : '#dc2626'}
                 style={{ pointerEvents: 'none' }} />
             )}
           </>
@@ -2711,8 +2486,8 @@ if (drawing) commitDrawing()
             return (
               <g style={{ pointerEvents: 'none' }}>
                 <g transform={`translate(${gx},${gy}) rotate(${placingEquipment.rotation ?? 0})`}>
-                  <circle r={r} fill="rgba(238,242,255,0.6)" stroke="#818cf8" strokeWidth={1.5} strokeDasharray="4,3" />
-                  <polygon points={`${-6*ts},${-7*ts} ${-6*ts},${7*ts} ${8*ts},0`} fill="rgba(79,70,229,0.5)" />
+                  <circle r={r} fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.5} strokeDasharray="4,3" />
+                  <polygon points={`${-6*ts},${-7*ts} ${-6*ts},${7*ts} ${8*ts},0`} fill="rgba(0,0,0,0.4)" />
                 </g>
               </g>
             )
@@ -2723,9 +2498,9 @@ if (drawing) commitDrawing()
             return (
               <g style={{ pointerEvents: 'none' }}>
                 <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
-                  fill="rgba(219,234,254,0.6)" stroke="#60a5fa" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
-                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(37,99,235,0.7)" fontWeight="700" textAnchor="middle">Arrivée</text>
-                <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(37,99,235,0.7)" fontWeight="700" textAnchor="middle">EF</text>
+                  fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
+                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">Arrivée</text>
+                <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">EF</text>
               </g>
             )
           }
@@ -2735,9 +2510,36 @@ if (drawing) commitDrawing()
             return (
               <g style={{ pointerEvents: 'none' }}>
                 <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
-                  fill="rgba(238,242,255,0.6)" stroke="#818cf8" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
-                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(79,70,229,0.7)" fontWeight="700" textAnchor="middle">Production</text>
-                <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(79,70,229,0.7)" fontWeight="700" textAnchor="middle">ECS</text>
+                  fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
+                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">Production</text>
+                <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">ECS</text>
+              </g>
+            )
+          }
+          if (placingEquipment.type === 'productionChauffage') {
+            const w = placingEquipment.size?.w ?? 44, h = placingEquipment.size?.h ?? 28
+            const fs = Math.max(6, Math.min(9, h * 0.28))
+            return (
+              <g style={{ pointerEvents: 'none' }}>
+                <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
+                  fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
+                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">Prod.</text>
+                <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">Chauffage</text>
+              </g>
+            )
+          }
+          if (placingEquipment.type === 'emetteur') {
+            const w = placingEquipment.size?.w ?? 28, h = placingEquipment.size?.h ?? 18
+            return (
+              <g style={{ pointerEvents: 'none' }}>
+                <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
+                  fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.5} strokeDasharray="4,3" rx={2} />
+                {[-w/4 + 1, 1, w/4 - 1].map((ox, i) => (
+                  <line key={i}
+                    x1={gx + ox} y1={gy - h/2 + 3}
+                    x2={gx + ox} y2={gy + h/2 - 3}
+                    stroke="rgba(0,0,0,0.35)" strokeWidth={1.2} />
+                ))}
               </g>
             )
           }
@@ -2746,23 +2548,36 @@ if (drawing) commitDrawing()
 
         {/* Ghost de placement chaufferie */}
         {placingChaufferie && levels.length > 0 && (() => {
-          let li = 0
-          for (let i = 0; i < levels.length; i++) {
-            const yBot = lineYs[i], yTop = lineYs[i + 1]
-            if (yTop !== undefined && mouse.y > yTop && mouse.y <= yBot) { li = i; break }
-          }
-          if (lineYs.length > levels.length && mouse.y <= lineYs[levels.length]) li = levels.length - 1
+          let li = findLevelIndexAt(mouse.y, lineYs)
+          if (li < 0) li = (lineYs.length > levels.length && mouse.y <= lineYs[levels.length]) ? levels.length - 1 : 0
           const yBot = lineYs[li]
           const w = chaufferie.x2 - chaufferie.x1
           const gx1 = snap(mouse.x - w / 2)
           return (
             <g style={{ pointerEvents: 'none' }}>
               <rect x={gx1} y={yBot - chaufferie.height} width={w} height={chaufferie.height}
-                fill={activeCalcId === 'alimentation-ef' ? 'rgba(219,234,254,0.5)' : 'rgba(238,242,255,0.5)'}
-                stroke={activeCalcId === 'alimentation-ef' ? '#60a5fa' : '#818cf8'} strokeWidth={1.5} strokeDasharray="6,4" />
+                fill="rgba(0,0,0,0.04)" stroke="rgba(0,0,0,0.35)" strokeWidth={1.5} strokeDasharray="6,4" />
               <text x={gx1 + w / 2} y={yBot - chaufferie.height + 13}
-                fontSize={10} fill={activeCalcId === 'alimentation-ef' ? 'rgba(37,99,235,0.8)' : 'rgba(129,140,248,0.8)'} fontWeight="600" textAnchor="middle"
-                style={{ userSelect: 'none' }}>{activeCalcId === 'alimentation-ef' ? 'Local EF' : 'Local ECS'}</text>
+                fontSize={10} fill="rgba(0,0,0,0.45)" fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none' }}>Local ECS</text>
+            </g>
+          )
+        })()}
+
+        {/* Ghost de placement local EF */}
+        {placingLocalEF && levels.length > 0 && (() => {
+          let li = findLevelIndexAt(mouse.y, lineYs)
+          if (li < 0) li = (lineYs.length > levels.length && mouse.y <= lineYs[levels.length]) ? levels.length - 1 : 0
+          const yBot = lineYs[li]
+          const LEF_W = 270, LEF_H = 150
+          const gx1 = snap(mouse.x - LEF_W / 2)
+          return (
+            <g style={{ pointerEvents: 'none' }}>
+              <rect x={gx1} y={yBot - LEF_H} width={LEF_W} height={LEF_H}
+                fill="rgba(0,0,0,0.04)" stroke="rgba(0,0,0,0.35)" strokeWidth={1.5} strokeDasharray="6,4" />
+              <text x={gx1 + LEF_W / 2} y={yBot - LEF_H + 13}
+                fontSize={10} fill="rgba(0,0,0,0.45)" fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none' }}>Local EF</text>
             </g>
           )
         })()}
@@ -2784,8 +2599,8 @@ if (drawing) commitDrawing()
         </text>
       )}
       {placingChaufferie && (
-        <text x={8} y={18} fontSize={10} fill={activeCalcId === 'alimentation-ef' ? '#2563eb' : '#818cf8'}>
-          {activeCalcId === 'alimentation-ef' ? 'Cliquez pour placer le local EF · Échap pour annuler' : 'Cliquez pour placer le local ECS · Échap pour annuler'}
+        <text x={8} y={18} fontSize={10} fill="#818cf8">
+          Cliquez pour placer le local ECS · Échap pour annuler
         </text>
       )}
     </svg>

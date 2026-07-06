@@ -1,3 +1,8 @@
+import type { PdcParams, PdcParamsAlimECS, PdcParamsAlimEF } from './utils/pdcCalc'
+export type { PdcParams, PdcParamsAlimECS, PdcParamsAlimEF }
+import type { EmetteurType } from './data/emetteurs'
+export type { EmetteurType }
+
 // ── Types centraux ──────────────────────────────────────────────────────────
 
 export interface Vertex {
@@ -19,6 +24,8 @@ export interface Material {
   epsilon?: number
   minDi?: number
   dns: DnEntry[]
+  encrassement?: boolean
+  encrassementEpaisseur?: number
 }
 
 export interface Insulation {
@@ -29,8 +36,17 @@ export interface Insulation {
   thicknesses: number[]
 }
 
-export type SegmentType = 'aller' | 'retour' | 'ef'
-export type PointType = 'productionECS' | 'arriveeEF' | 'groupe' | 'pump' | 'node'
+export type SegmentType = 'aller' | 'retour'
+export type PointType = 'productionECS' | 'arriveeEF' | 'groupe' | 'pump' | 'node' | 'productionChauffage' | 'emetteur'
+
+export type FluidId = 'ecs' | 'ef' | 'chauffage'
+
+export type CalcMode =
+  | 'bouclage-ecs'
+  | 'alimentation-ecs'
+  | 'alimentation-ef'
+  | 'distribution-chauffage'
+  | 'pdc-chauffage'
 
 export interface Segment {
   id: string
@@ -51,6 +67,7 @@ export interface Segment {
   velocity?: number | null
   t_amb_override?: number | null
   isLocked?: boolean
+  encrassementEpaisseur?: number | null
 }
 
 export interface NodeSize {
@@ -67,6 +84,10 @@ export interface Point {
   size?: NodeSize
   isLocked?: boolean
   cote_override?: number | null
+  // Champs émetteur chauffage
+  emetteurType?: EmetteurType
+  puissance?: number       // W
+  deltaT_emetteur?: number // ΔT eau aller/retour (°C), override du deltaT_reseau global
 }
 
 export interface Level {
@@ -124,18 +145,81 @@ export type FlowDirections = Map<string, FlowDirection>
 
 export type RoleMap = Map<string, string>
 
+// ── Types projet ─────────────────────────────────────────────────────────────
+
+export interface Chaufferie {
+  placed: boolean
+  enabled: boolean
+  levelId: string
+  x1: number
+  x2: number
+  height: number
+}
+
+export interface Appareil {
+  id: string
+  name: string
+  qBase: number
+  k: number | null
+  enabled: boolean
+}
+
+export interface AlimentationParams {
+  buildingType: string
+  appareils: Appareil[]
+}
+
+export interface Valve {
+  id: string
+  segmentId: string
+  t: number
+  name?: string | null
+}
+
+export interface Accessory {
+  id: string
+  type: string
+  segmentId: string
+  t: number
+}
+
+export interface LocalEF {
+  id: string
+  enabled: boolean
+  levelId: string
+  x1: number
+  x2: number
+  height: number
+}
+
+export interface ChauffageParams {
+  T_depart: number      // Température de départ (°C)
+  deltaT_reseau: number // ΔT par défaut des émetteurs (K) — peut être overridé par émetteur
+}
+
 // ── Types variantes ─────────────────────────────────────────────────────────
 
 export interface ProjectData {
-  segments: Segment[]
-  points: Point[]
-  materials: Material[]
-  insulations: Insulation[]
-  levels: Level[]
-  columns: Column[]
-  columnXs: number[]
-  globalParams: GlobalParams
-  chaufferie?: unknown
+  segments:              Segment[]
+  points:                Point[]
+  materialsECS:          Material[]
+  materialsEF:           Material[]
+  insulations:           Insulation[]
+  levels:                Level[]
+  lineYs:                number[]
+  columns:               Column[]
+  columnXs:              number[]
+  globalParams:          GlobalParams
+  chaufferie:            Chaufferie
+  alimentationParamsECS: AlimentationParams
+  alimentationParamsEF:  AlimentationParams | null
+  pdcParamsBouclageECS:  PdcParams
+  pdcParamsAlimECS:      PdcParamsAlimECS
+  pdcParamsAlimEF:       PdcParamsAlimEF | null
+  valves:                Valve[]
+  accessories:           Accessory[]
+  locauxEF:              LocalEF[]
+  chauffageParams:       ChauffageParams
 }
 
 export interface Variant {

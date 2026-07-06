@@ -1,117 +1,10 @@
-// Retourne la localisation textuelle d'un point (sommet) :
-// – "NomPompe (Niveau)" si c'est un nœud pompe
-// – "Production ECS (Niveau)" si c'est un nœud ECS
-// – "Chaufferie (Niveau)" si dans la zone chaufferie
-// – "NomColonne (Niveau)" si dans une colonne
-// – "Niveau" sinon
-export function getNodeLocation(pt, levels, lineYs, columns, columnXs, chaufferie, dirHint, specialPts) {
-  let levelName = ''
-  let levelId   = null
-  for (let i = 0; i < levels.length; i++) {
-    const yBot = lineYs[i]
-    const yTop = lineYs[i + 1]
-    if (yTop === undefined) continue
-    const goingIntoThisLevel = pt.y === yTop && dirHint && dirHint.y > pt.y
-    if ((pt.y > yTop && pt.y <= yBot) || goingIntoThisLevel) {
-      levelName = levels[i].name
-      levelId   = levels[i].id
-      break
-    }
-  }
-  if (!levelName) {
-    const topLine = lineYs[levels.length]
-    if (topLine !== undefined && pt.y <= topLine) levelName = 'Toiture'
-  }
+import type { CalcMode } from '../types'
+import { findLevelIndexAt } from './levelUtils'
+import { getNodeLocation, buildECSDistances, buildRetourDistances } from './pointLocation'
+import { getModeFlags } from './calcModeFlags'
+import { EMETTEUR_TYPES } from '../data/emetteurs'
 
-  // Équipements spéciaux (priorité sur toute zone)
-  if (specialPts?.length) {
-    for (const sp of specialPts) {
-      if (Math.abs(pt.x - sp.x) < 2 && Math.abs(pt.y - sp.y) < 2) {
-        if (sp.type === 'pump') return `${sp.name} (${levelName || '?'})`
-        if (sp.type === 'productionECS') return `Production ECS (${levelName || '?'})`
-      }
-    }
-  }
-
-  // Zone chaufferie
-  if (chaufferie?.enabled) {
-    const lvlIdx = levels.findIndex(l => l.id === chaufferie.levelId)
-    if (lvlIdx >= 0) {
-      const yBot = lineYs[lvlIdx]
-      const yTop = yBot - chaufferie.height
-      if (pt.x >= chaufferie.x1 && pt.x <= chaufferie.x2 && pt.y >= yTop && pt.y <= yBot) {
-        return `Local ECS (${levelName || '?'})`
-      }
-    }
-  }
-
-  // Colonne
-  if (columns?.length && columnXs?.length) {
-    for (let i = 0; i < columns.length; i++) {
-      const cx1 = columnXs[i], cx2 = columnXs[i + 1]
-      if (cx1 === undefined || cx2 === undefined) continue
-      if (pt.x < cx1 || pt.x > cx2) continue
-      const col = columns[i]
-      if (col.isGap) continue
-      const covers = col.levelIds === 'all' ||
-        (Array.isArray(col.levelIds) && levelId && col.levelIds.includes(levelId))
-      if (covers) return `${col.name} (${levelName || '?'})`
-    }
-  }
-
-  return levelName || '?'
-}
-
-// Longueur géométrique d'un tronçon en pixels (somme des distances entre sommets)
-function segPixelLength(seg) {
-  const vs = seg.vertices ?? []
-  let len = 0
-  for (let i = 0; i < vs.length - 1; i++) {
-    const dx = vs[i + 1].x - vs[i].x, dy = vs[i + 1].y - vs[i].y
-    len += Math.sqrt(dx * dx + dy * dy)
-  }
-  return Math.max(len, 1)
-}
-
-// Dijkstra depuis les nœuds Production ECS en ne traversant que les tronçons Aller ECS.
-// Retourne Map<ptId, distancePixels> — clé absente = nœud non encore atteint.
-export function buildECSDistances(allSegs, specialPts) {
-  const dist = new Map()
-  const ecsNodes = (specialPts ?? []).filter(p => p.type === 'productionECS')
-  if (!ecsNodes.length) return dist
-
-  // Graphe d'adjacence : Aller ECS uniquement, non orienté
-  const adj = new Map()
-  for (const seg of (allSegs ?? [])) {
-    if (seg.type !== 'aller' || !seg.startPointId || !seg.endPointId) continue
-    const len = segPixelLength(seg)
-    for (const [a, b] of [[seg.startPointId, seg.endPointId], [seg.endPointId, seg.startPointId]]) {
-      if (!adj.has(a)) adj.set(a, [])
-      adj.get(a).push({ id: b, len })
-    }
-  }
-
-  const queue = []
-  for (const ecs of ecsNodes) {
-    dist.set(ecs.id, 0)
-    queue.push({ id: ecs.id, d: 0 })
-  }
-
-  while (queue.length > 0) {
-    queue.sort((a, b) => a.d - b.d)
-    const { id, d } = queue.shift()
-    if ((dist.get(id) ?? Infinity) < d) continue
-    for (const { id: nId, len } of (adj.get(id) ?? [])) {
-      const nd = d + len
-      if (nd < (dist.get(nId) ?? Infinity)) {
-        dist.set(nId, nd)
-        queue.push({ id: nId, d: nd })
-      }
-    }
-  }
-
-  return dist
-}
+export { getNodeLocation }
 
 // Retourne "NomColonne (Niveau)" si le vertex v est dans une colonne, sinon null.
 function getVertexColLoc(v, hint, levels, lineYs, columns, columnXs) {
@@ -141,15 +34,14 @@ function getVertexColLoc(v, hint, levels, lineYs, columns, columnXs) {
 }
 
 // Remonte la chaîne des antennes parentes pour trouver la colonne d'une antenne.
-// Vérifie d'abord l'extrémité amont du tronçon courant, puis les antennes en amont.
 function findAntenneColLoc(seg, allSegs, roleMap, allerDist, levels, lineYs, columns, columnXs) {
   if (!allSegs || !roleMap || !allerDist) return null
   const verts = seg.vertices ?? []
   if (!verts.length) return null
 
   const s0 = verts[0], sN = verts[verts.length - 1]
-  const h0 = verts.length > 1 ? verts[1]                 : null
-  const hN = verts.length > 1 ? verts[verts.length - 2]  : null
+  const h0 = verts.length > 1 ? verts[1]                : null
+  const hN = verts.length > 1 ? verts[verts.length - 2] : null
   const startDist = allerDist.get(seg.startPointId) ?? Infinity
   const endDist   = allerDist.get(seg.endPointId)   ?? Infinity
 
@@ -158,11 +50,9 @@ function findAntenneColLoc(seg, allSegs, roleMap, allerDist, levels, lineYs, col
     : [sN, hN, seg.endPointId]
   const myMinDist = Math.min(startDist, endDist)
 
-  // Extrémité amont directement dans une colonne ?
   const colLoc = getVertexColLoc(fromV, fromHint, levels, lineYs, columns, columnXs)
   if (colLoc) return colLoc
 
-  // Sinon, remonter via les antennes parentes
   for (const s of allSegs) {
     if (s.id === seg.id || s.type !== 'aller') continue
     if (roleMap.get(s.id) !== 'antenne') continue
@@ -171,7 +61,7 @@ function findAntenneColLoc(seg, allSegs, roleMap, allerDist, levels, lineYs, col
       allerDist.get(s.startPointId) ?? Infinity,
       allerDist.get(s.endPointId)   ?? Infinity,
     )
-    if (sMinDist >= myMinDist) continue  // pas en amont
+    if (sMinDist >= myMinDist) continue
     const result = findAntenneColLoc(s, allSegs, roleMap, allerDist, levels, lineYs, columns, columnXs)
     if (result) return result
   }
@@ -179,19 +69,21 @@ function findAntenneColLoc(seg, allSegs, roleMap, allerDist, levels, lineYs, col
 }
 
 // Nom par défaut d'un tronçon, sans disambiguation.
-// allerDist : Map<ptId, px> depuis buildECSDistances ; retourDist : depuis buildRetourDistances.
-// Aller : l'extrémité la plus proche de l'ECS (allerDist min) en premier.
-// Retour : l'extrémité la plus loin de l'ECS (retourDist max) en premier (sens du fluide).
-export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null, role = null, activeCalcId = null, allSegs = null, roleMap = null, flowDirections = null) {
-  const isEF = activeCalcId === 'alimentation-ef'
+export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null, role = null, activeCalcId: CalcMode | null | string = null, allSegs = null, roleMap = null, flowDirections = null) {
+  const { isBouclage, isAlimECS, isAlimEF, isChauffage: isChauffageMode } = getModeFlags(activeCalcId as CalcMode | null)
+  const isChaufSeg = seg.type === 'aller-ch' || seg.type === 'retour-ch'
+    || (isChauffageMode && (seg.type === 'aller' || seg.type === 'retour'))
+  const isRetourCh = isChaufSeg && (seg.type === 'retour-ch' || seg.type === 'retour')
   const ecsDistances = allerDist
   if (!seg.vertices?.length) return ''
-  const verts = seg.vertices
-  const startV = verts[0]
-  const endV = verts[verts.length - 1]
-  const startHint = verts.length > 1 ? verts[1] : null
-  const endHint = verts.length > 1 ? verts[verts.length - 2] : null
-  const prefix = isEF ? 'EF'
+  const verts    = seg.vertices
+  const startV   = verts[0]
+  const endV     = verts[verts.length - 1]
+  const startHint = verts.length > 1 ? verts[1]                : null
+  const endHint   = verts.length > 1 ? verts[verts.length - 2] : null
+  const prefix = isAlimEF ? 'EF'
+    : isRetourCh  ? 'Retour CH'
+    : isChaufSeg  ? 'Aller CH'
     : role === 'collecteur-aller'  ? 'Collecteur aller ECS'
     : role === 'collecteur-retour' ? 'Collecteur retour ECS'
     : role === 'antenne'           ? 'Antenne ECS'
@@ -210,13 +102,12 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
     return '?'
   }
 
-  // Si l'extrémité EST un nœud pompe/ECS/arriveeEF (par ID), son nom prend priorité sur toute zone
   const specialLabel = (ptId, v, hint) => {
     const sp = specialPts?.find(p => p.id === ptId && (p.type === 'pump' || p.type === 'productionECS' || p.type === 'arriveeEF'))
     if (!sp) return null
     const lvl = getLevelName(v, hint)
-    if (sp.type === 'pump')         return `${sp.name} (${lvl})`
-    if (sp.type === 'arriveeEF')    return sp.name ? `${sp.name} (${lvl})` : `Arrivée EF (${lvl})`
+    if (sp.type === 'pump')      return `${sp.name} (${lvl})`
+    if (sp.type === 'arriveeEF') return sp.name ? `${sp.name} (${lvl})` : `Arrivée EF (${lvl})`
     return `Production ECS (${lvl})`
   }
 
@@ -225,8 +116,7 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
   const endL = specialLabel(seg.endPointId, endV, endHint)
     ?? getNodeLocation(endV, levels, lineYs, columns, columnXs, chaufferie, endHint, specialPts)
 
-  if (seg.type === 'retour' && retourDist) {
-    // Retour : le fluide revient vers l'ECS → l'extrémité la plus loin (retourDist max) en premier
+  if (seg.type === 'retour' && retourDist?.size) {
     const startD = retourDist.get(seg.startPointId) ?? -Infinity
     const endD   = retourDist.get(seg.endPointId)   ?? -Infinity
     const putStartFirst = startD >= endD
@@ -234,34 +124,48 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
     return `${prefix} – ${firstL} → ${secondL}`
   }
   if (ecsDistances?.size) {
-    // Aller : le plus proche de l'ECS en premier
     const startDist = ecsDistances.get(seg.startPointId) ?? Infinity
     const endDist   = ecsDistances.get(seg.endPointId)   ?? Infinity
     const putStartFirst = startDist <= endDist
     const [firstL, secondL] = putStartFirst ? [startL, endL] : [endL, startL]
 
-    // Antenne en alimentation-ecs ou bouclage-ecs : chercher la colonne via la chaîne d'antennes parentes
-    if (role === 'antenne' && (activeCalcId === 'alimentation-ecs' || activeCalcId === 'bouclage-ecs')) {
+    if (role === 'antenne' && (isAlimECS || isBouclage)) {
       const colLoc = findAntenneColLoc(seg, allSegs, roleMap, ecsDistances, levels, lineYs, columns, columnXs)
       if (colLoc) return `${prefix} – ${colLoc} → ${colLoc}`
     }
 
     return `${prefix} – ${firstL} → ${secondL}`
   }
-  if (isEF && flowDirections) {
+  if (isAlimEF && flowDirections) {
     const fd = (flowDirections as Map<string, { fromId: string; toId: string }>).get(seg.id)
     if (fd) {
       const [firstL, secondL] = seg.startPointId === fd.fromId ? [startL, endL] : [endL, startL]
       return `${prefix} – ${firstL} → ${secondL}`
     }
   }
+  if (isChaufSeg) {
+    const fmtNode = (ptId: string, loc: string) => {
+      const pt = specialPts?.find((p: any) => p.id === ptId)
+      if (!pt || pt.type !== 'emetteur') return loc
+      const typeName = EMETTEUR_TYPES.find(e => e.id === pt.emetteurType)?.label ?? 'Émetteur'
+      const cleanLoc = loc.replace(/ \(([^)]+)\)$/, ' - $1')
+      return `${typeName} (${cleanLoc})`
+    }
+    if (flowDirections) {
+      const fd = (flowDirections as Map<string, { fromId: string; toId: string }>).get(seg.id)
+      if (fd) {
+        const [firstL, secondL] = seg.startPointId === fd.fromId ? [startL, endL] : [endL, startL]
+        return `${prefix} – ${fmtNode(fd.fromId, firstL)} → ${fmtNode(fd.toId, secondL)}`
+      }
+    }
+    // Fallback sans flowDirections : on formate quand même les extrémités émetteur
+    return `${prefix} – ${fmtNode(seg.startPointId, startL)} → ${fmtNode(seg.endPointId, endL)}`
+  }
   return `${prefix} – ${startL} → ${endL}`
 }
 
 // ── Groupes de points de puisage ────────────────────────────────────────────
 
-// Nom de base d'un groupe : remonte les antennes ECS en sens inverse du flux
-// jusqu'au tronçon aller ECS pour récupérer sa colonne.
 export function getDefaultGroupName(
   pt: any,
   allSegs: any[],
@@ -270,24 +174,17 @@ export function getDefaultGroupName(
   roleMap: Map<string, string> | null,
   levels: any[], lineYs: number[], columns: any[], columnXs: number[]
 ): string {
-  // Niveau où se trouve physiquement le groupe
-  let levelName = '?'
-  for (let i = 0; i < levels.length; i++) {
-    const yBot = lineYs[i], yTop = lineYs[i + 1]
-    if (yTop === undefined) continue
-    if (pt.y > yTop && pt.y <= yBot) { levelName = levels[i].name; break }
-  }
+  const li = findLevelIndexAt(pt.y, lineYs)
+  let levelName = li >= 0 ? levels[li].name : '?'
   if (levelName === '?') {
     const topLine = lineYs[levels.length]
     if (topLine !== undefined && pt.y <= topLine) levelName = 'Toiture'
   }
 
-  // Segments aller entrant dans ce groupe (sens du flux → groupe)
   const incomingSegs = allSegs.filter(
     s => s.type === 'aller' && flowDirections.get(s.id)?.toId === pt.id
   )
 
-  // Remonte les antennes pour trouver la colonne du tronçon aller ECS
   for (const seg of incomingSegs) {
     const colLoc = findAntenneColLoc(seg, allSegs, roleMap, allerDist, levels, lineYs, columns, columnXs)
     if (colLoc) return `Groupe de puisage - ${colLoc}`
@@ -296,8 +193,6 @@ export function getDefaultGroupName(
   return `Groupe de puisage - ${levelName}`
 }
 
-// Calcule le nom d'affichage final (avec "- n°x" si doublons) pour tous les groupes.
-// Retourne Map<ptId, displayName>.
 export function getDisplayGroupNames(
   allPts: any[],
   allSegs: any[],
@@ -306,22 +201,19 @@ export function getDisplayGroupNames(
   roleMap: Map<string, string> | null,
   levels: any[], lineYs: number[], columns: any[], columnXs: number[]
 ): Map<string, string> {
-  const result = new Map<string, string>()
+  const result  = new Map<string, string>()
   const groupes = allPts.filter(p => p.type === 'groupe')
 
-  // Noms personnalisés — priorité absolue
   for (const pt of groupes) {
     if (pt.name) result.set(pt.id, pt.name)
   }
 
-  // Noms auto pour les groupes sans nom personnalisé
   const autoGroupes = groupes.filter(p => !p.name)
   const baseOf = new Map<string, string>()
   for (const pt of autoGroupes) {
     baseOf.set(pt.id, getDefaultGroupName(pt, allSegs, flowDirections, allerDist, roleMap, levels, lineYs, columns, columnXs))
   }
 
-  // Regrouper par nom de base → numérotation si doublon
   const byBase = new Map<string, string[]>()
   for (const [id, base] of baseOf) {
     if (!byBase.has(base)) byBase.set(base, [])
@@ -332,7 +224,6 @@ export function getDisplayGroupNames(
     if (ids.length === 1) {
       result.set(ids[0], base)
     } else {
-      // Tri : X croissant puis Y croissant (ordre visuel gauche→droite, haut→bas)
       const sorted = [...ids].sort((a, b) => {
         const pA = groupes.find(p => p.id === a)!
         const pB = groupes.find(p => p.id === b)!
@@ -345,53 +236,15 @@ export function getDisplayGroupNames(
   return result
 }
 
-// Dijkstra depuis les nœuds Production ECS en ne traversant que les tronçons Retour ECS.
-// Symétrique à buildECSDistances. Retourne Map<ptId, distancePixels>.
-export function buildRetourDistances(allSegs, specialPts) {
-  const dist = new Map()
-  const ecsNodes = (specialPts ?? []).filter(p => p.type === 'productionECS')
-  if (!ecsNodes.length) return dist
-
-  const adj = new Map()
-  for (const seg of (allSegs ?? [])) {
-    if (seg.type !== 'retour' || !seg.startPointId || !seg.endPointId) continue
-    const len = segPixelLength(seg)
-    for (const [a, b] of [[seg.startPointId, seg.endPointId], [seg.endPointId, seg.startPointId]]) {
-      if (!adj.has(a)) adj.set(a, [])
-      adj.get(a).push({ id: b, len })
-    }
-  }
-
-  const queue = []
-  for (const ecs of ecsNodes) {
-    dist.set(ecs.id, 0)
-    queue.push({ id: ecs.id, d: 0 })
-  }
-
-  while (queue.length > 0) {
-    queue.sort((a, b) => a.d - b.d)
-    const { id, d } = queue.shift()
-    if ((dist.get(id) ?? Infinity) < d) continue
-    for (const { id: nId, len } of (adj.get(id) ?? [])) {
-      const nd = d + len
-      if (nd < (dist.get(nId) ?? Infinity)) { dist.set(nId, nd); queue.push({ id: nId, d: nd }) }
-    }
-  }
-
-  return dist
-}
-
 // Nom d'affichage final (avec suffixe " - n°x" si doublons, triés par sens d'écoulement).
-export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts, role = null, activeCalcId = null, roleMap = null, flowDirections = null) {
+export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts, role = null, activeCalcId: CalcMode | null | string = null, roleMap = null, flowDirections = null) {
   if (seg.name) return seg.name
   const allerDist  = buildECSDistances(allSegs, specialPts)
   const retourDist = buildRetourDistances(allSegs, specialPts)
+  const { isAlimECS } = getModeFlags(activeCalcId as CalcMode | null)
   const base = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, role, activeCalcId, allSegs, roleMap, flowDirections)
 
-  // Pour les antennes en alimentation-ecs avec roleMap : comparer par nom complet (inclut colonne)
-  // afin que deux antennes de la même colonne soient bien groupées pour la numérotation.
-  // Pour tous les autres cas : comportement original (comparer par nom sans rôle).
-  const isAlimAntenne = role === 'antenne' && activeCalcId === 'alimentation-ecs' && roleMap != null
+  const isAlimAntenne = role === 'antenne' && isAlimECS && roleMap != null
 
   let dupes
   if (isAlimAntenne) {

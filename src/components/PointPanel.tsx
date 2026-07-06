@@ -1,8 +1,11 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
+import type { CalcMode } from '../types'
 import { sf } from '../utils/fmt'
 import { getNodeCote, getNodeDefaultCote } from '../utils/coteCalc'
 import { NumInput } from './NumInput'
 import { tAvalStyle, Field, SectionLabel, SegNameField, CoteSection, TempBadge, computeGroupePath, MAX_ANTENNE_LEN_M, MAX_ANTENNE_VOL_L } from './rpShared'
+import { getModeFlags } from '../utils/calcModeFlags'
+import { EMETTEUR_TYPES } from '../data/emetteurs'
 
 const DIR_BTNS = [
   { label: '←', rot: 180, title: 'Vers la gauche' },
@@ -11,13 +14,31 @@ const DIR_BTNS = [
   { label: '↓', rot: 90,  title: 'Vers le bas' },
 ]
 
-export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null }) {
+interface PointPanelProps {
+  pt: any; onUpdate: any; nodeTemp: number | null
+  inSegs?: any[]; globalParams: any
+  activeCalcId: CalcMode | null
+  alimentationParams: any; alimentationResults: any
+  points?: any[]; calcSubMode: string; onResultsViewChange?: any
+  pdcCumResults: any; pdcParams: any; pdcCumAlimResults: any
+  levels?: any[]; lineYs?: number[]
+  pressionSourceAlimECS?: number | null; pressionSourceAlimECSStatic?: number | null
+  pressionSourceAlimEF?: number | null; pressionSourceAlimEFStatic?: number | null
+  groupDisplayNames?: any; allSegs?: any[]; flowDirections?: any
+  materials?: any[]; roleMap?: any; columns?: any[]; columnXs?: number[]
+  thermalResults?: any; chauffageFlows?: any; chauffageParams?: any; onChauffageParamsChange?: any; chauffageThermal?: any
+}
+
+export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null }: PointPanelProps) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
   const T_depart = globalParams?.T_depart ?? null
   const [showDims, setShowDims] = useState(false)
+  const deltaTByType = useRef<Record<string, number | null>>({})
+
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, hasPdc, isChauffage } = getModeFlags(activeCalcId)
 
   const coteDef = getNodeDefaultCote(pt, levels, lineYs)
-  const coteJsx = (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') ? (
+  const coteJsx = isAlimMode ? (
     <Field label="Cote" unit="m">
       <NumInput step={0.01}
         value={pt.cote_override ?? null}
@@ -97,7 +118,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
     )
     const showDebit = pumpFlowRateLh != null && pumpFlowRateLh > 0
     const showPdc   = critDp != null
-    const showTemp  = activeCalcId !== 'alimentation-ecs' && nodeTemp != null
+    const showTemp  = !isAlimECS && nodeTemp != null
     return (
       <div className="rp-section">
         <h3 className="rp-title">Pompe</h3>
@@ -176,7 +197,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
       for (const k of Object.keys(equip)) { if (!equip[k]) delete equip[k] }
       set('equipements', equip)
     }
-    const enabledAppareils = (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef' || activeCalcId === 'bouclage-ecs')
+    const enabledAppareils = hasPdc
       ? (alimentationParams?.appareils ?? []).filter(a => a.enabled)
       : []
     return (
@@ -189,7 +210,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           onChange={v => set('name', v)}
         />
 
-        {(activeCalcId === 'alimentation-ecs' || activeCalcId === 'bouclage-ecs') && alimentationParams?.buildingType === 'hopital' && (<>
+        {hasPdc && alimentationParams?.buildingType === 'hopital' && (<>
           <hr className="rp-divider" />
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer', padding: '3px 0' }}>
             <input type="checkbox"
@@ -200,12 +221,14 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           </label>
           {pt.isChambreHopital && (
             <p style={{ fontSize: 10, color: '#6b7280', margin: '2px 0 0', fontStyle: 'italic' }}>
-              Seul l'appareil le plus demandeur (hors WC) est pris en compte, quantité 1.
+              {isAlimEF
+                ? "Appareil le plus demandeur (hors WC) quantité 1 + WC présent dans la chambre (réservoir ou robinet de chasse) quantité 1."
+                : "Seul l'appareil le plus demandeur (hors WC) est pris en compte, quantité 1."}
             </p>
           )}
         </>)}
 
-        {(activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef' || activeCalcId === 'bouclage-ecs') && (<>
+        {hasPdc && (<>
           <hr className="rp-divider" />
           <SectionLabel>Équipements</SectionLabel>
           {enabledAppareils.length === 0 && (
@@ -247,7 +270,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           {coteJsx}
         </>)}
 
-        {(activeCalcId === 'alimentation-ecs' || activeCalcId === 'bouclage-ecs') && (() => {
+        {(isAlimECS || isBouclage) && (() => {
           const path = computeGroupePath(pt.id, allSegs, flowDirections ?? undefined, materials, roleMap ?? undefined)
           const lenOk = path.length <= MAX_ANTENNE_LEN_M
           const volOk = path.volume <= MAX_ANTENNE_VOL_L
@@ -282,9 +305,9 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             </>
           )
         })()}
-        <TempBadge temp={activeCalcId === 'alimentation-ecs' ? null : nodeTemp} T_depart={T_depart} />
+        <TempBadge temp={isAlimECS ? null : nodeTemp} T_depart={T_depart} />
 
-        {(activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') && calcSubMode === 'pdc' && (() => {
+        {isAlimMode && calcSubMode === 'pdc' && (() => {
           const segId = inSegs[0]?.id
           if (!segId) return null
           const p      = pdcCumAlimResults?.segPressionAval?.get(segId) ?? null
@@ -373,7 +396,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
     }
     const defaultName = colName ? `Arrivée EF – ${colName}` : 'Arrivée EF'
     const isDefaultName = !pt.name
-    const showEFPressure = activeCalcId === 'alimentation-ef' && calcSubMode === 'pdc' && pressionSourceAlimEF != null
+    const showEFPressure = isAlimEF && calcSubMode === 'pdc' && pressionSourceAlimEF != null
     return (
       <div className="rp-section">
         <h3 className="rp-title">Arrivée EF</h3>
@@ -441,6 +464,145 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
     )
   }
 
+  if (pt.type === 'productionChauffage') {
+    const tDepart = chauffageParams?.T_depart   ?? 70
+    const deltaT  = chauffageParams?.deltaT_reseau ?? 20
+    const tRetourCalc: number | null = chauffageThermal?.nodeRetourT?.get(pt.id) ?? null
+    const tRetour = tRetourCalc ?? (tDepart - deltaT)
+    const emetteurs = points.filter((p: any) => p.type === 'emetteur')
+    const totalPuissance = emetteurs.reduce((s: number, e: any) => s + (e.puissance ?? 0), 0)
+    const RHO_CP = 1163
+    const totalQ = totalPuissance > 0 && deltaT > 0
+      ? totalPuissance / (RHO_CP * deltaT)
+      : null
+    const statRow = (label: string, value: React.ReactNode) => (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+        <span style={{ fontSize: 11, color: '#6b7280' }}>{label}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', fontFamily: 'ui-monospace, monospace' }}>{value}</span>
+      </div>
+    )
+    const setCP = (key: string, val: number) =>
+      onChauffageParamsChange?.({ ...chauffageParams, [key]: val })
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title">Production Chauffage</h3>
+        <SectionLabel>Paramètres réseau</SectionLabel>
+        <Field label="T° départ" unit="°C">
+          <NumInput value={tDepart} min={20} max={120} step={1} onChange={v => setCP('T_depart', v)} />
+        </Field>
+        <Field label="ΔT aller/retour" unit="°C">
+          <NumInput value={deltaT} min={1} max={50} step={1} onChange={v => setCP('deltaT_reseau', v)} />
+        </Field>
+        <div style={{ display: 'flex', gap: 8, marginTop: 8, marginBottom: 10 }}>
+          <div style={{ flex: 1, padding: '6px 10px', background: '#fef2f2',
+            border: '1px solid #fca5a5', borderRadius: 6 }}>
+            <div style={{ fontSize: 9, color: '#dc2626', fontWeight: 700, marginBottom: 2,
+              textTransform: 'uppercase', letterSpacing: '0.05em' }}>T aller</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+              <span style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>{tDepart}</span>
+              <span style={{ fontSize: 10, color: '#9ca3af' }}>°C</span>
+            </div>
+          </div>
+          <div style={{ flex: 1, padding: '6px 10px', background: '#fff7ed',
+            border: '1px solid #fed7aa', borderRadius: 6 }}>
+            <div style={{ fontSize: 9, color: '#c2410c', fontWeight: 700, marginBottom: 2,
+              textTransform: 'uppercase', letterSpacing: '0.05em' }}>T retour</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+              <span style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>
+                {tRetourCalc != null ? sf(tRetourCalc, 2) : tRetour}
+              </span>
+              <span style={{ fontSize: 10, color: '#9ca3af' }}>°C</span>
+            </div>
+          </div>
+        </div>
+        <hr className="rp-divider" />
+        <SectionLabel>Réseau</SectionLabel>
+        {statRow('Nb émetteurs', emetteurs.length)}
+        {statRow('Puissance totale',
+          <>{(totalPuissance / 1000).toFixed(1)} <span style={{ fontSize: 10, fontWeight: 400 }}>kW</span></>)}
+        {totalQ != null && statRow('Débit total',
+          <>{(totalQ * 1000).toFixed(1)} <span style={{ fontSize: 10, fontWeight: 400 }}>L/h</span></>)}
+        <p className="lp-hint" style={{ marginTop: 6 }}>
+          Le ΔT global peut être overridé par émetteur dans le panneau de droite.
+        </p>
+      </div>
+    )
+  }
+
+  if (pt.type === 'emetteur') {
+    const emetteurDef  = EMETTEUR_TYPES.find(e => e.id === pt.emetteurType)
+    const label        = emetteurDef?.label ?? pt.emetteurType ?? 'Émetteur'
+    const puissanceW   = pt.puissance ?? null
+    const globalDeltaT = chauffageParams?.deltaT_reseau ?? 20
+    const deltaTEff    = pt.deltaT_emetteur ?? globalDeltaT
+    const RHO_CP       = 1163
+    const flowRateLh   = puissanceW != null && deltaTEff > 0
+      ? (puissanceW / (RHO_CP * deltaTEff)) * 1000
+      : null
+
+    const handleTypeChange = (newTypeId: string) => {
+      const prevTypeId = pt.emetteurType ?? ''
+      deltaTByType.current[`${pt.id}_${prevTypeId}`] = pt.deltaT_emetteur ?? null
+      const saved   = deltaTByType.current[`${pt.id}_${newTypeId}`]
+      const newDef  = EMETTEUR_TYPES.find(e => e.id === newTypeId)
+      const newDt   = (saved != null) ? saved : (newDef?.deltaTDefault ?? globalDeltaT)
+      onUpdate(pt.id, 'point', { emetteurType: newTypeId, deltaT_emetteur: newDt })
+    }
+
+    const statRow = (lbl: string, value: React.ReactNode) => (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+        <span style={{ fontSize: 11, color: '#6b7280' }}>{lbl}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', fontFamily: 'ui-monospace, monospace' }}>{value}</span>
+      </div>
+    )
+
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title">{label}</h3>
+
+        <Field label="Type d'émetteur">
+          <select
+            value={pt.emetteurType ?? ''}
+            onChange={e => handleTypeChange(e.target.value)}
+            style={{ width: '100%', fontSize: 11, padding: '5px 6px', border: '1px solid #d1d5db',
+              borderRadius: 5, background: '#fff', cursor: 'pointer' }}
+          >
+            {EMETTEUR_TYPES.map(e => (
+              <option key={e.id} value={e.id}>{e.label}</option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Puissance" unit="W">
+          <NumInput min={1} step={100} allowEmpty
+            value={puissanceW}
+            placeholder="—"
+            onChange={v => set('puissance', v)} />
+        </Field>
+
+        <Field label="ΔT émetteur" unit="K">
+          <NumInput min={1} max={60} step={1}
+            value={pt.deltaT_emetteur ?? globalDeltaT}
+            onChange={v => set('deltaT_emetteur', v ?? globalDeltaT)} />
+        </Field>
+
+        {flowRateLh != null && (
+          <>
+            <hr className="rp-divider" />
+            <SectionLabel>Résultats</SectionLabel>
+            <div style={{ padding: '8px 12px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 6 }}>
+              <div style={{ fontSize: 9, color: '#0284c7', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Débit</div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                <span style={{ fontSize: 20, fontWeight: 800, color: '#0f172a', fontFamily: 'ui-monospace, monospace' }}>{flowRateLh.toFixed(1)}</span>
+                <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>L/h</span>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
   if (pt.type === 'productionECS') {
     const tOverride    = pt.T_depart_override ?? null
     const tEffective   = tOverride ?? T_depart ?? 60
@@ -461,15 +623,15 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             value={pt.modeProduction ?? ''}
             onChange={e => set('modeProduction', e.target.value || null)}
             style={{ width: '100%', fontSize: 11, padding: '5px 6px', border: '1px solid #d1d5db',
-              borderRadius: 5, background: '#fff', color: pt.modeProduction ? '#111827' : '#9ca3af',
+              borderRadius: 5, background: '#fff', color: pt.modeProduction ? '#111827' : '#6b7280',
               cursor: 'pointer' }}
           >
             <option value="">— Choisir un mode —</option>
             <option value="instantane">Production instantanée par échangeur</option>
             <option value="echangeur-ballons-perm">Échangeur à plaques + stockage ECS</option>
-            <option value="ballon-echangeur">Ballon à échangeur</option>
+            <option value="ballon-echangeur">Ballon ECS à échangeur</option>
             <option value="ballons-electriques">Ballons électriques collectifs</option>
-            <option value="pac-collective">PAC dédiée à l'ECS</option>
+            <option value="pac-collective">Pompe à chaleur dédiée ECS</option>
           </select>
         </div>
         {!pt.modeProduction ? (
@@ -484,7 +646,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
         )}
         <hr className="rp-divider" />
 
-        {activeCalcId === 'bouclage-ecs' && (
+        {isBouclage && (
           <>
             {/* Champ T départ éditable — au-dessus des badges */}
             <Field label="T départ" unit="°C">
@@ -578,7 +740,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           </>
         )}
 
-        {activeCalcId === 'alimentation-ecs' && calcSubMode === 'pdc' && pressionSourceAlimECS != null && (() => {
+        {isAlimECS && calcSubMode === 'pdc' && pressionSourceAlimECS != null && (() => {
           const pDyn  = pressionSourceAlimECS
           const pStat = pressionSourceAlimECSStatic ?? pressionSourceAlimECS
 
@@ -635,7 +797,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           )
         })()}
 
-        {activeCalcId === 'bouclage-ecs' && pdcCumResults != null && (() => {
+        {isBouclage && pdcCumResults != null && (() => {
           const retDps = inSegs.map(s => pdcCumResults.segCumDp.get(s.id)).filter((v): v is number => v != null)
           if (retDps.length === 0) return null
           const maxDp = Math.max(...retDps)
@@ -672,7 +834,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
 
           const T_ECS_val    = tEffective
           const T_EF_val     = pt.T_ef ?? 10
-          const dT_prim      = pt.delta_t_primaire ?? 20
+          const dT_prim      = pt.delta_t_primaire ?? 10
           const P_pointe_kW = Qs_m3h > 0 ? Qs_m3h * 1.163 * (T_ECS_val - T_EF_val) : null
 
           let P_pertes_b_kW: number | null = null
@@ -696,7 +858,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                 columnGap: 8, rowGap: 5, alignItems: 'center', marginBottom: 8 }}>
                 {[
                   { label: 'T° eau froide', val: pt.T_ef,             key: 'T_ef',             min: 0, step: 0.5, ph: '10 (par défaut)', unit: '°C' },
-                  { label: 'ΔT primaire',   val: pt.delta_t_primaire, key: 'delta_t_primaire', min: 1, step: 1,   ph: '20 (par défaut)', unit: '°C' },
+                  { label: 'ΔT primaire',   val: pt.delta_t_primaire, key: 'delta_t_primaire', min: 1, step: 1,   ph: '10 (par défaut)', unit: '°C' },
                 ].flatMap(f => [
                   <span key={f.key + '-l'} style={{ fontSize: 11, color: '#374151', fontWeight: 500,
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -712,6 +874,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                   </span>,
                 ])}
               </div>
+
 
               {Qs_m3h === 0 ? (
                 <div style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic',
@@ -791,7 +954,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                             Débit primaire
                           </div>
                           <div style={{ fontSize: 9, color: '#b0b8c4' }}>
-                            côté chaudière — ΔT = {dT_prim} K
+                            côté production — ΔT = {dT_prim} K
                             {pt.delta_t_primaire == null && <span style={{ fontStyle: 'italic' }}> (défaut)</span>}
                           </div>
                         </div>
@@ -822,7 +985,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           const Ns        = pt.ns_logements_standards ?? null
           const V         = pt.v_stockage_ecs ?? null
           const T_EF_val  = pt.T_ef ?? 10
-          const dT_prim   = pt.delta_t_primaire ?? 20
+          const dT_prim   = pt.delta_t_primaire ?? 10
           const T_ECS_val = tEffective
 
           const q_retour_Lh = inSegs
@@ -878,6 +1041,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                   </span>,
                 ])}
               </div>
+
 
               {Ns != null && Ns > 0 && Ns < 10 && (
                 <div style={{ fontSize: 9, color: '#f97316', fontStyle: 'italic', marginBottom: 4, lineHeight: 1.4 }}>
@@ -971,7 +1135,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                           <div>
                             <div style={{ fontSize: 10.5, color: '#6b7280', marginBottom: 2 }}>Débit primaire</div>
                             <div style={{ fontSize: 9, color: '#b0b8c4' }}>
-                              côté chaudière — ΔT = {dT_prim} K
+                              côté production — ΔT = {dT_prim} K
                               {pt.delta_t_primaire == null && <span style={{ fontStyle: 'italic' }}> (défaut)</span>}
                             </div>
                           </div>
@@ -1002,7 +1166,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           const Ns       = pt.ns_logements_standards ?? null
           const V        = pt.v_stockage_ecs ?? null
           const T_EF_val = pt.T_ef ?? 10
-          const dT_prim  = pt.delta_t_primaire ?? 20
+          const dT_prim  = pt.delta_t_primaire ?? 10
           const typeEch  = pt.typeEchangeur ?? 'serpentin'
           const posRet   = pt.positionRetourBouclage ?? null
           const h_pct    = pt.position_haut_echangeur ?? null
@@ -1039,7 +1203,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           return (
             <>
               <hr className="rp-divider" />
-              <SectionLabel>Dimensionnement — Ballon à échangeur</SectionLabel>
+              <SectionLabel>Dimensionnement — Ballon ECS à échangeur</SectionLabel>
 
               {/* Choix type échangeur */}
               <div style={{ marginBottom: 8 }}>
@@ -1069,9 +1233,9 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                 columnGap: 8, rowGap: 5, alignItems: 'center', marginBottom: 8 }}>
                 {[
                   { label: 'Log. standards (Ns)', val: pt.ns_logements_standards,    key: 'ns_logements_standards',    min: 0,  max: undefined, step: 1,   ph: '',               unit: ''   },
-                  { label: 'Volume ballon échangeur', val: pt.v_stockage_ecs,            key: 'v_stockage_ecs',            min: 100,max: undefined, step: 50,  ph: '',               unit: 'L'  },
+                  { label: 'Volume stockage ECS', val: pt.v_stockage_ecs,            key: 'v_stockage_ecs',            min: 100,max: undefined, step: 50,  ph: '',               unit: 'L'  },
                   { label: 'T° eau froide',        val: pt.T_ef,                      key: 'T_ef',                      min: 0,  max: undefined, step: 0.5, ph: '10 (par défaut)', unit: '°C' },
-                  { label: 'ΔT primaire',          val: pt.delta_t_primaire,          key: 'delta_t_primaire',          min: 1,  max: undefined, step: 1,   ph: '20 (par défaut)', unit: '°C' },
+                  { label: 'ΔT primaire',          val: pt.delta_t_primaire,          key: 'delta_t_primaire',          min: 1,  max: undefined, step: 1,   ph: '10 (par défaut)', unit: '°C' },
                   ...(typeEch === 'tubulaire' ? [{
                     label: 'Pos. haut échangeur', val: pt.position_haut_echangeur, key: 'position_haut_echangeur', min: 15, max: 45, step: 1, ph: 'vide si pos. référence', unit: '%',
                   }] : []),
@@ -1090,6 +1254,8 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                   </span>,
                 ])}
               </div>
+
+
 
               {/* Position retour bouclage */}
               {P_bouclage_kW != null && (
@@ -1223,7 +1389,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                         <div>
                           <div style={{ fontSize: 10.5, color: '#6b7280', marginBottom: 2 }}>Débit primaire</div>
                           <div style={{ fontSize: 9, color: '#b0b8c4' }}>
-                            côté chaudière — ΔT = {dT_prim} K
+                            côté production — ΔT = {dT_prim} K
                             {pt.delta_t_primaire == null && <span style={{ fontStyle: 'italic' }}> (défaut)</span>}
                           </div>
                         </div>
@@ -1477,7 +1643,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             }
           }
 
-          const vLabel = pacType === 'ballon-echangeur' ? 'Volume ballon échangeur' : 'Volume stockage ECS'
+          const vLabel = pacType === 'ballon-echangeur' ? 'Volume stockage ECS' : 'Volume stockage ECS'
 
           const PAC_TYPES = [
             { val: 'co2',               label: 'PAC au CO₂',              sub: 'T sortie 65°C' },
@@ -1504,12 +1670,12 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           return (
             <>
               <hr className="rp-divider" />
-              <SectionLabel>Dimensionnement — PAC dédiée à l'ECS</SectionLabel>
+              <SectionLabel>Dimensionnement — Pompe à chaleur dédiée ECS</SectionLabel>
 
               {/* Sélection sous-type PAC */}
               <div style={{ marginBottom: 10 }}>
                 <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
-                  letterSpacing: '0.06em', marginBottom: 5 }}>Mode de production PAC (§ 2.3 COSTIC)</div>
+                  letterSpacing: '0.06em', marginBottom: 5 }}>Mode de production PAC</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {PAC_TYPES.map(t => (
                     <button key={t.val}
@@ -1752,7 +1918,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
     )}
 
       {/* Pression au nœud — alimentation ECS */}
-      {activeCalcId === 'alimentation-ecs' && (() => {
+      {isAlimECS && (() => {
         const segId = inSegs[0]?.id
         if (!segId) return null
         const p     = pdcCumAlimResults?.segPressionAval?.get(segId) ?? null
@@ -1813,7 +1979,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
       })()}
 
       {/* Tronçons arrivants */}
-      {inSegs.length > 0 && activeCalcId !== 'alimentation-ecs' && (
+      {inSegs.length > 0 && !isAlimECS && (
         <div style={{ marginTop: 8 }}>
           {inSegs.length > 1 && (
             <SectionLabel>Tronçons arrivants ({inSegs.length})</SectionLabel>
@@ -1891,7 +2057,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
         </div>
       )}
 
-      {inSegs.length === 0 && nodeTemp == null && calcSubMode !== 'pdc' && activeCalcId !== 'alimentation-ecs' && (
+      {inSegs.length === 0 && nodeTemp == null && calcSubMode !== 'pdc' && !isAlimECS && (
         <p className="lp-hint">Aucune propriété modifiable.</p>
       )}
     </div>

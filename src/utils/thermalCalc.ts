@@ -2,6 +2,7 @@
  * Calcul thermique du réseau ECS bouclé (NF DTU 60.11 P1-2).
  */
 import { waterDensity } from './pdcCalc'
+import { findMidpointLevelIndexAt } from './levelUtils'
 
 const HE_DEFAULT = 10      // W/(m²·K) — convection extérieure (cste pour isolant standard)
 const CP_EAU     = 4180    // J/(kg·K) — chaleur spécifique eau
@@ -50,14 +51,11 @@ export function computeSegUI(seg, materials, insulations, he) {
 export function getSegAmbTemp(seg, levels, lineYs) {
   if (seg.t_amb_override != null) return seg.t_amb_override
   const midY = seg.vertices.reduce((s, v) => s + v.y, 0) / seg.vertices.length
-  for (let i = 0; i < levels.length; i++) {
-    const yBot = lineYs[i]
-    const yTop = lineYs[i + 1]
-    if (yTop !== undefined && midY >= yTop && midY <= yBot) {
-      const lvl = levels[i]
-      if (lvl.t_amb_override != null) return lvl.t_amb_override
-      return lvl.isSousSol ? T_AMB_SS : T_AMB_STD
-    }
+  const li = findMidpointLevelIndexAt(midY, lineYs)
+  if (li >= 0) {
+    const lvl = levels[li]
+    if (lvl.t_amb_override != null) return lvl.t_amb_override
+    return lvl.isSousSol ? T_AMB_SS : T_AMB_STD
   }
   return T_AMB_STD
 }

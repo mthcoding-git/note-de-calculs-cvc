@@ -6,11 +6,13 @@
  * Les incohérences (valeurs manuelles contradictoires) sont signalées.
  */
 
-/** Di en mm pour un tronçon (di_override > table matériau) */
+/** Di effectif en mm pour un tronçon — nominal réduit par l'épaisseur de tartre si activé */
 export function getDi_mm(seg, materials) {
-  const mat   = materials.find(m => m.id === seg.materialId)
-  const dnDef = mat?.dns.find(d => d.dn === seg.dn)
-  return seg.di_override ?? dnDef?.di ?? null
+  const mat      = materials.find(m => m.id === seg.materialId)
+  const dnDef    = mat?.dns.find(d => d.dn === seg.dn)
+  const di_nom   = seg.di_override ?? dnDef?.di ?? null
+  const e_encr   = mat?.encrassement ? (seg.encrassementEpaisseur ?? mat?.encrassementEpaisseur ?? 0) : 0
+  return (di_nom != null && e_encr > 0) ? Math.max(1, di_nom - 2 * e_encr) : di_nom
 }
 
 /** Débit manuel en m³/h pour un tronçon (null si pas renseigné ou Di manquant) */

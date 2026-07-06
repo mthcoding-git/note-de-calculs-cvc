@@ -466,3 +466,15 @@ l-267 0 7 63 c67 633 360 1291 795 1787 l40 45 168 -167 c92 -92 181 -172 196
     </g>
   </svg>
 )
+
+// Accessoires — vanne papillon + manomètre (_6_)
+export const AccessoryIcon = ({ size = 20, className }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" className={className}>
+    <polygon points="3,6 3,12 8,9" fill="currentColor" />
+    <polygon points="13,6 13,12 8,9" fill="currentColor" />
+    <circle cx={17.5} cy={8.5} r={3.6} fill="none" stroke="currentColor" strokeWidth={1.4} />
+    <line x1={17.5} y1={8.5} x2={15.3} y2={6.6} stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" />
+    <circle cx={7.5} cy={17} r={3.2} fill="none" stroke="currentColor" strokeWidth={1.4} />
+    <path d="M5.8,17 C5.8,15.4 6.5,15.7 7.5,17 C8.5,18.3 9.2,15.4 9.2,17" fill="none" stroke="currentColor" strokeWidth={1.2} />
+  </svg>
+)

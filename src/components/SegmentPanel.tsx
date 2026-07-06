@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
+import type { CalcMode } from '../types'
 import { getDisplayName } from '../utils/naming'
+import { getModeFlags } from '../utils/calcModeFlags'
 import { computeSegUI, getSegAmbTemp } from '../utils/thermalCalc'
 import { sf } from '../utils/fmt'
 import { FITTING_TYPES, EQUIPMENT_TYPES } from '../utils/pdcCalc'
@@ -259,7 +261,19 @@ function SegEquipPanel({ seg, set, pdcParams }) {
   )
 }
 
-export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null }) {
+interface SegmentPanelProps {
+  seg: any; onUpdate: any; materials: any[]; insulations: any[]
+  allSegs: any[]; levels: any[]; lineYs: number[]; columns: any[]; columnXs: number[]
+  chaufferie: any; points: any[]; flowData: any; globalParams: any; thermalData: any
+  roleMap: any; drawMode: string; onExitEditParams: any
+  activeCalcId: string | null
+  alimentationData: any; alimentationParams?: any
+  pdcParams: any; pdcResult: any; resultsView: string; onResultsViewChange: any
+  pdcCumResults: any; pdcCumAlimResults: any; segToCol: any; flowDirections: any
+  groupDisplayNames?: any
+}
+
+export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null }: SegmentPanelProps) {
   const [tab, setTab]                       = useState('params')
   const [openDetailTherm, setOpenDetailTherm] = useState(false)
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
@@ -275,12 +289,14 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
 
   const uiValue = computeSegUI(seg, materials, insulations, 10)
 
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage } = getModeFlags(activeCalcId as CalcMode | null)
+
   // ── Vue dédiée Alimentation ECS (dimensionnement) et Alimentation EF ──────────────────────
-  if (activeCalcId === 'alimentation-ef' || activeCalcId === 'alimentation-ecs') {
+  if (isAlimEF || isAlimECS) {
     const di_mm = seg.di_override ?? dnDef?.di ?? null
     const ad    = alimentationData
     const segRole = roleMap?.get(seg.id)
-    const segTypeLabel = activeCalcId === 'alimentation-ef'
+    const segTypeLabel = isAlimEF
       ? 'EF'
       : segRole === 'collecteur-aller'  ? 'Collecteur aller ECS'
       : segRole === 'collecteur-retour' ? 'Collecteur retour ECS'
@@ -411,7 +427,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
         {tab === 'params' && (<>
           <SectionLabel>Identification</SectionLabel>
           <SegNameField displayName={displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
-          {activeCalcId !== 'alimentation-ef' && (
+          {!isAlimEF && (
             <Field label="Type de tronçon" labelFlex="44%">
               <select value={seg.type} onChange={e => set('type', e.target.value)}>
                 <option value="aller">Aller ECS</option>
@@ -466,6 +482,16 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                   onChange={v => set('di_override', v)} />
               </Field>
             )}
+            {selMat.encrassement && (selMat.encrassementEpaisseur ?? 0) > 0 && (
+              <Field label="Ép. tartre" unit="mm">
+                <NumInput
+                  min={0} step={0.1}
+                  value={seg.encrassementEpaisseur ?? null}
+                  placeholder={`${selMat.encrassementEpaisseur} (par défaut)`}
+                  allowEmpty
+                  onChange={v => set('encrassementEpaisseur', v)} />
+              </Field>
+            )}
           </>)}
 
           {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (
@@ -493,7 +519,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 
             {/* Toggle Dimensionnement / Pertes de charge (alimentation-ecs et alimentation-ef) */}
-            {(activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') && pdcParams != null && (
+            {isAlimMode && pdcParams != null && (
               <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', marginBottom: 4 }}>
                 {(['dimensionnement', 'pdc'] as const).map(key => (
                   <button key={key} onClick={() => onResultsViewChange(key)} style={{
@@ -512,13 +538,12 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             )}
 
             {/* Résultats Pertes de charge */}
-            {resultsView === 'pdc' && pdcParams != null && (activeCalcId === 'alimentation-ecs' || activeCalcId === 'alimentation-ef') && (() => {
-              const isAlimEcs = activeCalcId === 'alimentation-ecs'
+            {resultsView === 'pdc' && pdcParams != null && isAlimMode && (() => {
               const toId = flowDirections?.get(seg.id)?.toId
               const isTerminal = toId != null && points.find(p => p.id === toId)?.type === 'groupe'
               return (
                 <PdcSegResults pdcResult={pdcResult} pdcParams={pdcParams} seg={seg} dnDef={dnDef} flowData={flowData}
-                  alimentationData={isAlimEcs ? alimentationData : null}
+                  alimentationData={isAlimECS ? alimentationData : null}
                   cumDp={pdcCumAlimResults?.segCumDp?.get(seg.id)}
                   postJunction={false}
                   segCol={segToCol?.get(seg.id) ?? null}
@@ -551,6 +576,13 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                 : null
               const vMax   = ad.isSousSol ? 2.0 : 1.5
               const velErr = velocity != null && velocity > vMax
+              // Encrassement : vitesse avec diamètre réduit (avertissement, pas dimensionnement)
+              const e_encr = selMat?.encrassement ? (seg.encrassementEpaisseur ?? selMat?.encrassementEpaisseur ?? 0) : 0
+              const di_eff_val = (di_mm != null && e_encr > 0) ? Math.max(1, di_mm - 2 * e_encr) : null
+              const velocity_eff = (isCollective && c?.Qp != null && di_eff_val != null && di_eff_val > 0)
+                ? (c.Qp * 1e-3) / (Math.PI * Math.pow(di_eff_val / 2000, 2))
+                : null
+              const velErrEncr = !velErr && velocity_eff != null && velocity_eff > vMax
 
               const calcRow = (label: string, value: string) => (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
@@ -596,6 +628,11 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                             : `✓ v ≤ ${vMax === 2.0 ? '2,0' : '1,5'} m/s — conforme`}
                         </div>
                       </div>
+                    )}
+
+                    {velErrEncr && di_eff_val != null && velocity_eff != null && (
+                      <Alert level="warning"
+                        msg={`Avec tartre : dᵢ = ${di_eff_val.toFixed(1)} mm → V = ${velocity_eff.toFixed(2)} m/s > ${vMax === 2.0 ? '2,0' : '1,5'} m/s`} />
                     )}
 
                     {/* Diamètre intérieur minimum requis */}
@@ -706,7 +743,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
               <p className="lp-hint" style={{ padding: '4px 0' }}>
                 {seg.type === 'retour'
                   ? 'Tronçon retour — le dimensionnement s\'applique uniquement aux tronçons aller en Alimentation ECS.'
-                  : activeCalcId === 'alimentation-ef'
+                  : isAlimEF
                     ? 'Aucun résultat — vérifiez qu\'un groupe de puisage est présent en aval, que des appareils sont activés, et que l\'arrivée EF est définie.'
                     : 'Aucun résultat — vérifiez qu\'un groupe de puisage est présent en aval, que des appareils sont activés, et que la production ECS est définie.'}
               </p>
@@ -758,21 +795,18 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
               ))}
             </div>
           )}
-          {activeCalcId === 'bouclage-ecs' && roleMap?.get(seg.id) === 'antenne' ? (
+          {isBouclage && roleMap?.get(seg.id) === 'antenne' ? (
             <div style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>
               Antenne — pas de recirculation sur ce tronçon, aucun calcul hydraulique ou thermique de bouclage ne s'applique.
             </div>
           ) : resultsView === 'pdc' && pdcParams != null ? (
             (() => {
-              const isAlimEcs = activeCalcId === 'alimentation-ecs'
-              const isAlimEF  = activeCalcId === 'alimentation-ef'
-              const isAlimMode = isAlimEcs || isAlimEF
               const toId = flowDirections?.get(seg.id)?.toId
               const isTerminal = isAlimMode && toId != null
                 && points.find(p => p.id === toId)?.type === 'groupe'
               return (
                 <PdcSegResults pdcResult={pdcResult} pdcParams={pdcParams} seg={seg} dnDef={dnDef} flowData={flowData}
-                  alimentationData={isAlimEcs ? alimentationData : null}
+                  alimentationData={isAlimECS ? alimentationData : null}
                   cumDp={isAlimMode
                     ? pdcCumAlimResults?.segCumDp?.get(seg.id)
                     : pdcCumResults?.segCumDp.get(seg.id)}
@@ -799,9 +833,11 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             const T_depart = globalParams?.T_depart ?? 60
             const dT_depuis_depart = T_to - T_depart
 
-            const de_mm = seg.de_override ?? dnDef?.de
-            const di_mm = seg.di_override ?? dnDef?.di
-            const e_mm  = typeof seg.thickness === 'number' ? seg.thickness : null
+            const de_mm       = seg.de_override ?? dnDef?.de
+            const di_mm       = seg.di_override ?? dnDef?.di
+            const e_tartre    = selMat?.encrassement ? (seg.encrassementEpaisseur ?? selMat?.encrassementEpaisseur ?? 0) : 0
+            const di_eff_therm = (di_mm != null && e_tartre > 0) ? Math.max(1, di_mm - 2 * e_tartre) : null
+            const e_mm        = typeof seg.thickness === 'number' ? seg.thickness : null
             const lt    = seg.lambda_tube_override ?? selMat?.lambda
             const li    = seg.lambda_insul_override ?? selIns?.lambda
 
@@ -892,7 +928,8 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                         const vMaxStr = isCollecteurRetour ? '1,0' : '0,5'
                         return (
                           <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid #f1f5f9',
-                            fontSize: 9.5, fontWeight: 600, color: velOk ? '#16a34a' : '#dc2626' }}>
+                            fontSize: 9.5, fontWeight: 600,
+                            color: velOk ? '#16a34a' : velLow ? '#dc2626' : '#f97316' }}>
                             {velLow  ? '✗ v < 0,2 m/s — risque de stagnation'
                              : velHigh ? `✗ v > ${vMaxStr} m/s — risque d'érosion et bruit`
                              : `✓ 0,2 ≤ v ≤ ${vMaxStr} m/s — conforme`}
@@ -930,7 +967,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                       {!isRetour && velocity != null && dRow('Vitesse', `${velocity.toFixed(3)} m/s`)}
                       {uiValue  != null && dRow('UI', `${uiValue.toFixed(4)} W/(m·K)`)}
                       {dRow('Pertes th.', `${sf(Q, 1)} W`)}
-                      {activeCalcId === 'bouclage-ecs' && pdcResult?.dpTotal != null && (() => {
+                      {isBouclage && pdcResult?.dpTotal != null && (() => {
                         const u = pdcParams?.uniteAffichage ?? 'Pa'
                         const fmt = (pa: number) => u === 'mmCE' ? `${(pa / 9.81).toFixed(0)} mmCE`
                           : u === 'both' ? `${Math.round(pa)} Pa / ${(pa / 9.81).toFixed(0)} mmCE`
@@ -953,9 +990,10 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                           <div>T amb   = {sf(T_amb, 1)} °C</div>
                           <div>ΔT      = {sf(Math.abs(deltaT), 3)} K</div>
                           <div>he      = 10 W/(m²·K)</div>
-                          {de_mm != null && <div>de      = {de_mm} mm</div>}
-                          {di_mm != null && <div>di      = {di_mm} mm</div>}
-                          {e_mm  != null && <div>e       = {e_mm} mm</div>}
+                          {de_mm        != null && <div>de          = {de_mm} mm</div>}
+                          {di_mm        != null && <div>di          = {di_mm} mm</div>}
+                          {di_eff_therm != null && <div>di (tartre) = {di_eff_therm.toFixed(1)} mm</div>}
+                          {e_mm         != null && <div>e           = {e_mm} mm</div>}
                           {lt    != null && <div>λ tube  = {lt} W/(m·K)</div>}
                           {li    != null && <div>λ isol  = {li} W/(m·K)</div>}
                         </div>
@@ -1013,7 +1051,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
         </select>
       </Field>
 
-      {activeCalcId === 'alimentation-ecs' ? (
+      {isAlimECS ? (
         <>
           <hr className="rp-divider" />
           <CoteSection seg={seg} points={points} levels={levels} lineYs={lineYs} onUpdate={onUpdate} />
@@ -1024,7 +1062,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
       )}
 
       {/* Hydraulique — masqué pour les antennes bouclage ECS */}
-      {roleMap?.get(seg.id) !== 'antenne' && (
+      {isBouclage && roleMap?.get(seg.id) !== 'antenne' && (
         <>
           <SectionLabel>Hydraulique</SectionLabel>
           {(() => {
@@ -1034,19 +1072,16 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             const hasManualV = seg.velocity != null
             const hasManual  = hasManualQ || hasManualV
             const resolved   = flowData
-
             const qPlaceholder = hasManualV && area
-              ? `Calculé : ${sf(seg.velocity * area * 3600, 3)}`
+              ? `Calculé : ${sf(seg.velocity! * area * 3600, 3)}`
               : (!hasManual && resolved?.flowRate != null)
               ? `Calculé : ${sf(resolved.flowRate, 3)}`
               : 'm³/h'
-
             const vPlaceholder = hasManualQ && area
-              ? `Calculé : ${sf(seg.flowRate / (area * 3600), 3)}`
+              ? `Calculé : ${sf(seg.flowRate! / (area * 3600), 3)}`
               : (!hasManual && resolved?.velocity != null)
               ? `Calculé : ${sf(resolved.velocity, 3)}`
               : 'm/s'
-
             return (
               <div className="lp-field">
                 <label className="lp-label">
@@ -1149,6 +1184,17 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             </>
           )}
 
+          {selMat?.encrassement && (selMat?.encrassementEpaisseur ?? 0) > 0 && (
+            <Field label="Ép. tartre" unit="mm">
+              <NumInput
+                min={0} step={0.1}
+                value={seg.encrassementEpaisseur ?? null}
+                placeholder={`${selMat.encrassementEpaisseur} (par défaut)`}
+                allowEmpty
+                onChange={v => set('encrassementEpaisseur', v)} />
+            </Field>
+          )}
+
           <Field label="λ tube" unit="W/m·K">
             <NumInput step={0.001}
               value={seg.lambda_tube_override ?? null}
@@ -1161,58 +1207,61 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
 
       <hr className="rp-divider" />
 
-      {/* Isolation */}
-      <SectionLabel>Isolation</SectionLabel>
-      <Field label="Isolant">
-        {enabledIns.length === 0
-          ? <p className="lp-hint">Aucun isolant activé dans les paramètres.</p>
-          : (
-            <select value={seg.insulationId || ''}
-              onChange={e => { set('insulationId', e.target.value || null); set('thickness', null) }}>
-              <option value="">— Sans isolant —</option>
-              {enabledIns.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-            </select>
-          )
-        }
-      </Field>
-
-      {selIns && (
-        <>
-          <Field label="Épaisseur" unit="mm">
-            {selIns.thicknesses.length > 0 ? (
-              <select value={seg.thickness ?? ''}
-                onChange={e => set('thickness', e.target.value === '' ? null : +e.target.value)}>
-                <option value="">— Choisir —</option>
-                {selIns.thicknesses.map(t => <option key={t} value={t}>{t} mm</option>)}
-                <option value="__custom">Autre (saisie manuelle)</option>
+      {!isChauffage && (<>
+        {/* Isolation */}
+        <SectionLabel>Isolation</SectionLabel>
+        <Field label="Isolant">
+          {enabledIns.length === 0
+            ? <p className="lp-hint">Aucun isolant activé dans les paramètres.</p>
+            : (
+              <select value={seg.insulationId || ''}
+                onChange={e => { set('insulationId', e.target.value || null); set('thickness', null) }}>
+                <option value="">— Sans isolant —</option>
+                {enabledIns.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
               </select>
-            ) : (
-              <NumInput placeholder="Saisir manuellement"
-                value={seg.thickness ?? null}
-                allowEmpty
-                onChange={v => set('thickness', v)} />
-            )}
-          </Field>
+            )
+          }
+        </Field>
 
-          {seg.thickness === '__custom' && (
-            <Field label="Épaisseur personnalisée" unit="mm">
-              <NumInput allowEmpty onChange={v => { if (v != null) set('thickness', v) }} value={null} />
+        {selIns && (
+          <>
+            <Field label="Épaisseur" unit="mm">
+              {selIns.thicknesses.length > 0 ? (
+                <select value={seg.thickness ?? ''}
+                  onChange={e => set('thickness', e.target.value === '' ? null : +e.target.value)}>
+                  <option value="">— Choisir —</option>
+                  {selIns.thicknesses.map(t => <option key={t} value={t}>{t} mm</option>)}
+                  <option value="__custom">Autre (saisie manuelle)</option>
+                </select>
+              ) : (
+                <NumInput placeholder="Saisir manuellement"
+                  value={seg.thickness ?? null}
+                  allowEmpty
+                  onChange={v => set('thickness', v)} />
+              )}
             </Field>
-          )}
 
-          <Field label="λ isolant" unit="W/m·K">
-            <NumInput step={0.001}
-              value={seg.lambda_insul_override ?? null}
-              placeholder={`${selIns.lambda} (par défaut)`}
-              allowEmpty
-              onChange={v => set('lambda_insul_override', v)} />
-          </Field>
-        </>
-      )}
+            {seg.thickness === '__custom' && (
+              <Field label="Épaisseur personnalisée" unit="mm">
+                <NumInput allowEmpty onChange={v => { if (v != null) set('thickness', v) }} value={null} />
+              </Field>
+            )}
 
-      <hr className="rp-divider" />
+            <Field label="λ isolant" unit="W/m·K">
+              <NumInput step={0.001}
+                value={seg.lambda_insul_override ?? null}
+                placeholder={`${selIns.lambda} (par défaut)`}
+                allowEmpty
+                onChange={v => set('lambda_insul_override', v)} />
+            </Field>
+          </>
+        )}
+
+        <hr className="rp-divider" />
+      </>)}
 
       {/* Thermique */}
+      {!isChauffage && (<>
       <SectionLabel>Thermique</SectionLabel>
       {(() => {
         const tAmbDefault = getSegAmbTemp(
@@ -1230,6 +1279,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
           </Field>
         )
       })()}
+      </>)}
 
       {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (
         <>

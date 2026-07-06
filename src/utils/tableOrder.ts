@@ -1,3 +1,5 @@
+import type { CalcMode } from '../types'
+import { getModeFlags } from './calcModeFlags'
 
 /**
  * Construit les lignes dans l'ordre de l'écoulement par DFS aller+retour couplés.
@@ -37,10 +39,12 @@ function hasRetourDownstream(startNodeId, allerSegs, retourSegs, flowDirections)
   return false
 }
 
-export function buildFlowRows(segments, points, flowDirections, columns, columnXs, levels, lineYs, activeCalcId) {
+export function buildECSFlowRows(segments, points, flowDirections, columns, columnXs, levels, lineYs, activeCalcId: CalcMode) {
   if (!segments?.length) return []
   const prodECS = points?.find(p => p.type === 'productionECS')
   if (!prodECS) return []
+
+  const { isBouclage, isAlimECS } = getModeFlags(activeCalcId)
 
   const allerSegs  = segments.filter(s => s.type === 'aller')
   const retourSegs = segments.filter(s => s.type === 'retour')
@@ -287,15 +291,15 @@ export function buildFlowRows(segments, points, flowDirections, columns, columnX
 
   // ── Filtres mode bouclage / alimentation ─────────────────────────────────
   let finalRows = rows
-  if (activeCalcId === 'bouclage-ecs' || activeCalcId === 'alimentation-ecs') {
+  if (isBouclage || isAlimECS) {
     finalRows = finalRows.filter(row => {
       if (row.kind !== 'segment' || row.segType !== 'aller') return true
       // Bouclage ECS : seulement les tronçons du bouclage (avec retour aval), pas les antennes
-      if (activeCalcId === 'bouclage-ecs') return allerHasRetour.has(row.seg.id)
+      if (isBouclage) return allerHasRetour.has(row.seg.id)
       // Alimentation ECS : tous les tronçons aller (bouclage + antennes)
       return true
     })
-    if (activeCalcId === 'alimentation-ecs') {
+    if (isAlimECS) {
       finalRows = finalRows.filter(row =>
         !(row.kind === 'segment' && row.segType === 'retour') && row.kind !== 'junction')
     }
@@ -318,7 +322,7 @@ export function buildFlowRows(segments, points, flowDirections, columns, columnX
 
   // En bouclage-ecs, les antennes sont filtrées du tableau (finalRows) mais doivent
   // quand même figurer dans roleMap pour la détection UI (nommage, masquage Hydraulique…)
-  if (activeCalcId === 'bouclage-ecs') {
+  if (isBouclage) {
     for (const row of rows) {
       if (row.kind === 'segment' && row.antenne && !roleMap.has(row.seg.id)) {
         roleMap.set(row.seg.id, 'antenne')
@@ -327,6 +331,108 @@ export function buildFlowRows(segments, points, flowDirections, columns, columnX
   }
 
   return { rows: finalRows, roleMap }
+}
+
+/**
+ * Construit les lignes de tableau pour le mode Chauffage.
+ * Même logique BFS que buildECSFlowRows mais pour aller-ch / retour-ch.
+ */
+export function buildChauffageFlowRows(segments, points, flowDirections) {
+  if (!segments?.length) return { rows: [], roleMap: new Map() }
+  const prod = points?.find((p: any) => p.type === 'productionChauffage')
+  if (!prod) return { rows: [], roleMap: new Map() }
+
+  const allerSegs  = segments.filter((s: any) => s.type === 'aller-ch' || s.type === 'aller')
+  const retourSegs = segments.filter((s: any) => s.type === 'retour-ch' || s.type === 'retour')
+
+  const retourIncomingCount = new Map<string, number>()
+  for (const s of retourSegs) {
+    const d = flowDirections?.get(s.id)
+    if (!d) continue
+    retourIncomingCount.set(d.toId, (retourIncomingCount.get(d.toId) ?? 0) + 1)
+  }
+  const junctionEmitted = new Map<string, number>()
+  const visited = new Set<string>()
+  const rows: any[] = []
+  const toProdRows: any[] = []
+
+  const xOf = (nodeId: string) => (points.find((p: any) => p.id === nodeId) as any)?.x ?? Infinity
+
+  const processFrom = (startNodeId: string) => {
+    let cur = startNodeId
+    while (true) {
+      const allerOut = allerSegs.filter((s: any) => {
+        const d = flowDirections?.get(s.id)
+        return d?.fromId === cur && !visited.has(s.id)
+      })
+
+      if (allerOut.length === 1) {
+        const seg = allerOut[0]; visited.add(seg.id)
+        rows.push({ kind: 'segment', seg, depth: 0, segType: 'aller' })
+        cur = flowDirections.get(seg.id).toId
+        continue
+      }
+
+      if (allerOut.length > 1) {
+        const sorted = [...allerOut].sort((a, b) =>
+          xOf(flowDirections.get(a.id).toId) - xOf(flowDirections.get(b.id).toId))
+        for (const branchSeg of sorted) {
+          visited.add(branchSeg.id)
+          rows.push({ kind: 'segment', seg: branchSeg, depth: 0, segType: 'aller' })
+          processFrom(flowDirections.get(branchSeg.id).toId)
+        }
+        return
+      }
+
+      while (true) {
+        const retourOut = retourSegs.filter((s: any) => {
+          const d = flowDirections?.get(s.id)
+          return d?.fromId === cur && !visited.has(s.id)
+        })
+        if (retourOut.length === 0) return
+
+        const seg = retourOut[0]; visited.add(seg.id)
+        const nextNode = flowDirections.get(seg.id).toId
+
+        if (nextNode === prod.id) {
+          toProdRows.push({ kind: 'segment', seg, depth: 0, segType: 'retour' })
+          return
+        }
+
+        rows.push({ kind: 'segment', seg, depth: 0, segType: 'retour' })
+
+        const totalIn = retourIncomingCount.get(nextNode) ?? 0
+        if (totalIn > 1) {
+          const emitted = (junctionEmitted.get(nextNode) ?? 0) + 1
+          junctionEmitted.set(nextNode, emitted)
+          if (emitted < totalIn) return
+          rows.push({ kind: 'junction', ptId: nextNode, depth: 0, incomingCount: totalIn })
+        }
+        cur = nextNode
+      }
+    }
+  }
+
+  rows.push({ kind: 'flow-start' })
+  processFrom(prod.id)
+
+  for (const seg of [...allerSegs, ...retourSegs]) {
+    if (!visited.has(seg.id))
+      rows.push({ kind: 'segment', seg, depth: 0, segType: (seg.type === 'aller-ch' || seg.type === 'aller') ? 'aller' : 'retour' })
+  }
+
+  rows.push({ kind: 'flow-end' })
+  rows.push(...toProdRows)
+  if (toProdRows.length > 1)
+    rows.push({ kind: 'junction', ptId: prod.id, depth: 0, incomingCount: toProdRows.length })
+
+  const roleMap = new Map<string, string>()
+  for (const row of rows) {
+    if (row.kind === 'segment')
+      roleMap.set(row.seg.id, row.segType === 'retour' ? 'retour' : 'aller')
+  }
+
+  return { rows, roleMap }
 }
 
 /**

@@ -1,101 +1,11 @@
 import { useState } from 'react'
 import { DEFAULT_MATERIALS } from '../data/materials'
 import { DEFAULT_INSULATIONS } from '../data/insulations'
+import { DEFAULT_GLOBAL_PARAMS, buildLevels, buildProjectFromConfig } from '../utils/projectBuilder'
 
-// ── Project generation ──────────────────────────────────
-let _uid = 0
-const mkId = () => `loc-${Date.now()}-${++_uid}`
-
-function buildLevels(nSousSol, nFloors) {
-  const levels = []
-  for (let i = nSousSol; i >= 1; i--)
-    levels.push({ id: `ss${i}`, name: `SS-${i}`, isSousSol: true })
-  for (let i = 0; i < nFloors; i++)
-    levels.push({ id: i === 0 ? 'rdc' : `r${i}`, name: i === 0 ? 'RDC' : `R+${i}`, isSousSol: false })
-  return levels
-}
-
-function buildLineYs(nLevels) {
-  const SPACING = 210, TOP_Y = 80
-  return Array.from({ length: nLevels + 1 }, (_, i) => TOP_Y + (nLevels - i) * SPACING)
-}
-
-function buildColumns(nCols, columnLevelIds) {
-  return Array.from({ length: nCols }, (_, i) => ({
-    id: `col${i + 1}`, name: `Colonne ${i + 1}`,
-    levelIds: columnLevelIds?.[i] ?? 'all',
-  }))
-}
-
-const LOCAL_W = 50, LOCAL_GAP = 10
-// Column pipe zone width (visible column area). Local zone sits to its right.
-const COL_PIPE_W = 320
-// Distance from column x1 to the left edge of the first logement slot (starts after the full column)
-const COL_LOCAL_OFFSET = COL_PIPE_W + 8 + 5  // 333
-
-function buildColumnXs(nCols, maxGroupesParCol) {
-  const xs = [200]
-  for (let i = 0; i < nCols; i++) {
-    const n = maxGroupesParCol[i] ?? 0
-    const space = n > 0
-      ? COL_PIPE_W + 23 + n * (LOCAL_W + LOCAL_GAP)
-      : COL_PIPE_W
-    xs.push(xs[i] + space)
-  }
-  return xs
-}
-
-function maxGroupesParCol(nCols, nLevels, grid) {
-  return Array.from({ length: nCols }, (_, c) => {
-    let max = 0
-    for (let l = 0; l < nLevels; l++) max = Math.max(max, grid[`${l}-${c}`] ?? 0)
-    return max
-  })
-}
-
-const snapGrid = v => Math.round(v / 10) * 10
-
-function buildGroupesPoints(levels, lineYs, columns, columnXs, grid) {
-  const points = []
-  columns.forEach((col, c) => {
-    levels.forEach((level, l) => {
-      const count = grid[`${l}-${c}`] ?? 0
-      const midY = (lineYs[l] + lineYs[l + 1]) / 2
-      for (let k = 0; k < count; k++) {
-        points.push({
-          id: mkId(), type: 'groupe', name: '', showName: false,
-          colId: col.id, levelId: level.id,
-          x: snapGrid(columnXs[c] + COL_LOCAL_OFFSET + k * (LOCAL_W + LOCAL_GAP) + LOCAL_W / 2),
-          y: snapGrid(midY),
-          isLocked: false,
-        })
-      }
-    })
-  })
-  return points
-}
-
-export function buildProjectFromConfig({
-  globalParams, materials, insulations,
-  nSousSol, nFloors, nCols, groupesGrid, columnLevelIds,
-}) {
-  const levels  = buildLevels(nSousSol, nFloors)
-  const nLevels = levels.length
-  const lineYs  = buildLineYs(nLevels)
-  const columns = buildColumns(nCols, columnLevelIds)
-  const maxCols = maxGroupesParCol(nCols, nLevels, groupesGrid)
-  const columnXs = buildColumnXs(nCols, maxCols)
-  const points   = buildGroupesPoints(levels, lineYs, columns, columnXs, groupesGrid)
-  return {
-    globalParams, materials, insulations,
-    levels, lineYs, columns, columnXs,
-    chaufferie: { placed: false, enabled: false, levelId: levels[0]?.id ?? 'ss1', x1: 1190, x2: 1460, height: 150 },
-    segments: [], points,
-  }
-}
+export { buildProjectFromConfig }
 
 // ── Wizard UI ────────────────────────────────────────────
-const DEFAULT_GLOBAL_PARAMS = { T_depart: 60 }
 
 const STEP_LABELS = ['Paramètres', 'Matériaux', 'Isolants', 'Configuration', 'Groupes']
 

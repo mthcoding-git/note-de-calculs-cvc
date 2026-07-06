@@ -1,4 +1,15 @@
-import { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
+import { ACCESSORY_TYPES } from '../data/accessories'
+import { AccessorySymbol } from './AccessorySymbol'
+import type { CalcMode } from '../types'
+import { getModeFlags } from '../utils/calcModeFlags'
+import { EMETTEUR_TYPES } from '../data/emetteurs'
+
+const ACC_IDS_BY_CALCID: Partial<Record<CalcMode, string[]>> = {
+  'alimentation-ecs': ['vanne_arret', 'clapet_anti_retour', 'filtre_y', 'manometre', 'thermometre', 'vase_expansion', 'purgeur_air', 'robinet_vidange'],
+  'bouclage-ecs':     ['vanne_arret', 'clapet_anti_retour', 'filtre_y', 'manometre', 'thermometre', 'vase_expansion', 'purgeur_air', 'robinet_vidange'],
+  'alimentation-ef':  ['vanne_arret', 'clapet_anti_retour', 'filtre_y', 'manometre', 'disconnecteur', 'reducteur_pression', 'compteur_eau', 'ballon_anti_belier', 'robinet_vidange'],
+}
 
 // Cursor SVG icon for "select" mode
 function CursorIcon() {
@@ -33,7 +44,7 @@ function NodeSquareIcon() {
 
 // Balancing valve symbol: two triangles tip-to-tip (bowtie) + T mark perpendicular
 function VanneIcon({ active = false }) {
-  const col = active ? '#1d4ed8' : '#4f46e5'
+  const col = active ? '#1d4ed8' : '#000'
   return (
     <svg width={14} height={18} viewBox="-7 -12 14 18" style={{ display: 'block', flexShrink: 0 }}>
       <polygon points="-6,-5 -6,5 0,0" fill={col} />
@@ -45,7 +56,7 @@ function VanneIcon({ active = false }) {
 }
 
 // Pump symbol: circle + directional triangle, same geometry as on canvas
-function PumpSymbol({ rotation = 0, size = 14, color = '#4f46e5', bg = 'rgba(238,242,255,0.97)' }) {
+function PumpSymbol({ rotation = 0, size = 14, color = '#000', bg = '#fff' }) {
   const r  = size / 2
   const ts = r / 11
   const cx = r + 1, cy = r + 1
@@ -83,16 +94,27 @@ export default function Toolbar({
   pipeType, setPipeType,
   panelOpen, onTogglePanel,
   errorCount, onShowErrors,
-  chaufferie, editChaufferie, onEditChaufferieChange, onAddChaufferie,
-  placingChaufferie, placingEquipment,
+  placingEquipment, onCancelPlacingEquipment,
   onAddProductionECS, onAddPump, hasProductionECS,
   onAddArriveeEF,
+  onAddProductionChauffage, hasProductionChauffage,
+  onAddEmetteur,
   canvasDisplay, onCanvasDisplayToggle,
   activeFluidId, activeCalcId,
   pdcParams,
+  placingAccessoryType, onPlacingAccessoryTypeChange,
 }) {
   const [displayOpen, setDisplayOpen] = useState(false)
   const displayRef = useRef(null)
+  const [accOpen, setAccOpen] = useState(false)
+  const [emetteurOpen, setEmetteurOpen] = useState(false)
+  const emetteurRef = useRef(null)
+  const [emetteurParams, setEmetteurParams] = useState<Record<string, { deltaT: number; puissance: number | null }>>(() =>
+    Object.fromEntries(EMETTEUR_TYPES.map(em => [em.id, { deltaT: em.deltaTDefault, puissance: null }]))
+  )
+  const { isAlimEF, isChauffage } = getModeFlags(activeCalcId)
+  const [accPos, setAccPos] = useState({ top: 0, left: 0 })
+  const accRef = useRef(null)
 
   useEffect(() => {
     if (!displayOpen) return
@@ -101,7 +123,43 @@ export default function Toolbar({
     return () => document.removeEventListener('mousedown', handle)
   }, [displayOpen])
 
+  useEffect(() => {
+    if (!emetteurOpen) return
+    const handle = (e) => { if (!emetteurRef.current?.contains(e.target)) setEmetteurOpen(false) }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [emetteurOpen])
+
+  const cancelVanne = () => {
+    if (drawMode === 'draw' && pipeType === 'vanne') setDrawMode('select')
+  }
+
+  const cancelEquipment = () => {
+    if (placingEquipment) onCancelPlacingEquipment?.()
+  }
+
+  const openAcc = () => {
+    cancelVanne()
+    cancelEquipment()
+    if (accOpen) { setAccOpen(false); return }
+    if (accRef.current) {
+      const rect   = accRef.current.getBoundingClientRect()
+      const ids    = ACC_IDS_BY_CALCID[activeCalcId] ?? []
+      const popW   = Math.min(ids.length * 36 - 2 + 16, window.innerWidth - 24)
+      const left   = Math.max(12, Math.min(rect.left, window.innerWidth - popW - 12))
+      setAccPos({ top: rect.bottom + 6, left })
+    }
+    setAccOpen(true)
+  }
+
+  const closeAcc = () => {
+    setAccOpen(false)
+    onPlacingAccessoryTypeChange?.(null)
+  }
+
   const activateDraw = (type) => {
+    closeAcc()
+    cancelEquipment()
     if (drawMode === 'draw' && pipeType === type) {
       setDrawMode('select')
     } else {
@@ -133,7 +191,7 @@ export default function Toolbar({
       {/* Select mode */}
       <button
         className={`tb-btn ${isSelect ? 'active' : ''}`}
-        onClick={() => setDrawMode('select')}
+        onClick={() => { closeAcc(); cancelEquipment(); setDrawMode('select') }}
 >
         <CursorIcon /> Sélectionner
       </button>
@@ -141,7 +199,7 @@ export default function Toolbar({
       {/* Attribuer params — right after Sélectionner */}
       <button
         className={`tb-btn ${isEditParams ? 'active' : ''}`}
-        onClick={() => setDrawMode(isEditParams ? 'select' : 'editParams')}
+        onClick={() => { closeAcc(); cancelEquipment(); setDrawMode(isEditParams ? 'select' : 'editParams') }}
         >
         <PropsIcon /> Attribuer
       </button>
@@ -150,7 +208,7 @@ export default function Toolbar({
       <div ref={displayRef} style={{ position: 'relative' }}>
         <button
           className={`tb-btn ${displayOpen ? 'active' : ''}`}
-          onClick={() => setDisplayOpen(o => !o)}
+          onClick={() => { closeAcc(); cancelVanne(); cancelEquipment(); setDisplayOpen(o => !o) }}
           >
           Afficher ▾
         </button>
@@ -177,13 +235,28 @@ export default function Toolbar({
       {/* Draw tools */}
       <div className="toolbar-group">
         <span className="toolbar-label">Tracé :</span>
-        {activeCalcId === 'alimentation-ef' ? (
+        {isAlimEF ? (
           <button
             className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller-ef' : ''}`}
             onClick={() => activateDraw('aller')}
             >
             <span className="pipe-prev-aller-ef" /> Aller EF
           </button>
+        ) : isChauffage ? (
+          <>
+            <button
+              className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller' : ''}`}
+              onClick={() => activateDraw('aller')}
+              >
+              <span className="pipe-prev-aller" /> Aller CH
+            </button>
+            <button
+              className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour' : ''}`}
+              onClick={() => activateDraw('retour')}
+              >
+              <span className="pipe-prev-retour" /> Retour CH
+            </button>
+          </>
         ) : (
           <>
             <button
@@ -212,67 +285,149 @@ export default function Toolbar({
 
       {/* Equipment */}
       <div className="toolbar-group">
-        {activeCalcId !== 'alimentation-ef' && <span className="toolbar-label">Équipements :</span>}
+        <span className="toolbar-label">Équipements :</span>
 
-        {/* Local ECS — masqué en mode EF */}
-        {activeCalcId !== 'alimentation-ef' && (!chaufferie?.placed ? (
-          <button
-            className={`tb-btn ${placingChaufferie ? 'active' : ''}`}
-            onClick={onAddChaufferie}
-            >
-            Local ECS
-          </button>
-        ) : (
-          <button
-            className={`tb-btn ${editChaufferie ? 'active' : ''}`}
-            onClick={() => onEditChaufferieChange(!editChaufferie)}
-            >
-            ✎ Modifier local ECS
-          </button>
-        ))}
-
-        {activeCalcId === 'alimentation-ef' ? (
-          /* Arrivée EF — plusieurs autorisées en alimentation-ef */
+        {/* Arrivée EF — alimentation-ef uniquement */}
+        {isAlimEF && (
           <button
             className={`tb-btn ${placingEquipment?.type === 'arriveeEF' ? 'active' : ''}`}
-            onClick={onAddArriveeEF}
-            >
+            onClick={() => { closeAcc(); onAddArriveeEF?.() }}
+          >
             Arrivée EF
           </button>
-        ) : (
+        )}
+
+        {/* Équipements Chauffage */}
+        {isChauffage && (
           <>
-            {/* Prod. ECS */}
+            <button
+              className={`tb-btn ${placingEquipment?.type === 'productionChauffage' ? 'active' : ''}`}
+              onClick={() => { closeAcc(); cancelVanne(); onAddProductionChauffage?.() }}
+              disabled={hasProductionChauffage}
+            >
+              Prod. Chauffage
+            </button>
+            {/* Émetteurs dropdown */}
+            <div ref={emetteurRef} style={{ position: 'relative' }}>
+              <button
+                className={`tb-btn ${emetteurOpen || placingEquipment?.type === 'emetteur' ? 'active' : ''}`}
+                onClick={() => { closeAcc(); cancelVanne(); setEmetteurOpen(o => !o) }}
+                style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+              >
+                <svg width={18} height={12} viewBox="0 0 18 12" style={{ display: 'block', flexShrink: 0 }}>
+                  <rect x={0.6} y={0.6} width={16.8} height={10.8} fill="none" stroke="currentColor" strokeWidth={1.2} rx={1} />
+                  {[5.5, 9, 12.5].map((x, i) => (
+                    <line key={i} x1={x} y1={2} x2={x} y2={10} stroke="currentColor" strokeWidth={0.9} />
+                  ))}
+                </svg>
+                Émetteur {emetteurOpen ? '▲' : '▾'}
+              </button>
+              {emetteurOpen && (
+                <div className="tb-display-popover" style={{ padding: '6px 8px 8px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'max-content 44px 50px', columnGap: 6, rowGap: 1, alignItems: 'center' }}>
+                    {/* En-tête */}
+                    <span />
+                    <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 2 }}>ΔT K</span>
+                    <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 2 }}>P W</span>
+                    {/* Séparateur */}
+                    <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #f1f5f9', margin: '2px 0 3px' }} />
+                    {/* Lignes */}
+                    {EMETTEUR_TYPES.map(em => {
+                      const p = emetteurParams[em.id]
+                      const setP = (patch: Partial<typeof p>) =>
+                        setEmetteurParams(prev => ({ ...prev, [em.id]: { ...prev[em.id], ...patch } }))
+                      const doPlace = () => { setEmetteurOpen(false); onAddEmetteur?.(em.id, p.deltaT, p.puissance) }
+                      const onKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') doPlace() }
+                      return (
+                        <React.Fragment key={em.id}>
+                          <button onClick={doPlace} className="tb-display-item"
+                            style={{ padding: '4px 8px 4px 4px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontSize: 11, color: '#1e293b', borderRadius: 4, whiteSpace: 'nowrap' }}>
+                            {em.label}
+                          </button>
+                          <input type="number" min={1} max={60} step={1}
+                            value={p.deltaT}
+                            onChange={e => setP({ deltaT: Math.max(1, Number(e.target.value)) })}
+                            onKeyDown={onKey} onClick={e => e.stopPropagation()}
+                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #e2e8f0', borderRadius: 4, fontSize: 11, textAlign: 'right', fontWeight: 600, color: '#1e293b', background: '#f8fafc' }} />
+                          <input type="number" min={1} step={100}
+                            value={p.puissance ?? ''}
+                            placeholder="—"
+                            onChange={e => setP({ puissance: e.target.value === '' ? null : Math.max(1, Number(e.target.value)) })}
+                            onKeyDown={onKey} onClick={e => e.stopPropagation()}
+                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #e2e8f0', borderRadius: 4, fontSize: 11, textAlign: 'right', background: '#f8fafc', color: p.puissance != null ? '#1e293b' : '#9ca3af' }} />
+                        </React.Fragment>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Équipements ECS — hors alimentation-ef et hors chauffage */}
+        {!isAlimEF && !isChauffage && (
+          <>
             <button
               className={`tb-btn ${placingEquipment?.type === 'productionECS' ? 'active' : ''}`}
-              onClick={onAddProductionECS}
+              onClick={() => { closeAcc(); cancelVanne(); onAddProductionECS?.() }}
               disabled={hasProductionECS}
-              >
+            >
               Prod. ECS
             </button>
-
-            {/* Pompe */}
             <button
               className={`tb-btn ${placingEquipment?.type === 'pump' ? 'active' : ''}`}
-              onClick={onAddPump}
-              >
+              onClick={() => { closeAcc(); cancelVanne(); onAddPump?.() }}
+            >
               <PumpSymbol
                 rotation={180}
-                color={placingEquipment?.type === 'pump' ? '#1d4ed8' : '#4f46e5'}
-                bg={placingEquipment?.type === 'pump' ? '#dbeafe' : 'rgba(238,242,255,0.97)'}
+                color={placingEquipment?.type === 'pump' ? '#1d4ed8' : '#000'}
+                bg={placingEquipment?.type === 'pump' ? '#dbeafe' : '#fff'}
               />
               Pompe
             </button>
-
-            {/* Vanne d'équilibrage */}
             <button
               className={`tb-btn ${drawMode === 'draw' && pipeType === 'vanne' ? 'active' : ''}`}
               onClick={() => activateDraw('vanne')}
-              >
+            >
               <VanneIcon active={drawMode === 'draw' && pipeType === 'vanne'} />
               Vanne équilib.
             </button>
           </>
         )}
+
+        {/* Popover accessoires — toujours visible */}
+        <div ref={accRef}>
+          <button
+            className={`tb-btn ${accOpen || placingAccessoryType ? 'active' : ''}`}
+            onClick={openAcc}
+          >
+            Accessoires {accOpen ? '▲' : '▾'}
+          </button>
+          {accOpen && (
+            <div className="tb-acc-popover" style={{ top: accPos.top, left: accPos.left }}>
+              <div className="tb-acc-grid">
+                {(ACC_IDS_BY_CALCID[activeCalcId] ?? []).map(accId => {
+                  const acc = ACCESSORY_TYPES.find(a => a.id === accId)
+                  if (!acc) return null
+                  const isActive = placingAccessoryType === accId
+                  return (
+                    <button
+                      key={accId}
+                      className={`tb-acc-item${isActive ? ' tb-acc-item-active' : ''}`}
+                      data-tooltip={acc.label}
+                      onClick={() => onPlacingAccessoryTypeChange?.(isActive ? null : accId)}
+                    >
+                      <svg width={18} height={18} viewBox="-11 -11 22 22">
+                        <AccessorySymbol type={accId} />
+                      </svg>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Errors */}
@@ -289,16 +444,6 @@ export default function Toolbar({
       )}
 
       {/* Contextual hints */}
-      {placingChaufferie && (
-        <span className="toolbar-hint">
-          Cliquez sur le schéma pour placer · Échap pour annuler
-        </span>
-      )}
-      {editChaufferie && (
-        <span className="toolbar-hint">
-          Glissez l'intérieur pour déplacer, les bords pour redimensionner · ✎ ou Échap pour terminer
-        </span>
-      )}
 
     </div>
   )

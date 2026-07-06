@@ -180,6 +180,8 @@ export interface CumDpAlimResult {
   segCoteAval:      Map<string, number>  // cote nœud aval (m)
   segPressionAval:  Map<string, number>  // pression disponible aval en Pa
   segPStatAval:     Map<string, number>  // pression statique aval en Pa (DTU ≤ 4 bar)
+  nodePression:     Map<string, number>  // pression disponible à chaque nœud en Pa
+  nodePStat:        Map<string, number>  // pression statique à chaque nœud en Pa
   criticalDp:       number | null
   criticalSegIds:   Set<string>
 }
@@ -206,6 +208,7 @@ export function computeCumDpAlim(
   const coteSource         = nodeCotes.get(prodNode.id) ?? 0
   const allerSegs          = segments.filter(s => s.type === 'aller')
   const nodePression       = new Map<string, number>()
+  const nodePStat          = new Map<string, number>()
   const nodeCumDpFriction  = new Map<string, number>()
   const segCumDp           = new Map<string, number>()
   const segCumDpFriction   = new Map<string, number>()
@@ -217,6 +220,7 @@ export function computeCumDpAlim(
   const segPStatAval       = new Map<string, number>()
 
   nodePression.set(prodNode.id, pressionSource)
+  nodePStat.set(prodNode.id, pressionSource)
   nodeCumDpFriction.set(prodNode.id, 0)
 
   const queue: string[] = [prodNode.id]
@@ -254,6 +258,7 @@ export function computeCumDpAlim(
       const toId = dir.toId
       if (!queued.has(toId)) {
         nodePression.set(toId, presAval)
+        nodePStat.set(toId, pStatAval)
         nodeCumDpFriction.set(toId, cumDpFrictionAfter)
         queued.add(toId)
         queue.push(toId)
@@ -317,5 +322,5 @@ export function computeCumDpAlim(
 
   const criticalDp = minPression !== null ? pressionSource - minPression : null
 
-  return { segCumDp, segCumDpFriction, segDpStatic, segDeltaH, segCoteAmont, segCoteAval, segPressionAval, segPStatAval, criticalDp, criticalSegIds }
+  return { segCumDp, segCumDpFriction, segDpStatic, segDeltaH, segCoteAmont, segCoteAval, segPressionAval, segPStatAval, nodePression, nodePStat, criticalDp, criticalSegIds }
 }

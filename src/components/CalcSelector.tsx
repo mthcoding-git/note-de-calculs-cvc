@@ -1,6 +1,10 @@
 import React from 'react'
+import type { CalcMode, FluidId } from '../types'
 
-const FLUIDES = [
+interface CalcEntry { id: CalcMode; label: string; available: boolean }
+interface FluidEntry { id: FluidId; shortLabel: string; label: string; available: boolean; calculs: CalcEntry[] }
+
+const FLUIDES: FluidEntry[] = [
   {
     id: 'ecs',
     shortLabel: 'ECS',
@@ -9,7 +13,6 @@ const FLUIDES = [
     calculs: [
       { id: 'bouclage-ecs',     label: 'Bouclage ECS',     available: true  },
       { id: 'alimentation-ecs', label: 'Alimentation ECS', available: true  },
-      { id: 'pdc-bouclage-ecs', label: 'Pertes de charge', available: false },
     ],
   },
   {
@@ -25,9 +28,9 @@ const FLUIDES = [
     id: 'chauffage',
     shortLabel: 'Chauffage',
     label: 'Chauffage',
-    available: false,
+    available: true,
     calculs: [
-      { id: 'distribution-chauffage', label: 'Distribution chauffage',       available: false },
+      { id: 'distribution-chauffage', label: 'Distribution chauffage',       available: true  },
       { id: 'pdc-chauffage',          label: 'Pertes de charge — Chauffage', available: false },
     ],
   },
@@ -40,19 +43,18 @@ export function getAutoCalcId(fluidId) {
   return available.length === 1 ? available[0].id : null
 }
 
-const NETWORK_SHORT: Record<string, string> = {
+const NETWORK_SHORT: Record<CalcMode, string> = {
   'bouclage-ecs':           'ECS',
   'alimentation-ecs':       'ECS',
-  'pdc-bouclage-ecs':       'ECS',
   'alimentation-ef':        'EF',
   'distribution-chauffage': 'CH',
   'pdc-chauffage':          'CH',
 }
-export function getNetworkLabel(calcId: string): string {
+export function getNetworkLabel(calcId: CalcMode): string {
   return NETWORK_SHORT[calcId] ?? ''
 }
 
-export function getCalcLabel(calcId) {
+export function getCalcLabel(calcId: CalcMode): string | null {
   for (const fluid of FLUIDES) {
     const calc = fluid.calculs.find(c => c.id === calcId)
     if (calc) return calc.label
@@ -64,7 +66,13 @@ export function getFluidLabel(fluidId) {
   return FLUIDES.find(f => f.id === fluidId)?.shortLabel ?? fluidId
 }
 
-export function CalcFluidTabs({ activeFluidId, activeCalcId, onFluidChange, onCalcChange, isFluidKnown }) {
+export function CalcFluidTabs({ activeFluidId, activeCalcId, onFluidChange, onCalcChange, isFluidKnown }: {
+  activeFluidId: FluidId | null
+  activeCalcId: CalcMode | null
+  onFluidChange: (fluidId: FluidId, calcId: CalcMode | null) => void
+  onCalcChange: (calcId: CalcMode) => void
+  isFluidKnown?: (fluidId: FluidId) => boolean
+}) {
   const [pendingFluidId, setPendingFluidId] = React.useState<string | null>(null)
 
   // Quand le fluide actif change (suite à un vrai switch), on efface le pending

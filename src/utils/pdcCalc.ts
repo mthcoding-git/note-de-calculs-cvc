@@ -119,6 +119,10 @@ export const DEFAULT_PDC_PARAMS_ALIM_ECS = {
   tronçonsAmont:            [] as TronconAmontEF[],   // coteAmont/coteAval en m, length en m
 }
 
+export type PdcParams        = typeof DEFAULT_PDC_PARAMS
+export type PdcParamsAlimEF  = typeof DEFAULT_PDC_PARAMS_ALIM_EF
+export type PdcParamsAlimECS = typeof DEFAULT_PDC_PARAMS_ALIM_ECS
+
 /** Masse volumique de l'eau (kg/m³) — formule de Kell (0–100 °C). */
 export function waterDensity(T: number): number {
   const num = 999.83952 + 16.945176 * T - 7.9870401e-3 * T ** 2

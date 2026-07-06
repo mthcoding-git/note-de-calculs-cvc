@@ -133,7 +133,7 @@ function collectDownstreamGroupes(startNodeId, segments, points, flowDirections)
 }
 
 // ── Point d'entrée principal ────────────────────────────────────────────────
-export function computeAlimentationResults(segments, points, alimentationParams, flowDirections, segIsSousSolMap: Map<string, boolean> = new Map()) {
+export function computeAlimentationResults(segments, points, alimentationParams, flowDirections, segIsSousSolMap: Map<string, boolean> = new Map(), isEF = false) {
   if (!alimentationParams || !flowDirections) return new Map()
 
   const appareils    = alimentationParams.appareils ?? []
@@ -153,14 +153,25 @@ export function computeAlimentationResults(segments, points, alimentationParams,
     for (const g of groupes) {
       if (!g.equipements) continue
       if (g.isChambreHopital) {
-        // DTU 60.11 Note 3 : seul l'appareil le plus demandeur (hors WC), quantité 1
+        // DTU 60.11 Note 3 — "hors WC" exclut les deux types (réservoir et robinet de chasse)
+        // ECS : seul l'appareil le plus demandeur (hors WC), quantité 1
+        // EF  : idem + WC présent dans la chambre (réservoir ou robinet de chasse), quantité 1
+        const WC_IDS = new Set(['wc_robinet', 'wc_reservoir'])
         let maxQBase = -1, maxId: string | null = null
         for (const [id, cnt] of Object.entries(g.equipements)) {
-          if (!enabledIds.has(id) || (cnt as number) === 0 || id === 'wc_robinet') continue
+          if (!enabledIds.has(id) || (cnt as number) === 0 || WC_IDS.has(id)) continue
           const qBase = appareils.find(a => a.id === id)?.qBase ?? 0
           if (qBase > maxQBase) { maxQBase = qBase; maxId = id }
         }
         if (maxId) totalEquip[maxId] = (totalEquip[maxId] ?? 0) + 1
+        if (isEF) {
+          if ((g.equipements['wc_reservoir'] ?? 0) > 0 && enabledIds.has('wc_reservoir')) {
+            totalEquip['wc_reservoir'] = (totalEquip['wc_reservoir'] ?? 0) + 1
+          }
+          if ((g.equipements['wc_robinet'] ?? 0) > 0 && enabledIds.has('wc_robinet')) {
+            totalEquip['wc_robinet'] = (totalEquip['wc_robinet'] ?? 0) + 1
+          }
+        }
       } else {
         for (const [id, cnt] of Object.entries(g.equipements)) {
           if (!enabledIds.has(id)) continue

@@ -111,3 +111,101 @@ export function computeValveKvs(
 
   return result
 }
+
+export function computeValveKvsAlim(
+  valves:              any[],
+  segments:            any[],
+  points:              any[],
+  flowDirections:      Map<string, { fromId: string; toId: string }>,
+  pdcCumAlimResults:   { segCumDp: Map<string, number> } | null,
+  alimentationResults: Map<string, { flowRateForPdc: number }> | null,
+): Map<string, ValveKvResult> {
+  const result = new Map<string, ValveKvResult>()
+  if (!pdcCumAlimResults || !alimentationResults || valves.length === 0) return result
+
+  const { segCumDp } = pdcCumAlimResults
+  const prodECS = points.find((p: any) => p.type === 'productionECS')
+  if (!prodECS) return result
+
+  const allerSegs = segments.filter((s: any) => s.type === 'aller')
+
+  // Build nodeIncoming from aller segments
+  const nodeIncoming = new Map<string, { segId: string; cumDp: number }[]>()
+  for (const seg of allerSegs) {
+    const dir = flowDirections.get(seg.id)
+    if (!dir) continue
+    const cumDp = segCumDp.get(seg.id) ?? 0
+    if (!nodeIncoming.has(dir.toId)) nodeIncoming.set(dir.toId, [])
+    nodeIncoming.get(dir.toId)!.push({ segId: seg.id, cumDp })
+  }
+
+  // nodeCumDp = max ΔP among arriving branches
+  const nodeCumDp = new Map<string, number>()
+  nodeCumDp.set(prodECS.id, 0)
+  for (const [nodeId, incoming] of nodeIncoming) {
+    nodeCumDp.set(nodeId, Math.max(...incoming.map(i => i.cumDp)))
+  }
+
+  // outgoing: nodeId → downstream aller segment
+  const outgoing = new Map<string, string>()
+  for (const seg of allerSegs) {
+    const dir = flowDirections.get(seg.id)
+    if (dir) outgoing.set(dir.fromId, seg.id)
+  }
+
+  const valveTrace = new Map<string, { junctionId: string; lastSegId: string; branchDp: number }>()
+
+  for (const valve of valves) {
+    const dir = flowDirections.get(valve.segmentId)
+    if (!dir) continue
+
+    let currentNode = dir.toId
+    let lastSegId   = valve.segmentId
+
+    while (currentNode !== prodECS.id) {
+      const incoming = nodeIncoming.get(currentNode) ?? []
+      if (incoming.length > 1) break
+      const nextSegId = outgoing.get(currentNode)
+      if (!nextSegId) break
+      const nextDir = flowDirections.get(nextSegId)
+      if (!nextDir) break
+      lastSegId   = nextSegId
+      currentNode = nextDir.toId
+    }
+
+    const branchDp = segCumDp.get(lastSegId) ?? 0
+    valveTrace.set(valve.id, { junctionId: currentNode, lastSegId, branchDp })
+  }
+
+  const groups = new Map<string, string[]>()
+  for (const valve of valves) {
+    const trace = valveTrace.get(valve.id)
+    if (!trace) continue
+    const key = `${trace.junctionId}::${trace.lastSegId}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(valve.id)
+  }
+
+  for (const valve of valves) {
+    const trace = valveTrace.get(valve.id)
+    if (!trace) continue
+
+    const referenceDp = nodeCumDp.get(trace.junctionId) ?? 0
+    const dpTotal     = Math.max(0, referenceDp - trace.branchDp)
+    const isCritical  = dpTotal < 1
+
+    const key     = `${trace.junctionId}::${trace.lastSegId}`
+    const nValves = groups.get(key)?.length ?? 1
+    const dpVanne = dpTotal / nValves
+
+    const ar = alimentationResults.get(valve.segmentId)
+    const Q  = ar?.flowRateForPdc != null ? ar.flowRateForPdc * 3.6 : null
+    const kv = (!isCritical && Q != null && Q > 0 && dpVanne > 0)
+      ? Q / Math.sqrt(dpVanne / 100000)
+      : null
+
+    result.set(valve.id, { kv, dpVanne, dpTotal, branchDp: trace.branchDp, referenceDp, isCritical, nValves, Q })
+  }
+
+  return result
+}
