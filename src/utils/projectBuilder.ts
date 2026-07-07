@@ -165,6 +165,7 @@ export function initProject() {
     alimentationParamsECS: DEFAULT_ALIMENTATION_PARAMS,
     alimentationParamsEF:  null,
     pdcParamsBouclageECS:  DEFAULT_PDC_PARAMS,
+    pdcParamsChauffage:    DEFAULT_PDC_PARAMS,
     pdcParamsAlimECS:      DEFAULT_PDC_PARAMS_ALIM_ECS,
     pdcParamsAlimEF:       null,
     materialsECS:          DEFAULT_MATERIALS,

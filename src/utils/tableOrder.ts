@@ -336,14 +336,128 @@ export function buildECSFlowRows(segments, points, flowDirections, columns, colu
 /**
  * Construit les lignes de tableau pour le mode Chauffage.
  * Même logique BFS que buildECSFlowRows mais pour aller-ch / retour-ch.
+ * Rôles : collecteur-aller / collecteur-retour / antenne (Aller CH / Retour CH).
+ *
+ * Nœud jonction   = nœud connecté à ≥ 3 tronçons aller  (le flux aller se ramifie).
+ * Nœud séparation = nœud connecté à ≥ 3 tronçons retour (les retours confluent).
+ *
+ * Aller CH (antenne)   : chemin du toId jusqu'à un émetteur sans nœud jonction.
+ * Collecteur Aller CH  : chemin passe par un nœud jonction avant tout émetteur.
+ * Retour CH (antenne)  : chemin du fromId jusqu'à un émetteur sans nœud séparation.
+ * Collecteur Retour CH : chemin passe par un nœud séparation avant tout émetteur.
  */
-export function buildChauffageFlowRows(segments, points, flowDirections) {
+export function buildChauffageFlowRows(segments, points, flowDirections, columns?, columnXs?, levels?, lineYs?) {
   if (!segments?.length) return { rows: [], roleMap: new Map() }
   const prod = points?.find((p: any) => p.type === 'productionChauffage')
   if (!prod) return { rows: [], roleMap: new Map() }
 
   const allerSegs  = segments.filter((s: any) => s.type === 'aller-ch' || s.type === 'aller')
   const retourSegs = segments.filter((s: any) => s.type === 'retour-ch' || s.type === 'retour')
+
+  // Degré aller / retour par nœud (non-dirigé : toutes connexions comptent)
+  const allerDegree  = new Map<string, number>()
+  const retourDegree = new Map<string, number>()
+  for (const s of allerSegs) {
+    const d = flowDirections?.get(s.id); if (!d) continue
+    allerDegree.set(d.fromId, (allerDegree.get(d.fromId) ?? 0) + 1)
+    allerDegree.set(d.toId,   (allerDegree.get(d.toId)   ?? 0) + 1)
+  }
+  for (const s of retourSegs) {
+    const d = flowDirections?.get(s.id); if (!d) continue
+    retourDegree.set(d.fromId, (retourDegree.get(d.fromId) ?? 0) + 1)
+    retourDegree.set(d.toId,   (retourDegree.get(d.toId)   ?? 0) + 1)
+  }
+
+  // Depuis un nœud aller, atteint-on un émetteur sans nœud jonction (allerDegree ≥ 3) ?
+  const memoAller = new Map<string, boolean>()
+  const isAntenneAllerFrom = (nodeId: string): boolean => {
+    if (memoAller.has(nodeId)) return memoAller.get(nodeId)!
+    const pt = points.find((p: any) => p.id === nodeId)
+    if (pt?.type === 'emetteur') { memoAller.set(nodeId, true); return true }
+    if ((allerDegree.get(nodeId) ?? 0) >= 3) { memoAller.set(nodeId, false); return false }
+    const outgoing = allerSegs.filter((s: any) => flowDirections?.get(s.id)?.fromId === nodeId)
+    const result = outgoing.some((s: any) => {
+      const toId = flowDirections?.get(s.id)?.toId
+      return toId != null && isAntenneAllerFrom(toId)
+    })
+    memoAller.set(nodeId, result)
+    return result
+  }
+
+  // Depuis un nœud retour (amont), atteint-on un émetteur sans nœud séparation (retourDegree ≥ 3) ?
+  const memoRetour = new Map<string, boolean>()
+  const isAntenneRetourFrom = (nodeId: string): boolean => {
+    if (memoRetour.has(nodeId)) return memoRetour.get(nodeId)!
+    const pt = points.find((p: any) => p.id === nodeId)
+    if (pt?.type === 'emetteur') { memoRetour.set(nodeId, true); return true }
+    if ((retourDegree.get(nodeId) ?? 0) >= 3) { memoRetour.set(nodeId, false); return false }
+    const incoming = retourSegs.filter((s: any) => flowDirections?.get(s.id)?.toId === nodeId)
+    const result = incoming.some((s: any) => {
+      const fromId = flowDirections?.get(s.id)?.fromId
+      return fromId != null && isAntenneRetourFrom(fromId)
+    })
+    memoRetour.set(nodeId, result)
+    return result
+  }
+
+  const makeSegRow = (seg: any, segType: 'aller' | 'retour') => {
+    const d = flowDirections?.get(seg.id)
+    const isAllerSeg = segType === 'aller'
+    const antenne = d != null && (isAllerSeg
+      ? isAntenneAllerFrom(d.toId)
+      : isAntenneRetourFrom(d.fromId))
+    const collecteur = antenne ? undefined : (isAllerSeg ? 'aller' : 'retour')
+    return { kind: 'segment', seg, depth: 0, segType, antenne, collecteur }
+  }
+
+  // ── Colonne d'un point ────────────────────────────────────────────────────
+  const getColFor = (ptId) => {
+    const pt = points?.find((p: any) => p.id === ptId)
+    if (!pt) return null
+    let levelId = null
+    for (let i = 0; i < (levels?.length ?? 0); i++) {
+      const yBot = lineYs?.[i], yTop = lineYs?.[i + 1]
+      if (yTop == null) continue
+      if (pt.y > yTop && pt.y <= yBot) { levelId = levels[i].id; break }
+    }
+    for (let i = 0; i < (columns?.length ?? 0); i++) {
+      const cx1 = columnXs?.[i], cx2 = columnXs?.[i + 1]
+      if (cx1 == null || cx2 == null) continue
+      const col = columns[i]
+      if (col.isGap) continue
+      if (pt.x < cx1 || pt.x > cx2) continue
+      const covers = col.levelIds === 'all' ||
+        (Array.isArray(col.levelIds) && levelId && col.levelIds.includes(levelId))
+      if (covers) return col.name
+    }
+    return null
+  }
+
+  const segColName = (seg: any) => {
+    const fd = flowDirections?.get(seg.id)
+    const fc = getColFor(fd?.fromId ?? seg.startPointId)
+    const tc = getColFor(fd?.toId   ?? seg.endPointId)
+    return (fc && fc === tc) ? fc : null
+  }
+
+  const findBranchColumn = (aSeg: any) => {
+    let col = segColName(aSeg)
+    if (col) return col
+    let cur = flowDirections?.get(aSeg.id)?.toId
+    const tempVis = new Set<string>()
+    while (cur) {
+      const out = allerSegs.filter((s: any) => {
+        const d = flowDirections?.get(s.id)
+        return d?.fromId === cur && !visited.has(s.id) && !tempVis.has(s.id)
+      })
+      if (out.length !== 1) break
+      const s = out[0]; tempVis.add(s.id)
+      col = segColName(s)
+      if (col) return col
+      cur = flowDirections?.get(s.id)?.toId
+    }
+    return null
+  }
 
   const retourIncomingCount = new Map<string, number>()
   for (const s of retourSegs) {
@@ -358,8 +472,9 @@ export function buildChauffageFlowRows(segments, points, flowDirections) {
 
   const xOf = (nodeId: string) => (points.find((p: any) => p.id === nodeId) as any)?.x ?? Infinity
 
-  const processFrom = (startNodeId: string) => {
+  const processFrom = (startNodeId: string, isTopLevel = false) => {
     let cur = startNodeId
+    let allerEmitted = 0
     while (true) {
       const allerOut = allerSegs.filter((s: any) => {
         const d = flowDirections?.get(s.id)
@@ -368,8 +483,13 @@ export function buildChauffageFlowRows(segments, points, flowDirections) {
 
       if (allerOut.length === 1) {
         const seg = allerOut[0]; visited.add(seg.id)
-        rows.push({ kind: 'segment', seg, depth: 0, segType: 'aller' })
-        cur = flowDirections.get(seg.id).toId
+        const toId = flowDirections.get(seg.id).toId
+        const isCollecteur = !isAntenneAllerFrom(toId)
+        if (isTopLevel && isCollecteur && allerEmitted === 1)
+          rows.push({ kind: 'collecteur-header', role: 'collecteur-aller' })
+        rows.push(makeSegRow(seg, 'aller'))
+        allerEmitted++
+        cur = toId
         continue
       }
 
@@ -377,9 +497,16 @@ export function buildChauffageFlowRows(segments, points, flowDirections) {
         const sorted = [...allerOut].sort((a, b) =>
           xOf(flowDirections.get(a.id).toId) - xOf(flowDirections.get(b.id).toId))
         for (const branchSeg of sorted) {
+          const branchToId = flowDirections.get(branchSeg.id).toId
+          const branchIsAntenne = isAntenneAllerFrom(branchToId)
+          if (branchIsAntenne) {
+            rows.push({ kind: 'col-header', name: findBranchColumn(branchSeg) ?? null })
+          } else {
+            rows.push({ kind: 'collecteur-header', role: 'collecteur-aller' })
+          }
           visited.add(branchSeg.id)
-          rows.push({ kind: 'segment', seg: branchSeg, depth: 0, segType: 'aller' })
-          processFrom(flowDirections.get(branchSeg.id).toId)
+          rows.push(makeSegRow(branchSeg, 'aller'))
+          processFrom(branchToId)
         }
         return
       }
@@ -395,11 +522,11 @@ export function buildChauffageFlowRows(segments, points, flowDirections) {
         const nextNode = flowDirections.get(seg.id).toId
 
         if (nextNode === prod.id) {
-          toProdRows.push({ kind: 'segment', seg, depth: 0, segType: 'retour' })
+          toProdRows.push(makeSegRow(seg, 'retour'))
           return
         }
 
-        rows.push({ kind: 'segment', seg, depth: 0, segType: 'retour' })
+        rows.push(makeSegRow(seg, 'retour'))
 
         const totalIn = retourIncomingCount.get(nextNode) ?? 0
         if (totalIn > 1) {
@@ -414,11 +541,13 @@ export function buildChauffageFlowRows(segments, points, flowDirections) {
   }
 
   rows.push({ kind: 'flow-start' })
-  processFrom(prod.id)
+  processFrom(prod.id, true)
 
   for (const seg of [...allerSegs, ...retourSegs]) {
-    if (!visited.has(seg.id))
-      rows.push({ kind: 'segment', seg, depth: 0, segType: (seg.type === 'aller-ch' || seg.type === 'aller') ? 'aller' : 'retour' })
+    if (!visited.has(seg.id)) {
+      const segType: 'aller' | 'retour' = (seg.type === 'aller-ch' || seg.type === 'aller') ? 'aller' : 'retour'
+      rows.push(makeSegRow(seg, segType))
+    }
   }
 
   rows.push({ kind: 'flow-end' })
@@ -426,13 +555,23 @@ export function buildChauffageFlowRows(segments, points, flowDirections) {
   if (toProdRows.length > 1)
     rows.push({ kind: 'junction', ptId: prod.id, depth: 0, incomingCount: toProdRows.length })
 
+  // Supprimer les col-header orphelins (non suivis d'un segment)
+  const finalRows = rows.filter((row, i) => {
+    if (row.kind !== 'col-header') return true
+    return rows[i + 1]?.kind === 'segment'
+  })
+
   const roleMap = new Map<string, string>()
-  for (const row of rows) {
+  for (const row of finalRows) {
     if (row.kind === 'segment')
-      roleMap.set(row.seg.id, row.segType === 'retour' ? 'retour' : 'aller')
+      roleMap.set(row.seg.id,
+        row.antenne             ? 'antenne'           :
+        row.collecteur === 'aller'  ? 'collecteur-aller'  :
+        row.collecteur === 'retour' ? 'collecteur-retour' :
+        row.segType === 'retour'    ? 'retour'            : 'aller')
   }
 
-  return { rows, roleMap }
+  return { rows: finalRows, roleMap }
 }
 
 /**

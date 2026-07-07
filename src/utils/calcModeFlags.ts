@@ -17,7 +17,7 @@ export function getModeFlags(calcId: CalcMode | null): CalcModeFlags {
     isAlimEF:    calcId === 'alimentation-ef',
     isAlimMode:  calcId === 'alimentation-ecs' || calcId === 'alimentation-ef',
     isChauffage: calcId === 'distribution-chauffage',
-    hasPdc:      calcId === 'bouclage-ecs' || calcId === 'alimentation-ecs' || calcId === 'alimentation-ef',
+    hasPdc:      calcId === 'bouclage-ecs' || calcId === 'alimentation-ecs' || calcId === 'alimentation-ef' || calcId === 'distribution-chauffage',
     hasKv:       calcId === 'bouclage-ecs' || calcId === 'alimentation-ecs',
   }
 }

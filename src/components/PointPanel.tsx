@@ -2010,16 +2010,24 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                       {s.type ?? '—'}
                     </span>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: calcSubMode !== 'pdc' && segCumDp != null ? '1fr auto auto' : '1fr 1fr', gap: 4 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 40px' }}>
                     <div>
                       <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>Débit</div>
                       <div style={{ fontSize: 12, fontWeight: 600, color: '#111827' }}>
                         {s.flowRate != null ? s.flowRate.toFixed(3) + ' m³/h' : '—'}
                       </div>
                     </div>
-                    {calcSubMode === 'pdc' && segCumDp != null ? (
+                    {!isChauffage && calcSubMode !== 'pdc' && (
                       <div>
-                        <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>ΔP / Prod.ECS</div>
+                        <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>T arrivée</div>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: '#374151' }}>
+                          {s.T_to != null ? s.T_to.toFixed(2) + ' °C' : '—'}
+                        </div>
+                      </div>
+                    )}
+                    {segCumDp != null && (
+                      <div>
+                        <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>ΔP / Prod.</div>
                         <div style={{ fontSize: 12, fontWeight: isWorst ? 700 : 600,
                           color: isWorst ? '#0f172a' : '#374151', fontFamily: 'ui-monospace, monospace' }}>
                           {fmtDp(segCumDp)}
@@ -2030,25 +2038,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                           </div>
                         )}
                       </div>
-                    ) : calcSubMode !== 'pdc' ? (
-                      <>
-                        <div style={{ paddingLeft: 6 }}>
-                          <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>T arrivée</div>
-                          <div style={{ fontSize: 11, fontWeight: 600, color: '#374151' }}>
-                            {s.T_to != null ? s.T_to.toFixed(2) + ' °C' : '—'}
-                          </div>
-                        </div>
-                        {segCumDp != null && (
-                          <div style={{ paddingLeft: 6 }}>
-                            <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>ΔP / Prod.ECS</div>
-                            <div style={{ fontSize: 11, fontWeight: isWorst ? 700 : 600,
-                              color: isWorst ? '#0f172a' : '#374151', fontFamily: 'ui-monospace, monospace' }}>
-                              {fmtDp(segCumDp)}
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    ) : null}
+                    )}
                   </div>
                 </div>
               )

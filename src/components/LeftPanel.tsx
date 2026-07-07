@@ -1006,7 +1006,7 @@ function EditParamsPanel({
 function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chaufferie, networkFlows, onSelectIds, onConnHighlight, activeCalcId, flowDirections = null, roleMap = null }) {
   const [showConnHighlight,   setShowConnHighlight]   = useState(false)
   const [showManualHighlight, setShowManualHighlight] = useState(false)
-  const { isAlimEF: isEF } = getModeFlags(activeCalcId)
+  const { isAlimEF: isEF, isChauffage } = getModeFlags(activeCalcId)
 
   const connIssues = useMemo(() => {
     const ptCount = new Map()
@@ -1018,11 +1018,12 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
       const sc = (ptCount.get(s.startPointId) ?? 0) >= 2
       const ec = (ptCount.get(s.endPointId)   ?? 0) >= 2
       if ((sc ? 1 : 0) + (ec ? 1 : 0) > 1) return false
-      // Les tronçons connectés à un groupe de puisage sont des bouts fermés — pas une erreur
+      // Les bouts fermés légitimes : groupes, arrivées EF, émetteurs chauffage
       const startPt = points.find(p => p.id === s.startPointId)
       const endPt   = points.find(p => p.id === s.endPointId)
-      return startPt?.type !== 'groupe' && endPt?.type !== 'groupe'
-        && startPt?.type !== 'arriveeEF' && endPt?.type !== 'arriveeEF'
+      return startPt?.type !== 'groupe'    && endPt?.type !== 'groupe'
+        && startPt?.type !== 'arriveeEF'   && endPt?.type !== 'arriveeEF'
+        && startPt?.type !== 'emetteur'    && endPt?.type !== 'emetteur'
     })
   }, [segments, points])
 
@@ -1056,10 +1057,12 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
     </div>
   )
 
-  const hasAllerRetour  = segments.some(s => s.type === 'aller' || s.type === 'retour')
-  const hasProdECS      = points.some(p => p.type === 'productionECS')
-  const hasArriveeEF    = points.some(p => p.type === 'arriveeEF')
-  const missingProdECS  = !isEF && hasAllerRetour && !hasProdECS
+  const hasAllerRetour   = segments.some(s => s.type === 'aller' || s.type === 'retour' || s.type === 'aller-ch' || s.type === 'retour-ch')
+  const hasProdECS       = points.some(p => p.type === 'productionECS')
+  const hasProdCH        = points.some(p => p.type === 'productionChauffage')
+  const hasArriveeEF     = points.some(p => p.type === 'arriveeEF')
+  const missingProdECS   = !isEF && !isChauffage && hasAllerRetour && !hasProdECS
+  const missingProdCH    = isChauffage && hasAllerRetour && !hasProdCH
   const missingArriveeEF = isEF && segments.length > 0 && !hasArriveeEF
 
   return (
@@ -1077,6 +1080,20 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
             Des tronçons Aller/Retour ECS sont tracés, mais aucune
             Production ECS n'est placée sur le synoptique.
             Utilisez le bouton <strong style={{ color: '#374151' }}>Prod. ECS</strong> dans
+            la barre d'outils pour la positionner.
+          </div>
+        </div>
+      )}
+
+      {missingProdCH && (
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb', background: '#fef2f2' }}>
+          <div style={{ fontWeight: 600, fontSize: 11, color: '#991b1b', marginBottom: 4 }}>
+            Production chauffage non placée
+          </div>
+          <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.5 }}>
+            Des tronçons Aller/Retour CH sont tracés, mais aucune
+            production chauffage n'est placée sur le synoptique.
+            Utilisez le bouton <strong style={{ color: '#374151' }}>Prod. CH</strong> dans
             la barre d'outils pour la positionner.
           </div>
         </div>
@@ -1742,6 +1759,7 @@ interface LeftPanelProps {
   alimentationParams: any; onAlimentationParamsChange: any
   alimentationParamsEF: any; onAlimentationParamsEFChange: any
   pdcParams: any; onPdcParamsChange: any
+  pdcParamsChauffage: any; onPdcParamsChauffageChange: any
   pdcParamsAlimECS: any; onPdcParamsAlimECSChange: any; totalQpAlimM3h?: number
   pdcParamsAlimEF: any; onPdcParamsAlimEFChange: any; totalQpAlimEFM3h?: number
   selectedAmontId: string | null; onSelectAmontId: any; amontTronconResults: any
@@ -1775,6 +1793,7 @@ export default function LeftPanel({
   alimentationParams, onAlimentationParamsChange,
   alimentationParamsEF, onAlimentationParamsEFChange,
   pdcParams, onPdcParamsChange,
+  pdcParamsChauffage, onPdcParamsChauffageChange,
   pdcParamsAlimECS, onPdcParamsAlimECSChange, totalQpAlimM3h = 0,
   pdcParamsAlimEF, onPdcParamsAlimEFChange, totalQpAlimEFM3h = 0,
   selectedAmontId, onSelectAmontId, amontTronconResults, pressionSourceAlimECSStatic = null,
@@ -1920,7 +1939,10 @@ export default function LeftPanel({
       break
     case 'pdc':
       if (isChauffage) {
-        content = <div className="lp-section"><p className="lp-hint" style={{ padding: '12px 14px' }}>Les pertes de charge sont disponibles en mode Pertes de charge — Chauffage (à venir).</p></div>
+        content = <>
+          <PdcParamsSection params={pdcParamsChauffage} onChange={onPdcParamsChauffageChange} />
+          <FittingLibrarySection pdcParams={pdcParamsChauffage} onChange={onPdcParamsChauffageChange} />
+        </>
       } else if (isBouclage) {
         content = <>
           <PdcParamsSection params={pdcParams} onChange={onPdcParamsChange} />

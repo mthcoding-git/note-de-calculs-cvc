@@ -770,6 +770,7 @@ export default function RightPanel({
       flowData={chauffageFlows?.get(seg.id) ?? networkFlows?.get(seg.id)}
       globalParams={globalParams}
       thermalData={thermalResults?.segResults.get(seg.id)}
+      chauffageThermal={chauffageThermal}
       roleMap={roleMap}
       drawMode={drawMode}
       onExitEditParams={onExitEditParams}

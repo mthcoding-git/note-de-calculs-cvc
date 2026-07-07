@@ -155,7 +155,7 @@ export default function App() {
       let next: any = { ...p }
       let changed = false
       if (p.alimentationParamsEF == null) {
-        next.alimentationParamsEF = resolveAlimentationParams(p.alimentationParams)
+        next.alimentationParamsEF = resolveAlimentationParams(p.alimentationParamsECS)
         changed = true
       }
       if (p.pdcParamsAlimEF == null) {
@@ -180,7 +180,28 @@ export default function App() {
 
   const pdcResults = useMemo(() => {
     const results = new Map()
-    if (!isBouclage && !isAlimECS && !isAlimEF) return results
+    if (!isBouclage && !isAlimECS && !isAlimEF && !isChauffage) return results
+
+    if (isChauffage) {
+      const pdcParams   = project.pdcParamsChauffage ?? DEFAULT_PDC_PARAMS
+      const chParams    = project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS
+      const prodCH      = project.points.find((p: any) => p.type === 'productionChauffage')
+      const T_aller     = prodCH?.T_depart_override ?? chParams.T_depart ?? 70
+      const T_retour    = T_aller - (chParams.deltaT_reseau ?? 20)
+      for (const seg of project.segments) {
+        const flowEntry = chauffageFlows.get(seg.id)
+        const flowRate  = flowEntry?.flowRate ?? null
+        const isRetour  = seg.type === 'retour' || seg.type === 'retour-ch'
+        const T         = isRetour ? T_retour : T_aller
+        const mat       = project.materialsECS.find((m: any) => m.id === seg.materialId)
+        const dnDef     = mat?.dns.find((d: any) => d.dn === seg.dn)
+        const di_mm     = seg.di_override ?? dnDef?.di ?? null
+        const result    = computeSegPdc(seg, pdcParams, flowRate, di_mm, T, mat)
+        if (result) results.set(seg.id, result)
+      }
+      return results
+    }
+
     const pdcParams = isBouclage
       ? (project.pdcParamsBouclageECS ?? DEFAULT_PDC_PARAMS)
       : isAlimEF
@@ -247,13 +268,16 @@ export default function App() {
       if (result) results.set(seg.id, result)
     }
     return results
-  }, [activeCalcId, project.segments, project.pdcParamsBouclageECS, project.pdcParamsAlimECS, project.pdcParamsAlimEF,
+  }, [activeCalcId, project.segments, project.pdcParamsBouclageECS, project.pdcParamsChauffage,
+      project.pdcParamsAlimECS, project.pdcParamsAlimEF,
       project.materialsECS, project.materialsEF,
-      project.globalParams, networkFlows, thermalResults, alimentationResultsECS, alimentationResultsEF])
+      project.globalParams, project.points, project.chauffageParams,
+      networkFlows, chauffageFlows, thermalResults, alimentationResultsECS, alimentationResultsEF])
 
   const { rows: flowRows, roleMap } = useMemo(
     () => isChauffage
-      ? buildChauffageFlowRows(project.segments, project.points, flowDirections)
+      ? buildChauffageFlowRows(project.segments, project.points, flowDirections,
+          project.columns, project.columnXs, project.levels, project.lineYs)
       : buildECSFlowRows(project.segments, project.points, flowDirections,
           project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId),
     [project.segments, project.points, flowDirections,
@@ -325,7 +349,9 @@ export default function App() {
   const pdcCumResults = useMemo(
     () => isBouclage
       ? computeCumDp(project.segments, project.points, flowDirections, pdcResults)
-      : null,
+      : isChauffage
+        ? computeCumDp(project.segments, project.points, flowDirections, pdcResults, 'productionChauffage')
+        : null,
     [activeCalcId, project.segments, project.points, flowDirections, pdcResults]
   )
 
@@ -414,7 +440,9 @@ export default function App() {
     ? (project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS)
     : isAlimEF
       ? (project.pdcParamsAlimEF ?? DEFAULT_PDC_PARAMS_ALIM_EF)
-      : (project.pdcParamsBouclageECS ?? DEFAULT_PDC_PARAMS)
+      : isChauffage
+        ? (project.pdcParamsChauffage ?? DEFAULT_PDC_PARAMS)
+        : (project.pdcParamsBouclageECS ?? DEFAULT_PDC_PARAMS)
 
   const valveKvBouclageResults = useMemo(
     () => computeValveKvs(
@@ -1195,6 +1223,8 @@ export default function App() {
               onAlimentationParamsEFChange={v => update('alimentationParamsEF', v)}
               pdcParams={project.pdcParamsBouclageECS ?? DEFAULT_PDC_PARAMS}
               onPdcParamsChange={v => update('pdcParamsBouclageECS', v)}
+              pdcParamsChauffage={project.pdcParamsChauffage ?? DEFAULT_PDC_PARAMS}
+              onPdcParamsChauffageChange={(v: any) => update('pdcParamsChauffage', v)}
               pdcParamsAlimECS={project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS}
               onPdcParamsAlimECSChange={v => update('pdcParamsAlimECS', v)}
               totalQpAlimM3h={totalQpAlimM3h}

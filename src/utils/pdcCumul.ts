@@ -20,12 +20,13 @@ export interface CumDpResult {
  * Aux jonctions (multiple tronçons entrants), retient le max — circuit le plus défavorisé.
  */
 export function computeCumDp(
-  segments:       any[],
-  points:         any[],
-  flowDirections: Map<string, { fromId: string; toId: string }>,
-  pdcResults:     Map<string, { dpTotal: number; dpPompe?: number }> | null,
+  segments:        any[],
+  points:          any[],
+  flowDirections:  Map<string, { fromId: string; toId: string }>,
+  pdcResults:      Map<string, { dpTotal: number; dpPompe?: number }> | null,
+  rootPointType:   string = 'productionECS',
 ): CumDpResult | null {
-  const prodNode = points.find(p => p.type === 'productionECS')
+  const prodNode = points.find(p => p.type === rootPointType)
   if (!prodNode) return null
 
   const nodeCumDp        = new Map<string, number>()

@@ -350,7 +350,7 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
   const e_encr = mat?.encrassement ? (seg.encrassementEpaisseur ?? mat?.encrassementEpaisseur ?? 0) : 0
   const di_eff = (di != null && e_encr > 0) ? Math.max(1, di - 2 * e_encr) : null
   const fr    = networkFlows?.get(seg.id)
-  const { isAlimEF, isAlimMode } = getModeFlags(activeCalcId)
+  const { isAlimEF, isAlimMode, isChauffage } = getModeFlags(activeCalcId)
   const alimResult = isAlimMode ? alimentationResults?.get(seg.id) : null
   const displayFlowRate = isAlimMode
     ? (alimResult?.flowRateForPdc != null && alimResult.flowRateForPdc > 0 ? alimResult.flowRateForPdc * 3.6 : null)
@@ -374,12 +374,13 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
   const role       = roleMap?.get(seg.id)
   const isAntenne      = role === 'antenne'
   const isLeafBranchEF = isAlimEF && role === 'leaf-branch'
-  const badgeText  = isAntenne ? 'ANT' : role === 'collecteur-aller' ? 'CA' : role === 'collecteur-retour' ? 'CR' : isAller ? 'A' : 'R'
-  const badgeCls   = isAntenne ? 'rt-badge-ant' : isAller ? 'rt-badge-a' : 'rt-badge-r'
+  const badgeText  = isChauffage && isAntenne ? (isAller ? 'A' : 'R')
+    : isAntenne ? 'ANT' : role === 'collecteur-aller' ? 'CA' : role === 'collecteur-retour' ? 'CR' : isAller ? 'A' : 'R'
+  const badgeCls   = (isAntenne && !isChauffage) ? 'rt-badge-ant' : isAller ? 'rt-badge-a' : 'rt-badge-r'
   const indent     = depth * 13
 
   const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections)
-    .replace(/^((Collecteur (aller|retour)|Aller|Retour|Antenne) ECS|EF)\s*–\s*/, '')
+    .replace(/^((Collecteur (Aller|Retour) CH|Collecteur (aller|retour)|Aller CH|Retour CH|Aller|Retour|Antenne) (ECS|CH)?|EF)\s*–\s*/, '')
   const colonneName = extractColonne(shortName, columns)
   const levelName   = segLevelName(seg, levels, lineYs)
 
@@ -670,6 +671,9 @@ export default function ResultsTable({
   if (isPdc) {
     const isAlimModePdc = isAlimMode
     const isAlimECSPdc  = isAlimModePdc
+    const prodLabel     = isChauffage ? 'Production chauffage' : 'Production ECS'
+    const cumDpLabel    = isChauffage ? 'ΔP depuis prod. CH' : 'ΔP depuis prod. ECS'
+    const flowsForPdc   = isChauffage ? chauffageFlows : networkFlows
     const isDarcy       = pdcParams?.methodeReg === 'darcy-colebrook'
     const isAccessoires = pdcParams?.methodeSing === 'accessoires'
     const hasEquip      = !!pdcParams?.equipementsActifs
@@ -727,7 +731,7 @@ export default function ResultsTable({
     const activeAlimResults = isAlimEF ? alimentationResultsEF : alimentationResults
     const sharedPdc = {
       segments, points, materials, levels, lineYs, columns, columnXs, chaufferie,
-      networkFlows, alimentationResults: activeAlimResults, pdcParams, needsSingTot, needsEquipTot, hasEncrassement, selectedIds, onSelectIds, roleMap: pdcRoleMap, activeCalcId, flowDirections,
+      networkFlows: flowsForPdc, alimentationResults: activeAlimResults, pdcParams, needsSingTot, needsEquipTot, hasEncrassement, selectedIds, onSelectIds, roleMap: pdcRoleMap, activeCalcId, flowDirections,
     }
 
     return (
@@ -800,13 +804,13 @@ export default function ResultsTable({
                   <th className="rt-th rt-th-result rt-group-sep">P disponible (bar)</th>
                   <th className="rt-th rt-th-result">P statique (bar)</th>
                 </>) : (
-                  <th className="rt-th rt-th-result">ΔP depuis prod. ECS ({dpUnit})</th>
+                  <th className="rt-th rt-th-result">{cumDpLabel} ({dpUnit})</th>
                 )}
               </tr>
             </thead>
             <tbody>
               {pdcRows.length === 0 && (
-                <tr><td colSpan={nPdcCols} className="rt-empty">{isAlimEF ? 'Aucun tronçon — tracez des tronçons EF et placez une Arrivée EF' : 'Aucun tronçon — tracez des tronçons et placez une Production ECS'}</td></tr>
+                <tr><td colSpan={nPdcCols} className="rt-empty">{isAlimEF ? 'Aucun tronçon — tracez des tronçons EF et placez une Arrivée EF' : isChauffage ? 'Aucun tronçon — tracez des tronçons CH et placez une Production chauffage' : 'Aucun tronçon — tracez des tronçons et placez une Production ECS'}</td></tr>
               )}
               {pdcRows.map((row, i) => {
                 if (row.kind === 'ef-source-banner') return (
@@ -819,12 +823,12 @@ export default function ResultsTable({
                 )
                 if (row.kind === 'flow-start') return (
                   <tr key="flow-start" className="rt-flow-banner rt-flow-banner-start">
-                    <td colSpan={nPdcCols}>▶ Production ECS — Départ</td>
+                    <td colSpan={nPdcCols}>▶ {prodLabel} — Départ</td>
                   </tr>
                 )
                 if (row.kind === 'flow-end') return isAlimECSPdc ? null : (
                   <tr key="flow-end" className="rt-flow-banner rt-flow-banner-end">
-                    <td colSpan={nPdcCols}>◀ Production ECS — Retour</td>
+                    <td colSpan={nPdcCols}>◀ {prodLabel} — Retour</td>
                   </tr>
                 )
                 if (row.kind === 'collecteur-header') return (
@@ -937,7 +941,20 @@ export default function ResultsTable({
 
   // ── Chauffage ────────────────────────────────────────────────────────────────
   if (isChauffage) {
-    const CHAUF_COLS = 9
+    const CHAUF_COLS = 10
+    const V_LOW = 0.2, V_WARN = 1.0, V_MAX = 1.5
+    const J_LOW = 100, J_HIGH = 250
+    const velStyle = (v: number | null | undefined) => {
+      if (v == null) return {}
+      if (v < V_LOW || v > V_MAX) return { color: '#dc2626', fontWeight: 700 }
+      if (v > V_WARN) return { color: '#f97316', fontWeight: 700 }
+      return {}
+    }
+    const jStyle = (j: number | null | undefined) => {
+      if (j == null) return {}
+      if (j < J_LOW || j > J_HIGH) return { color: '#dc2626', fontWeight: 700 }
+      return {}
+    }
     return (
       <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
         <div className="rt-table-scroll">
@@ -946,7 +963,8 @@ export default function ResultsTable({
               <tr className="rt-thead-group">
                 <th colSpan={2} className="rt-thg">Identification</th>
                 <th colSpan={4} className="rt-thg">Canalisation</th>
-                <th colSpan={3} className="rt-thg rt-thg-result rt-th-result-first">Hydraulique</th>
+                <th colSpan={1} className="rt-thg rt-thg-result rt-th-result-first">Thermique</th>
+                <th colSpan={3} className="rt-thg rt-thg-result">Hydraulique</th>
               </tr>
               <tr className="rt-thead-cols">
                 <th className="rt-th">Tronçon</th>
@@ -955,9 +973,10 @@ export default function ResultsTable({
                 <th className="rt-th">DN</th>
                 <th className="rt-th">dᵢ (mm)</th>
                 <th className="rt-th">L (m)</th>
-                <th className="rt-th rt-th-result rt-th-result-first">Q (L/h)</th>
+                <th className="rt-th rt-th-result rt-th-result-first">Puiss. transportée (kW)</th>
+                <th className="rt-th rt-th-result">Q (L/h)</th>
                 <th className="rt-th rt-th-result">V (m/s)</th>
-                <th className="rt-th rt-th-result">P amont (kW)</th>
+                <th className="rt-th rt-th-result">R (Pa/m)</th>
               </tr>
             </thead>
             <tbody>
@@ -985,6 +1004,20 @@ export default function ResultsTable({
                       totalCols={CHAUF_COLS} />
                   )
                 }
+                if (row.kind === 'col-header') return (
+                  <tr key={`col-${row.name}-${i}`} className="rt-col-sep">
+                    <td colSpan={CHAUF_COLS}>{row.name}</td>
+                  </tr>
+                )
+                if (row.kind === 'collecteur-header') return (
+                  <tr key={`coll-h-${row.role}-${i}`} className="rt-collecteur-header">
+                    <td colSpan={CHAUF_COLS}>
+                      {row.role === 'collecteur-aller'  ? 'Collecteur Aller CH'
+                        : row.role === 'collecteur-retour' ? 'Collecteur Retour CH'
+                        : 'Collecteur'}
+                    </td>
+                  </tr>
+                )
                 if (row.kind !== 'segment') return null
                 const { seg, segType } = row
                 const flow = chauffageFlows?.get(seg.id)
@@ -993,14 +1026,23 @@ export default function ResultsTable({
                 const di   = seg.di_override ?? dnDef?.di
                 const isSelected = selectedIds?.includes(seg.id)
                 const isAller = segType === 'aller'
-                const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, null, activeCalcId, roleMap, flowDirections)
+                const role = roleMap?.get(seg.id)
+                const badgeText = role === 'collecteur-aller'  ? 'CA'
+                  : role === 'collecteur-retour' ? 'CR'
+                  : isAller ? 'A' : 'R'
+                const badgeClass = (role === 'collecteur-retour' || !isAller) ? 'rt-badge-r' : 'rt-badge-a'
+                const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections)
+                  .replace(/^(?:Collecteur Aller CH|Collecteur Retour CH|Aller CH|Retour CH)\s*–\s*/, '')
                 const levelName = segLevelName(seg, levels, lineYs)
+                const pdcResultCh = pdcResults?.get(seg.id)
+                const J = pdcResultCh?.J ?? null
+                const velocity = flow?.velocity ?? null
                 return (
                   <tr key={seg.id} ref={isSelected ? selectedRowRef : null}
                       className={`rt-row${isSelected ? ' rt-row-selected' : ''}`}
                       onClick={() => onSelectIds?.([seg.id])} style={{ cursor: 'pointer' }}>
                     <td className="rt-cell rt-cell-name" style={{ paddingLeft: 6 }}>
-                      <span className={isAller ? 'rt-badge-a' : 'rt-badge-r'}>{isAller ? 'A' : 'R'}</span>
+                      <span className={badgeClass}>{badgeText}</span>
                       {shortName}
                     </td>
                     <td className="rt-cell rt-cell-sm">{levelName}</td>
@@ -1017,13 +1059,16 @@ export default function ResultsTable({
                       <span className={seg.length_override == null ? 'rt-val-default' : 'rt-val-override'}>{seg.length_override != null ? fmt(seg.length_override, 2) : '—'}</span>
                     </td>
                     <td className="rt-cell rt-result rt-result-first">
+                      {flow?.puissanceAmont != null ? (flow.puissanceAmont / 1000).toFixed(2) : '—'}
+                    </td>
+                    <td className="rt-cell rt-result">
                       {flow?.flowRate != null ? (flow.flowRate * 1000).toFixed(1) : '—'}
                     </td>
-                    <td className="rt-cell rt-result">
-                      {flow?.velocity != null ? flow.velocity.toFixed(3) : '—'}
+                    <td className="rt-cell rt-result" style={velStyle(velocity)}>
+                      {velocity != null ? velocity.toFixed(3) : '—'}
                     </td>
-                    <td className="rt-cell rt-result">
-                      {flow?.puissanceAmont != null ? (flow.puissanceAmont / 1000).toFixed(2) : '—'}
+                    <td className="rt-cell rt-result" style={jStyle(J)}>
+                      {J != null ? J.toFixed(1) : '—'}
                     </td>
                   </tr>
                 )

@@ -271,9 +271,10 @@ interface SegmentPanelProps {
   pdcParams: any; pdcResult: any; resultsView: string; onResultsViewChange: any
   pdcCumResults: any; pdcCumAlimResults: any; segToCol: any; flowDirections: any
   groupDisplayNames?: any
+  chauffageThermal?: any
 }
 
-export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null }: SegmentPanelProps) {
+export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null, chauffageThermal = null }: SegmentPanelProps) {
   const [tab, setTab]                       = useState('params')
   const [openDetailTherm, setOpenDetailTherm] = useState(false)
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
@@ -826,7 +827,138 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                 />
               )
             })()
-          ) : thermalData ? (() => {
+          ) : isChauffage ? (() => {
+            const chauffEntry  = chauffageThermal?.segResults?.get(seg.id)
+            const T_from       = chauffEntry?.T_from ?? null
+            const T_to         = chauffEntry?.T_to   ?? null
+            const velocity     = flowData?.velocity   ?? null
+            const flowRate     = flowData?.flowRate   ?? null
+            const puissanceW   = flowData?.puissanceAmont ?? null
+            const puissanceKW  = puissanceW != null ? puissanceW / 1000 : null
+            const di_mm        = seg.di_override ?? dnDef?.di ?? null
+
+            const V_LOW  = 0.2
+            const V_WARN = 1.0
+            const V_MAX  = 1.5
+
+            const velLow   = velocity != null && velocity < V_LOW
+            const velWarn  = velocity != null && velocity > V_WARN && velocity <= V_MAX
+            const velErr   = velocity != null && velocity > V_MAX
+            const velOk    = velocity != null && !velLow && !velWarn && !velErr
+            const velColor = '#111827'
+            const velStatusColor = velErr || velLow ? '#dc2626' : velWarn ? '#f97316' : '#16a34a'
+            const velStatus = velLow  ? '✗ v < 0,2 m/s — risque de sédimentation'
+              : velErr    ? '✗ v > 1,5 m/s — risque d\'érosion et bruit'
+              : velWarn   ? '⚠ 1,0 < v ≤ 1,5 m/s — vérifier le dimensionnement'
+              : velOk     ? '✓ 0,2 ≤ v ≤ 1,0 m/s — plage recommandée'
+              : null
+
+            const J = pdcResult?.J ?? null   // gradient linéaire Pa/m
+            const J_OPT_LOW  = 100
+            const J_OPT_HIGH = 250
+
+            const jOk  = J != null && J >= J_OPT_LOW && J <= J_OPT_HIGH
+            const jErr = J != null && !jOk
+            const jColor = '#111827'
+            const jStatusColor = jOk ? '#16a34a' : '#dc2626'
+            const jStatus = J == null ? null
+              : J < J_OPT_LOW  ? '✗ R < 100 Pa/m — canalisation surdimensionnée'
+              : J > J_OPT_HIGH ? '✗ R > 250 Pa/m — pertes de charge excessives'
+              : '✓ 100 ≤ R ≤ 250 Pa/m — plage recommandée (COSTIC)'
+
+            const dRow = (label: string, value: string) => (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                padding: '5px 10px', borderBottom: '1px solid #f3f4f6', gap: 8 }}>
+                <span style={{ fontSize: 10, color: '#6b7280' }}>{label}</span>
+                <span style={{ fontSize: 10.5, fontWeight: 500, color: '#374151',
+                  fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
+              </div>
+            )
+
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+                {/* ── Vitesse ── */}
+                {velocity != null ? (
+                  <div style={{ padding: '8px 12px', background: '#fff',
+                    border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                    <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
+                      textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Vitesse</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: velColor }}>
+                        {velocity.toFixed(3)}
+                      </span>
+                      <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
+                    </div>
+                    {velStatus && (
+                      <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid #f1f5f9',
+                        fontSize: 9.5, fontWeight: 600, color: velStatusColor }}>
+                        {velStatus}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>
+                    {di_mm == null
+                      ? 'Choisir un DN pour calculer la vitesse.'
+                      : 'Débit non calculé — placez une production chauffage.'}
+                  </div>
+                )}
+
+                {/* ── Gradient linéaire ── */}
+                {J != null ? (
+                  <div style={{ padding: '8px 12px', background: '#fff',
+                    border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                    <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
+                      textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Pertes de charge linéaires</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: jColor }}>
+                        {J.toFixed(1)}
+                      </span>
+                      <span style={{ fontSize: 11, color: '#9ca3af' }}>Pa/m</span>
+                    </div>
+                    {jStatus && (
+                      <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid #f1f5f9',
+                        fontSize: 9.5, fontWeight: 600, color: jStatusColor }}>
+                        {jStatus}
+                      </div>
+                    )}
+                  </div>
+                ) : velocity != null && di_mm != null ? (
+                  <div style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>
+                    Configurez les paramètres PDC pour calculer R.
+                  </div>
+                ) : null}
+
+                {/* ── Tableau récap ── */}
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
+                  {flowRate    != null && dRow('Débit',               `${flowRate.toFixed(3)} m³/h`)}
+                  {puissanceKW != null && puissanceKW > 0 && dRow('Puissance transportée', `${puissanceKW.toFixed(2)} kW`)}
+                </div>
+
+                {/* ── Données techniques ── */}
+                <div style={{ marginTop: 4 }}>
+                  <button onClick={() => setOpenDetailTherm(o => !o)} style={{
+                    background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer',
+                    fontSize: 9, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 500,
+                  }}>
+                    <span style={{ display: 'inline-block', fontSize: 7,
+                      transform: openDetailTherm ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>▶</span>
+                    Données techniques
+                  </button>
+                  {openDetailTherm && (
+                    <div style={{ fontSize: 9, color: '#9ca3af', lineHeight: 2,
+                      fontFamily: 'ui-monospace, monospace', paddingLeft: 12, marginTop: 2 }}>
+                      {di_mm != null && <div>dᵢ = {di_mm} mm</div>}
+                      {seg.length_override != null && <div>L = {seg.length_override.toFixed(2)} m</div>}
+                      {pdcResult?.dpTotal != null && <div>ΔP = {pdcResult.dpTotal.toFixed(1)} Pa</div>}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )
+          })() : thermalData ? (() => {
             const { Q, deltaT, T_from, T_to, T_amb } = thermalData
             const velocity = flowData?.velocity
             const flowRate = flowData?.flowRate

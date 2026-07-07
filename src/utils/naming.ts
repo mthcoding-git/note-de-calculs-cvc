@@ -82,7 +82,9 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
   const startHint = verts.length > 1 ? verts[1]                : null
   const endHint   = verts.length > 1 ? verts[verts.length - 2] : null
   const prefix = isAlimEF ? 'EF'
+    : isRetourCh  && role === 'collecteur-retour' ? 'Collecteur Retour CH'
     : isRetourCh  ? 'Retour CH'
+    : isChaufSeg  && role === 'collecteur-aller'  ? 'Collecteur Aller CH'
     : isChaufSeg  ? 'Aller CH'
     : role === 'collecteur-aller'  ? 'Collecteur aller ECS'
     : role === 'collecteur-retour' ? 'Collecteur retour ECS'
@@ -148,8 +150,7 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
       const pt = specialPts?.find((p: any) => p.id === ptId)
       if (!pt || pt.type !== 'emetteur') return loc
       const typeName = EMETTEUR_TYPES.find(e => e.id === pt.emetteurType)?.label ?? 'Émetteur'
-      const cleanLoc = loc.replace(/ \(([^)]+)\)$/, ' - $1')
-      return `${typeName} (${cleanLoc})`
+      return `${typeName} (${loc})`
     }
     if (flowDirections) {
       const fd = (flowDirections as Map<string, { fromId: string; toId: string }>).get(seg.id)
@@ -158,7 +159,6 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
         return `${prefix} – ${fmtNode(fd.fromId, firstL)} → ${fmtNode(fd.toId, secondL)}`
       }
     }
-    // Fallback sans flowDirections : on formate quand même les extrémités émetteur
     return `${prefix} – ${fmtNode(seg.startPointId, startL)} → ${fmtNode(seg.endPointId, endL)}`
   }
   return `${prefix} – ${startL} → ${endL}`
