@@ -34,6 +34,15 @@ const FLUIDES: FluidEntry[] = [
       { id: 'pdc-chauffage',          label: 'Pertes de charge — Chauffage', available: false },
     ],
   },
+  {
+    id: 'eauglacee',
+    shortLabel: 'Eau glacée',
+    label: 'Eau glacée',
+    available: true,
+    calculs: [
+      { id: 'distribution-eauglacee', label: 'Distribution eau glacée', available: true },
+    ],
+  },
 ]
 
 export function getAutoCalcId(fluidId) {
@@ -44,11 +53,12 @@ export function getAutoCalcId(fluidId) {
 }
 
 const NETWORK_SHORT: Record<CalcMode, string> = {
-  'bouclage-ecs':           'ECS',
-  'alimentation-ecs':       'ECS',
-  'alimentation-ef':        'EF',
-  'distribution-chauffage': 'CH',
-  'pdc-chauffage':          'CH',
+  'bouclage-ecs':             'ECS',
+  'alimentation-ecs':         'ECS',
+  'alimentation-ef':          'EF',
+  'distribution-chauffage':   'CH',
+  'pdc-chauffage':            'CH',
+  'distribution-eauglacee':   'EG',
 }
 export function getNetworkLabel(calcId: CalcMode): string {
   return NETWORK_SHORT[calcId] ?? ''

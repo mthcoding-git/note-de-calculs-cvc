@@ -1,7 +1,7 @@
-// Constantes de layout des colonnes — partagées avec App.tsx pour les calculs
-// de positionnement des groupes et des zones PP.
-export const LOCAL_W   = 60
-export const LOCAL_GAP = 10
+export const LOCAL_W          = 60
+export const LOCAL_GAP        = 10
+export const COL_PIPE_W       = 320
+export const COL_LOCAL_OFFSET = COL_PIPE_W + 8 + 5  // 333
 
 // ── Zone manipulation ────────────────────────────────────────────────────────
 

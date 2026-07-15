@@ -44,6 +44,20 @@ export function useVariantHistory() {
         const customOnes = data.insulations.filter((i: any) => i.custom)
         next = { ...next, insulations: [...synced, ...customOnes] }
       }
+      // Normalize bad segment types: 'aller-ch'/'retour-ch' → 'aller'/'retour'
+      if (Array.isArray(next?.segments)) {
+        const hasWrong = next.segments.some((s: any) => s.type === 'aller-ch' || s.type === 'retour-ch')
+        if (hasWrong) {
+          next = {
+            ...next,
+            segments: next.segments.map((s: any) =>
+              s.type === 'aller-ch' ? { ...s, type: 'aller' }
+              : s.type === 'retour-ch' ? { ...s, type: 'retour' }
+              : s
+            )
+          }
+        }
+      }
       if (next !== data) {
         hist.stack[hist.idx] = next
         changed = true
@@ -233,6 +247,24 @@ export function useVariantHistory() {
       const data = v.data
       if (Array.isArray(data?.accessories)) return v
       return { ...v, data: { ...data, accessories: [] } }
+    })
+    // Migrate segment types: 'aller-ch'/'retour-ch' were incorrectly stored; normalize to 'aller'/'retour'
+    variants = variants.map(v => {
+      const data = v.data
+      if (!Array.isArray(data?.segments)) return v
+      const hasWrong = data.segments.some((s: any) => s.type === 'aller-ch' || s.type === 'retour-ch')
+      if (!hasWrong) return v
+      return {
+        ...v,
+        data: {
+          ...data,
+          segments: data.segments.map((s: any) =>
+            s.type === 'aller-ch' ? { ...s, type: 'aller' }
+            : s.type === 'retour-ch' ? { ...s, type: 'retour' }
+            : s
+          )
+        }
+      }
     })
     histRef.current = Object.fromEntries(variants.map(v => [v.id, { stack: [v.data], idx: 0 }])) as Record<string, { stack: any[], idx: number }>
     setMeta(variants.map(({ id, name, isBase }) => ({ id, name, isBase: !!isBase })))

@@ -1,6 +1,6 @@
 import React from 'react'
 
-// Symboles de synoptique ECS/EF — noirs, viewBox "-11 -11 22 22".
+// Symboles de synoptique ECS/EF/Chauffage — noirs, viewBox "-11 -11 22 22".
 // Conventions ISO 14617 / usage bureaux d'études plomberie-CVC France.
 export function AccessorySymbol({ type, counterAngle = 0 }: { type: string; counterAngle?: number }) {
   const C = '#000'
@@ -183,6 +183,55 @@ export function AccessorySymbol({ type, counterAngle = 0 }: { type: string; coun
             stroke={C} strokeWidth={1.4} strokeLinecap="round" />
           <circle cx={0} cy={1} r={5.5} fill="none" stroke={C} strokeWidth={1.4} />
           <line x1={-5} y1={1} x2={5} y2={1} stroke={C} strokeWidth={1.2} />
+        </>
+      )
+
+    // ── SOUPAPE DE SÉCURITÉ ──────────────────────────────────────────────
+    // Branchement latéral (comme purgeur d'air) — triangle (siège/disque, décharge vers
+    // le haut) + ressort taré en zigzag + chapeau/bonnet — ISO 14617 / P&ID standard
+    case 'soupape_securite':
+      return (
+        <>
+          {/* Triangle — base en bas (connexion tuyau), apex vers le haut (décharge) */}
+          <polygon points="-4,4 4,4 0,-2" fill="none" stroke={C} strokeWidth={1.4} />
+          {/* Ressort taré */}
+          <polyline
+            points="0,-2 -2,-3.5 2,-5 -2,-6.5 0,-8"
+            fill="none" stroke={C} strokeWidth={1.2}
+            strokeLinejoin="round" strokeLinecap="round"
+          />
+          {/* Chapeau / bonnet */}
+          <line x1={-2.5} y1={-8} x2={2.5} y2={-8}
+            stroke={C} strokeWidth={1.5} strokeLinecap="round" />
+        </>
+      )
+
+    // ── POT À BOUES ──────────────────────────────────────────────────────
+    // Capsule verticale allongée + brides (petits carrés pleins) au niveau du tronçon
+    case 'pot_boues':
+      return (
+        <>
+          {/* Corps capsule — allongé et étroit */}
+          <rect x={-3.5} y={-8.5} width={7} height={18} rx={3.5}
+            fill="none" stroke={C} strokeWidth={1.3} />
+          {/* Raccord en tête (purgeur / évent) — y positif = sommet sur canvas (axe y inversé) */}
+          <rect x={-2} y={9.5} width={4} height={1.5}
+            fill="none" stroke={C} strokeWidth={1.2} />
+          {/* Brides au niveau du tronçon (y=0) */}
+          <rect x={-5.5} y={-1.5} width={2} height={3} fill={C} />
+          <rect x={3.5} y={-1.5} width={2} height={3} fill={C} />
+        </>
+      )
+
+    // ── COMPTEUR D'ÉNERGIE THERMIQUE ─────────────────────────────────────
+    // Cercle + lettre E toujours verticale (counterAngle annule la rotation du tronçon)
+    case 'compteur_energie':
+      return (
+        <>
+          <circle cx={0} cy={0} r={6.5} fill="none" stroke={C} strokeWidth={1.4} />
+          <text x={0} y={3.5} textAnchor="middle" fontSize="10" fontWeight="700"
+            fontFamily="sans-serif" fill={C}
+            transform={`rotate(${counterAngle})`}>E</text>
         </>
       )
 

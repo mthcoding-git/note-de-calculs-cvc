@@ -346,13 +346,44 @@ export function buildECSFlowRows(segments, points, flowDirections, columns, colu
  * Retour CH (antenne)  : chemin du fromId jusqu'à un émetteur sans nœud séparation.
  * Collecteur Retour CH : chemin passe par un nœud séparation avant tout émetteur.
  */
-export function buildChauffageFlowRows(segments, points, flowDirections, columns?, columnXs?, levels?, lineYs?) {
+export function buildChauffageFlowRows(segments, points, flowDirections, columns?, columnXs?, levels?, lineYs?, mixingNodes?: Set<string>) {
   if (!segments?.length) return { rows: [], roleMap: new Map() }
   const prod = points?.find((p: any) => p.type === 'productionChauffage')
   if (!prod) return { rows: [], roleMap: new Map() }
 
   const allerSegs  = segments.filter((s: any) => s.type === 'aller-ch' || s.type === 'aller')
   const retourSegs = segments.filter((s: any) => s.type === 'retour-ch' || s.type === 'retour')
+
+  // ── Nœuds mélange : chaîne bypass + séparation ──────────────────────────────
+  // Traversal physique depuis le nœud mélange : on suit les tronçons retour
+  // physiquement connectés jusqu'au premier nœud avec ≥3 connexions retour
+  // (= nœud séparation retour CH : chaîne bypass + retour émetteur + retour primaire).
+  const mixingNodeMap = new Map<string, { separationNodeId: string, bypassChain: any[], melangeIndex: number }>()
+  const separationToMixMap = new Map<string, string>()
+  for (const mixId of (mixingNodes ?? [])) {
+    const bypassChain: any[] = []
+    let chainNode = mixId
+    let lastSegId: string | null = null
+    let separationNodeId: string | null = null
+
+    for (let hop = 0; hop < 20; hop++) {
+      const candidates = retourSegs.filter((s: any) =>
+        (s.startPointId === chainNode || s.endPointId === chainNode) && s.id !== lastSegId
+      )
+      if (candidates.length === 0) break
+      const nextSeg = candidates[0]
+      const nextNode = nextSeg.startPointId === chainNode ? nextSeg.endPointId : nextSeg.startPointId
+      bypassChain.push(nextSeg)
+      const retourAtNext = retourSegs.filter((s: any) => s.startPointId === nextNode || s.endPointId === nextNode)
+      if (retourAtNext.length >= 3) { separationNodeId = nextNode; break }
+      lastSegId = nextSeg.id
+      chainNode = nextNode
+    }
+
+    if (!separationNodeId) continue
+    mixingNodeMap.set(mixId, { separationNodeId, bypassChain, melangeIndex: 0 })
+    separationToMixMap.set(separationNodeId, mixId)
+  }
 
   // Degré aller / retour par nœud (non-dirigé : toutes connexions comptent)
   const allerDegree  = new Map<string, number>()
@@ -459,8 +490,12 @@ export function buildChauffageFlowRows(segments, points, flowDirections, columns
     return null
   }
 
+  // Les bypass sont gérés séparément — les exclure du compte junction
+  const bypassSegIds = new Set([...mixingNodeMap.values()].flatMap(v => v.bypassChain.map((s: any) => s.id)))
+
   const retourIncomingCount = new Map<string, number>()
   for (const s of retourSegs) {
+    if (bypassSegIds.has(s.id)) continue
     const d = flowDirections?.get(s.id)
     if (!d) continue
     retourIncomingCount.set(d.toId, (retourIncomingCount.get(d.toId) ?? 0) + 1)
@@ -469,6 +504,7 @@ export function buildChauffageFlowRows(segments, points, flowDirections, columns
   const visited = new Set<string>()
   const rows: any[] = []
   const toProdRows: any[] = []
+  let melangeIndex = 0
 
   const xOf = (nodeId: string) => (points.find((p: any) => p.id === nodeId) as any)?.x ?? Infinity
 
@@ -482,6 +518,11 @@ export function buildChauffageFlowRows(segments, points, flowDirections, columns
       })
 
       if (allerOut.length === 1) {
+        if (mixingNodeMap.has(cur)) {
+          const idx = ++melangeIndex
+          mixingNodeMap.get(cur)!.melangeIndex = idx
+          rows.push({ kind: 'melange-header', mixId: cur, index: idx })
+        }
         const seg = allerOut[0]; visited.add(seg.id)
         const toId = flowDirections.get(seg.id).toId
         const isCollecteur = !isAntenneAllerFrom(toId)
@@ -517,6 +558,36 @@ export function buildChauffageFlowRows(segments, points, flowDirections, columns
           return d?.fromId === cur && !visited.has(s.id)
         })
         if (retourOut.length === 0) return
+
+        // Nœud séparation retour CH : émettre toute la chaîne bypass (sep → mélange),
+        // fermer la section, puis continuer avec le retour primaire vers production.
+        const mixIdForSep = separationToMixMap.get(cur)
+        if (mixIdForSep !== undefined) {
+          const { bypassChain } = mixingNodeMap.get(mixIdForSep)!
+          // Chaîne stockée depuis le mélange → on l'inverse pour l'émettre sep → mélange
+          for (const bypassSeg of [...bypassChain].reverse()) {
+            if (!visited.has(bypassSeg.id)) {
+              visited.add(bypassSeg.id)
+              rows.push({ kind: 'segment', seg: bypassSeg, depth: 0, segType: 'retour', antenne: false, collecteur: undefined, bypass: true })
+            }
+          }
+          rows.push({ kind: 'melange-end', index: mixingNodeMap.get(mixIdForSep)!.melangeIndex })
+          const primarySegs = retourOut.filter((s: any) => !bypassChain.some((b: any) => b.id === s.id))
+          if (primarySegs.length === 0) return
+          const seg = primarySegs[0]; visited.add(seg.id)
+          const nextNode = flowDirections!.get(seg.id).toId
+          if (nextNode === prod.id) { toProdRows.push(makeSegRow(seg, 'retour')); return }
+          rows.push(makeSegRow(seg, 'retour'))
+          const totalIn = retourIncomingCount.get(nextNode) ?? 0
+          if (totalIn > 1) {
+            const emitted = (junctionEmitted.get(nextNode) ?? 0) + 1
+            junctionEmitted.set(nextNode, emitted)
+            if (emitted < totalIn) return
+            rows.push({ kind: 'junction', ptId: nextNode, depth: 0, incomingCount: totalIn })
+          }
+          cur = nextNode
+          continue
+        }
 
         const seg = retourOut[0]; visited.add(seg.id)
         const nextNode = flowDirections.get(seg.id).toId
@@ -565,7 +636,8 @@ export function buildChauffageFlowRows(segments, points, flowDirections, columns
   for (const row of finalRows) {
     if (row.kind === 'segment')
       roleMap.set(row.seg.id,
-        row.antenne             ? 'antenne'           :
+        row.antenne                 ? 'antenne'           :
+        (row as any).bypass         ? 'bypass-retour'     :
         row.collecteur === 'aller'  ? 'collecteur-aller'  :
         row.collecteur === 'retour' ? 'collecteur-retour' :
         row.segType === 'retour'    ? 'retour'            : 'aller')

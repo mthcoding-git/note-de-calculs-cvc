@@ -1,8 +1,10 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import type { CalcMode } from '../types'
+import type { CalcMode, DisplayPrefs } from '../types'
+import { DEFAULT_DISPLAY_PREFS } from '../utils/projectBuilder'
 import { getDisplayName } from '../utils/naming'
 import { getModeFlags } from '../utils/calcModeFlags'
 import { EMETTEUR_TYPES } from '../data/emetteurs'
+import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
 import { sf } from '../utils/fmt'
 import { AccessorySymbol } from './AccessorySymbol'
 import { uid } from '../utils/idGen'
@@ -62,11 +64,13 @@ interface DrawingCanvasProps {
   selectedIds: string[]; onSelectIds: any
   editLevelsEnabled: boolean; editColumnsEnabled: boolean
   columns: any[]; columnXs: number[]; onColumnXsChange: any; onPPZoneDrag: any
-  chaufferie: any; onChaufferieChange: any; editChaufferie: boolean; onEditChaufferieChange: any
+  chaufferie: any; onChaufferieChange: any; onChaufferiePatch?: any; onChaufferieStartDrag?: any
+  editChaufferie: boolean; onEditChaufferieChange: any
   placingChaufferie: boolean; onPlacingChaufferieDone: any
   placingEquipment: any; onPlacingDone: any
   editParam: any; onAssignParam: any
   connHighlightIds: string[]; onConnHighlight: any
+  criticalPathIds?: string[]
   networkFlows: any; flowDirections: any
   groupesEditMode: boolean; onRemoveGroupeById: any
   showGroupeNames: boolean; groupDisplayNames: any
@@ -87,8 +91,19 @@ interface DrawingCanvasProps {
   placingLocalEF?: boolean; onPlacingLocalEFDone: any
   editLocauxEF?: boolean; onEditLocauxEFChange: any
   selectedLocalEFId?: string | null; onSelectedLocalEFChange: any
+  locauxECS?: any[]; onLocauxECSChange: any
+  placingLocalECS?: boolean; onPlacingLocalECSDone: any
+  editLocauxECS?: boolean; onEditLocauxECSChange: any
+  selectedLocalECSId?: string | null; onSelectedLocalECSChange: any
+  locauxChauffage?: any[]; onLocauxChauffageChange: any
+  placingLocalChauffage?: boolean; onPlacingLocalChauffageDone: any
+  editLocauxChauffage?: boolean; onEditLocauxChauffageChange: any
+  selectedLocalChauffageId?: string | null; onSelectedLocalChauffageChange: any
   chauffageFlows?: any
   chauffageParams?: any
+  eauGlaceeFlows?: any
+  mixingNodes?: Set<string>
+  displayPrefs?: DisplayPrefs
 }
 
 export default function DrawingCanvas({
@@ -101,11 +116,13 @@ export default function DrawingCanvas({
   selectedIds, onSelectIds,
   editLevelsEnabled, editColumnsEnabled,
   columns, columnXs, onColumnXsChange, onPPZoneDrag,
-  chaufferie, onChaufferieChange, editChaufferie, onEditChaufferieChange,
+  chaufferie, onChaufferieChange, onChaufferiePatch, onChaufferieStartDrag,
+  editChaufferie, onEditChaufferieChange,
   placingChaufferie, onPlacingChaufferieDone,
   placingEquipment, onPlacingDone,
   editParam, onAssignParam,
   connHighlightIds, onConnHighlight,
+  criticalPathIds,
   networkFlows,
   flowDirections,
   groupesEditMode,
@@ -147,10 +164,30 @@ export default function DrawingCanvas({
   onEditLocauxEFChange,
   selectedLocalEFId = null,
   onSelectedLocalEFChange,
+  locauxECS = [],
+  onLocauxECSChange,
+  placingLocalECS = false,
+  onPlacingLocalECSDone,
+  editLocauxECS = false,
+  onEditLocauxECSChange,
+  selectedLocalECSId = null,
+  onSelectedLocalECSChange,
+  locauxChauffage = [],
+  onLocauxChauffageChange,
+  placingLocalChauffage = false,
+  onPlacingLocalChauffageDone,
+  editLocauxChauffage = false,
+  onEditLocauxChauffageChange,
+  selectedLocalChauffageId = null,
+  onSelectedLocalChauffageChange,
   chauffageFlows,
   chauffageParams,
+  eauGlaceeFlows,
+  mixingNodes,
+  displayPrefs,
 }: DrawingCanvasProps) {
-  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage } = getModeFlags(activeCalcId)
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
+  const activeTerminalFlows = isChauffage ? chauffageFlows : isEauGlacee ? eauGlaceeFlows : null
 
   const svgRef    = useRef(null)
   const spaceRef  = useRef(false)
@@ -184,7 +221,10 @@ export default function DrawingCanvas({
   const [dragLine,  setDragLine]  = useState(null)
   const [dragCol,   setDragCol]   = useState(null)   // {idx, screenX, origX}
   const [dragCh,    setDragCh]    = useState(null)   // {type, screenX, screenY, origX1, origX2, origHeight}
+  const chaufferieSnapRef = useRef(false)             // true once the drag snapshot has been pushed to history
   const [dragLEF,   setDragLEF]   = useState(null)   // {type, localEFId, screenX, screenY, origX1, origX2, origHeight}
+  const [dragLECS,  setDragLECS]  = useState(null)   // {type, id, screenX, screenY, origX1, origX2, origHeight}
+  const [dragLCh,   setDragLCh]   = useState(null)   // {type, id, screenX, screenY, origX1, origX2, origHeight}
   const [drawing,   setDrawing]   = useState(null)
   const [mouse,     setMouse]     = useState({ x: 0, y: 0 })
   const [rectSt,    setRectSt]    = useState(null)
@@ -204,10 +244,13 @@ export default function DrawingCanvas({
 
   // ── Auto-split segments at frontier Ys ───────────────
   // Uses onNetworkPatch (not onNetworkChange) to avoid polluting the undo stack.
+  // Only for ECS modes: the frontier node separates thermal zones (T° ambiante différente
+  // sous-sol vs hors-sol). EF and Chauffage are purely hydraulic — not needed.
   useEffect(() => {
+    if (isAlimEF || isChauffage || isEauGlacee) return
     const result = applyFrontierSplits(segments, points, levels, lineYs)
     if (result) onNetworkPatch(result.segs, result.pts)
-  }, [segments, points, levels, lineYs]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [segments, points, levels, lineYs, isAlimEF, isChauffage, isEauGlacee]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-connect Production ECS to network ───────────
   useEffect(() => {
@@ -341,6 +384,8 @@ export default function DrawingCanvas({
         if (placingEquipment !== null) { onPlacingDone(); return }
         if (placingChaufferie) { onPlacingChaufferieDone(); return }
         if (placingLocalEF) { onPlacingLocalEFDone?.(); return }
+        if (placingLocalECS) { onPlacingLocalECSDone?.(); return }
+        if (placingLocalChauffage) { onPlacingLocalChauffageDone?.(); return }
         if (placingAccessoryType) { onPlacingAccessoryDone?.(); return }
 if (drawing) commitDrawing()
         else { onSelectIds([]); onSelectedValveChange?.(null); onSelectedAccessoryChange?.(null) }
@@ -358,6 +403,21 @@ if (drawing) commitDrawing()
         }
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedLocalEFId) {
+          onLocauxEFChange?.((locauxEF ?? []).filter(l => l.id !== selectedLocalEFId))
+          onSelectedLocalEFChange?.(null)
+          return
+        }
+        if (selectedLocalECSId) {
+          onLocauxECSChange?.((locauxECS ?? []).filter(l => l.id !== selectedLocalECSId))
+          onSelectedLocalECSChange?.(null)
+          return
+        }
+        if (selectedLocalChauffageId) {
+          onLocauxChauffageChange?.((locauxChauffage ?? []).filter(l => l.id !== selectedLocalChauffageId))
+          onSelectedLocalChauffageChange?.(null)
+          return
+        }
         if (selectedAccessoryId) {
           onAccessoriesChange(acc => acc.filter(a => a.id !== selectedAccessoryId))
           onSelectedAccessoryChange?.(null)
@@ -380,15 +440,22 @@ if (drawing) commitDrawing()
         const segMerges = {}
         for (const ptId of delPtIds) {
           const pt = newPts.find(p => p.id === ptId)
-          if (pt?.type === 'productionECS' || pt?.type === 'arriveeEF' || pt?.type === 'productionChauffage') {
+          if (pt?.type === 'productionECS' || pt?.type === 'arriveeEF' || pt?.type === 'productionChauffage' || pt?.type === 'productionEauGlacee') {
             newPts = newPts.map(p => p.id === ptId ? { id: p.id, name: p.name ?? '', x: p.x, y: p.y } : p)
             continue
           }
           if (pt?.type === 'pump') {
-            newPts = newPts.filter(p => p.id !== ptId)
+            const result = deleteNodeFromNetwork(ptId, newSegs, newPts)
+            if (result) {
+              newSegs = result.newSegs
+              newPts  = result.newPts
+              Object.assign(segMerges, result.segMerges)
+            } else {
+              newPts = newPts.filter(p => p.id !== ptId)
+            }
             continue
           }
-          if (pt?.type === 'emetteur') {
+          if (pt?.type === 'emetteur' || pt?.type === 'terminalFroid') {
             newPts = newPts.map(p => p.id !== ptId ? p : { id: p.id, name: p.name ?? '', x: p.x, y: p.y })
             continue
           }
@@ -407,7 +474,7 @@ if (drawing) commitDrawing()
     window.addEventListener('keydown', kd)
     window.addEventListener('keyup',   ku)
     return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku) }
-  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone, placingLocalEF, onPlacingLocalEFDone, onRemoveGroupeById, selectedValveId, onSelectedValveChange, onValvesChange, drawMode, onExitSpecialMode, placingAccessoryType, onPlacingAccessoryDone, selectedAccessoryId, onAccessoriesChange, onSelectedAccessoryChange])
+  }, [drawing, commitDrawing, selectedIds, segments, points, onNetworkChange, onSelectIds, placingEquipment, onPlacingDone, placingChaufferie, onPlacingChaufferieDone, placingLocalEF, onPlacingLocalEFDone, placingLocalECS, onPlacingLocalECSDone, placingLocalChauffage, onPlacingLocalChauffageDone, onRemoveGroupeById, selectedValveId, onSelectedValveChange, onValvesChange, drawMode, onExitSpecialMode, placingAccessoryType, onPlacingAccessoryDone, selectedAccessoryId, onAccessoriesChange, onSelectedAccessoryChange, selectedLocalEFId, onLocauxEFChange, onSelectedLocalEFChange, locauxEF, selectedLocalECSId, onLocauxECSChange, onSelectedLocalECSChange, locauxECS, selectedLocalChauffageId, onLocauxChauffageChange, onSelectedLocalChauffageChange, locauxChauffage])
 
   // ── zoom ─────────────────────────────────────────────
   const onWheel = useCallback(e => {
@@ -433,7 +500,7 @@ if (drawing) commitDrawing()
       const d = dist(p, pos)
       const r = p.type === 'pump'
         ? Math.max(PT_HIT, p.size ?? 15)
-        : p.type === 'productionECS' || p.type === 'arriveeEF' || p.type === 'productionChauffage'
+        : p.type === 'productionECS' || p.type === 'arriveeEF' || p.type === 'productionChauffage' || p.type === 'productionEauGlacee'
         ? Math.max(PT_HIT, Math.max((p.size?.w ?? 44) / 2, (p.size?.h ?? 28) / 2))
         : p.type === 'groupe'
         ? Math.max(PT_HIT, 30)
@@ -484,25 +551,33 @@ if (drawing) commitDrawing()
     }
     if (dragCh !== null && chaufferie) {
       const MIN_H = 40, MIN_W = 80, MIN_GAP = 40
+      let newCh: any = null
       if (dragCh.type === 'top') {
         const rawH = dragCh.origHeight - (e.clientY - dragCh.screenY) / tf.k
         const levelIdx = levels.findIndex(l => l.id === chaufferie.levelId)
         const yBottom  = levelIdx >= 0 ? lineYs[levelIdx] : 0
         const levelAboveY = (levelIdx >= 0 && levelIdx + 1 < lineYs.length) ? lineYs[levelIdx + 1] : yBottom - 2000
         const maxH = yBottom - levelAboveY - MIN_GAP
-        onChaufferieChange({ ...chaufferie, height: Math.round(Math.max(MIN_H, Math.min(Math.max(maxH, MIN_H), rawH))) })
+        newCh = { ...chaufferie, height: Math.round(Math.max(MIN_H, Math.min(Math.max(maxH, MIN_H), rawH))) }
       } else if (dragCh.type === 'left') {
         const rawX1 = dragCh.origX1 + (e.clientX - dragCh.screenX) / tf.k
-        onChaufferieChange({ ...chaufferie, x1: snap(Math.min(dragCh.origX2 - MIN_W, rawX1)) })
+        newCh = { ...chaufferie, x1: snap(Math.min(dragCh.origX2 - MIN_W, rawX1)) }
       } else if (dragCh.type === 'right') {
         const rawX2 = dragCh.origX2 + (e.clientX - dragCh.screenX) / tf.k
-        onChaufferieChange({ ...chaufferie, x2: snap(Math.max(dragCh.origX1 + MIN_W, rawX2)) })
+        newCh = { ...chaufferie, x2: snap(Math.max(dragCh.origX1 + MIN_W, rawX2)) }
       } else if (dragCh.type === 'move') {
         const rawDx = (e.clientX - dragCh.screenX) / tf.k
         const mouseY = dragCh.origCenterY + (e.clientY - dragCh.screenY) / tf.k
         const liCh = findLevelIndexAt(mouseY, lineYs)
         const newLevelId = liCh >= 0 ? levels[liCh].id : chaufferie.levelId
-        onChaufferieChange({ ...chaufferie, x1: snap(dragCh.origX1 + rawDx), x2: snap(dragCh.origX2 + rawDx), levelId: newLevelId })
+        newCh = { ...chaufferie, x1: snap(dragCh.origX1 + rawDx), x2: snap(dragCh.origX2 + rawDx), levelId: newLevelId }
+      }
+      if (newCh) {
+        if (!chaufferieSnapRef.current) {
+          chaufferieSnapRef.current = true
+          onChaufferieStartDrag?.()
+        }
+        ;(onChaufferiePatch ?? onChaufferieChange)(newCh)
       }
       return
     }
@@ -534,6 +609,44 @@ if (drawing) commitDrawing()
       onLocauxEFChange?.((locauxEF ?? []).map(l => l.id === dragLEF.localEFId ? updated : l))
       return
     }
+
+    // helper factorisant la logique de drag local zone
+    const applyLocalZoneDrag = (drag: any, zone: any) => {
+      const MIN_H = 40, MIN_W = 80, MIN_GAP = 40
+      if (drag.type === 'top') {
+        const rawH = drag.origHeight - (e.clientY - drag.screenY) / tf.k
+        const levelIdx = levels.findIndex(l => l.id === zone.levelId)
+        const yBottom = levelIdx >= 0 ? lineYs[levelIdx] : 0
+        const levelAboveY = (levelIdx >= 0 && levelIdx + 1 < lineYs.length) ? lineYs[levelIdx + 1] : yBottom - 2000
+        const maxH = yBottom - levelAboveY - MIN_GAP
+        return { ...zone, height: Math.round(Math.max(MIN_H, Math.min(Math.max(maxH, MIN_H), rawH))) }
+      } else if (drag.type === 'left') {
+        const rawX1 = drag.origX1 + (e.clientX - drag.screenX) / tf.k
+        return { ...zone, x1: snap(Math.min(drag.origX2 - MIN_W, rawX1)) }
+      } else if (drag.type === 'right') {
+        const rawX2 = drag.origX2 + (e.clientX - drag.screenX) / tf.k
+        return { ...zone, x2: snap(Math.max(drag.origX1 + MIN_W, rawX2)) }
+      } else if (drag.type === 'move') {
+        const rawDx = (e.clientX - drag.screenX) / tf.k
+        const mouseY = drag.origCenterY + (e.clientY - drag.screenY) / tf.k
+        const li = findLevelIndexAt(mouseY, lineYs)
+        const newLevelId = li >= 0 ? levels[li].id : zone.levelId
+        return { ...zone, x1: snap(drag.origX1 + rawDx), x2: snap(drag.origX2 + rawDx), levelId: newLevelId }
+      }
+      return zone
+    }
+
+    if (dragLECS !== null) {
+      const zone = (locauxECS ?? []).find(l => l.id === dragLECS.id)
+      if (zone) onLocauxECSChange?.((locauxECS ?? []).map(l => l.id === dragLECS.id ? applyLocalZoneDrag(dragLECS, zone) : l))
+      return
+    }
+    if (dragLCh !== null) {
+      const zone = (locauxChauffage ?? []).find(l => l.id === dragLCh.id)
+      if (zone) onLocauxChauffageChange?.((locauxChauffage ?? []).map(l => l.id === dragLCh.id ? applyLocalZoneDrag(dragLCh, zone) : l))
+      return
+    }
+
     if (ptDragRef.current) {
       const dx = e.clientX - ptDragRef.current.startX
       const dy = e.clientY - ptDragRef.current.startY
@@ -667,7 +780,7 @@ if (drawing) commitDrawing()
     } else if (previewAccessory) {
       setPreviewAccessory(null)
     }
-  }, [tf, panSt, dragLine, dragCol, dragCh, dragLEF, rectSt, onLineYsChange, onColumnXsChange, onPPZoneDrag, chaufferie, onChaufferieChange, levels, lineYs, drawMode, pipeType, segments, previewVanne, placingAccessoryType, previewAccessory, locauxEF, onLocauxEFChange])
+  }, [tf, panSt, dragLine, dragCol, dragCh, dragLEF, dragLECS, dragLCh, rectSt, onLineYsChange, onColumnXsChange, onPPZoneDrag, chaufferie, onChaufferieChange, onChaufferiePatch, onChaufferieStartDrag, levels, lineYs, drawMode, pipeType, segments, previewVanne, placingAccessoryType, previewAccessory, locauxEF, onLocauxEFChange, locauxECS, onLocauxECSChange, locauxChauffage, onLocauxChauffageChange])
 
   // ── mouse down ───────────────────────────────────────
   const onMouseDown = useCallback(e => {
@@ -690,7 +803,7 @@ if (drawing) commitDrawing()
       const snapped = { x: snap(pos.x), y: snap(pos.y) }
 
       // productionECS / productionChauffage / émetteur : si un nœud existant est à portée, le convertir en priorité (avant onSeg)
-      if (placingEquipment.type === 'productionECS' || placingEquipment.type === 'productionChauffage') {
+      if (placingEquipment.type === 'productionECS' || placingEquipment.type === 'productionChauffage' || placingEquipment.type === 'productionEauGlacee') {
         const existingPt = points.find(p => dist(p, snapped) < PT_HIT)
         if (existingPt) {
           onNetworkChange(
@@ -704,36 +817,48 @@ if (drawing) commitDrawing()
         }
       }
 
-      if (placingEquipment.type === 'emetteur') {
+      if (placingEquipment.type === 'emetteur' || placingEquipment.type === 'terminalFroid') {
+        const isTF = placingEquipment.type === 'terminalFroid'
         const existingPt = points.find(p => dist(p, snapped) < PT_HIT)
         if (existingPt) {
           const nodeSegs = segments.filter(s => s.startPointId === existingPt.id || s.endPointId === existingPt.id).length
-          if (nodeSegs > 2) return  // trop de tronçons, blocage
+          if (nodeSegs > 2) return
           onNetworkChange(s => s, p => p.map(x => x.id === existingPt.id
-            ? { ...x, type: 'emetteur', emetteurType: placingEquipment.emetteurType,
-                deltaT_emetteur: placingEquipment.deltaT ?? null,
-                ...(placingEquipment.puissance != null ? { puissance: placingEquipment.puissance } : {}),
-                size: placingEquipment.size ?? { w: 28, h: 18 } }
+            ? isTF
+              ? { ...x, type: 'terminalFroid', terminalFroidType: placingEquipment.terminalFroidType,
+                  T_entree_emetteur: placingEquipment.T_entree ?? null,
+                  T_sortie_emetteur: placingEquipment.T_sortie ?? null,
+                  ...(placingEquipment.puissance != null ? { puissance: placingEquipment.puissance } : {}),
+                  size: placingEquipment.size ?? { w: 28, h: 18 } }
+              : { ...x, type: 'emetteur', emetteurType: placingEquipment.emetteurType,
+                  T_entree_emetteur: placingEquipment.T_entree ?? null,
+                  T_sortie_emetteur: placingEquipment.T_sortie ?? null,
+                  ...(placingEquipment.puissance != null ? { puissance: placingEquipment.puissance } : {}),
+                  size: placingEquipment.size ?? { w: 28, h: 18 } }
             : x))
-          return  // mode reste actif (placement multiple)
+          return
         }
       }
 
       const onSeg = nearestOnSegments(snapped, hitSegs)
       const sp = (onSeg && onSeg.d < HIT) ? onSeg.pt : snapped
+      const isTF = placingEquipment.type === 'terminalFroid'
       const newPt = {
         id: uid('eq'), name: placingEquipment.type === 'arriveeEF' ? null : placingEquipment.name, x: sp.x, y: sp.y,
         type: placingEquipment.type,
         ...(placingEquipment.type === 'pump'
           ? { rotation: placingEquipment.rotation ?? 0, size: placingEquipment.size ?? 12 }
           : placingEquipment.type === 'emetteur'
-            ? { size: placingEquipment.size ?? { w: 28, h: 18 }, emetteurType: placingEquipment.emetteurType, deltaT_emetteur: placingEquipment.deltaT ?? null, ...(placingEquipment.puissance != null ? { puissance: placingEquipment.puissance } : {}) }
+            ? { size: placingEquipment.size ?? { w: 28, h: 18 }, emetteurType: placingEquipment.emetteurType, T_entree_emetteur: placingEquipment.T_entree ?? null, T_sortie_emetteur: placingEquipment.T_sortie ?? null, ...(placingEquipment.puissance != null ? { puissance: placingEquipment.puissance } : {}) }
+          : isTF
+            ? { size: placingEquipment.size ?? { w: 28, h: 18 }, terminalFroidType: placingEquipment.terminalFroidType, T_entree_emetteur: placingEquipment.T_entree ?? null, T_sortie_emetteur: placingEquipment.T_sortie ?? null, ...(placingEquipment.puissance != null ? { puissance: placingEquipment.puissance } : {}) }
             : { size: placingEquipment.size ?? { w: 44, h: 28 } }),
       }
-      const renameId = placingEquipment.renameFirstPump ?? null
+      const renameId   = placingEquipment.renameFirstPump ?? null
+      const renameName = placingEquipment.renameFirstPumpName ?? null
       const ptsUpdate = p => [
-        ...(renameId
-          ? p.map(x => x.id === renameId ? { ...x, name: 'Pompe bouclage ECS n°1' } : x)
+        ...(renameId && renameName
+          ? p.map(x => x.id === renameId ? { ...x, name: renameName } : x)
           : p),
         newPt,
       ]
@@ -752,7 +877,7 @@ if (drawing) commitDrawing()
       } else {
         onNetworkChange(s => s, ptsUpdate)
       }
-      if (placingEquipment.type !== 'emetteur') onPlacingDone()
+      if (placingEquipment.type !== 'emetteur' && placingEquipment.type !== 'terminalFroid') onPlacingDone()
       return
     }
 
@@ -777,6 +902,30 @@ if (drawing) commitDrawing()
       const newLEF = { id: uid('lef'), enabled: true, levelId: levels[li]?.id ?? levels[0]?.id, x1: newX1, x2: newX1 + LEF_W, height: LEF_H }
       onLocauxEFChange?.([...(locauxEF ?? []), newLEF])
       onPlacingLocalEFDone?.()
+      return
+    }
+
+    // ── Local ECS placement mode ──
+    if (placingLocalECS) {
+      let li = findLevelIndexAt(pos.y, lineYs)
+      if (li < 0) li = (levels.length > 0 && lineYs.length > levels.length && pos.y <= lineYs[levels.length]) ? levels.length - 1 : 0
+      const W = 270, H = 150
+      const newX1 = snap(pos.x - W / 2)
+      const newZ = { id: uid('lecs'), enabled: true, levelId: levels[li]?.id ?? levels[0]?.id, x1: newX1, x2: newX1 + W, height: H }
+      onLocauxECSChange?.([...(locauxECS ?? []), newZ])
+      onPlacingLocalECSDone?.()
+      return
+    }
+
+    // ── Local Chauffage placement mode ──
+    if (placingLocalChauffage) {
+      let li = findLevelIndexAt(pos.y, lineYs)
+      if (li < 0) li = (levels.length > 0 && lineYs.length > levels.length && pos.y <= lineYs[levels.length]) ? levels.length - 1 : 0
+      const W = 270, H = 150
+      const newX1 = snap(pos.x - W / 2)
+      const newZ = { id: uid('lch'), enabled: true, levelId: levels[li]?.id ?? levels[0]?.id, x1: newX1, x2: newX1 + W, height: H }
+      onLocauxChauffageChange?.([...(locauxChauffage ?? []), newZ])
+      onPlacingLocalChauffageDone?.()
       return
     }
 
@@ -830,8 +979,10 @@ if (drawing) commitDrawing()
       if (!drawing) {
         const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
         // Bloquer le démarrage depuis un émetteur déjà saturé (2 tronçons)
-        if (ptId && points.find(p => p.id === ptId)?.type === 'emetteur') {
-          if (segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length >= 2) return
+        if (ptId) {
+          const startPt = points.find(p => p.id === ptId)
+          if ((startPt?.type === 'emetteur' || startPt?.type === 'terminalFroid') &&
+              segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length >= 2) return
         }
         if (onSeg && !ptId) {
           const newPt = splitSegment(onSeg, sp)
@@ -848,14 +999,14 @@ if (drawing) commitDrawing()
         }
         if (rawNearPt) {
           const rawSegs = segments.filter(s => s.startPointId === rawNearPt.id || s.endPointId === rawNearPt.id).length
-          if (rawNearPt.type === 'emetteur' && rawSegs >= 2) return
+          if ((rawNearPt.type === 'emetteur' || rawNearPt.type === 'terminalFroid') && rawSegs >= 2) return
           finalize({ x: rawNearPt.x, y: rawNearPt.y }, rawNearPt.id)
         } else {
           const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
           if (ptId) {
             const snapPt = points.find(p => p.id === ptId)
             const snapSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length
-            if (snapPt?.type === 'emetteur' && snapSegs >= 2) return
+            if ((snapPt?.type === 'emetteur' || snapPt?.type === 'terminalFroid') && snapSegs >= 2) return
             finalize(sp, ptId)
           } else if (onSeg) {
             const newPt = splitSegment(onSeg, sp)
@@ -981,11 +1132,14 @@ if (drawing) commitDrawing()
 
   // ── mouse up ──────────────────────────────────────────
   const onMouseUp = useCallback(e => {
+    chaufferieSnapRef.current = false
     setPanSt(null)
     setDragLine(null)
     setDragCol(null)
     setDragCh(null)
     setDragLEF(null)
+    setDragLECS(null)
+    setDragLCh(null)
 
     // Commit valve drag
     if (valveDragRef.current) {
@@ -1027,14 +1181,15 @@ if (drawing) commitDrawing()
       const inEmetteurRect = (emCenter, testPt) =>
         Math.abs(testPt.x - emCenter.x) <= EM_W2 && Math.abs(testPt.y - emCenter.y) <= EM_H2
       // Est-ce que p et np sont "proches" (en tenant compte du rect émetteur) ?
+      const isTerminalType = (p) => p?.type === 'emetteur' || p?.type === 'terminalFroid'
       const isNear = (p) => {
-        if (p.type === 'emetteur') return inEmetteurRect(p, np)           // nœud entrant dans le rect de l'émetteur fixe
-        if (dragged?.type === 'emetteur') return inEmetteurRect(np, p)    // nœud fixe dans le rect de l'émetteur déplacé
+        if (isTerminalType(p)) return inEmetteurRect(p, np)
+        if (isTerminalType(dragged)) return inEmetteurRect(np, p)
         return dist(p, np) < PT_HIT
       }
 
-      // Émetteur : retour à l'origine UNIQUEMENT si le nœud cible a strictement >2 tronçons
-      if (dragged?.type === 'emetteur') {
+      // Terminal (émetteur/terminalFroid) : retour à l'origine si nœud cible >2 tronçons
+      if (isTerminalType(dragged)) {
         const blockingNode = points.find(p => {
           if (p.id === ptId || !isNear(p)) return false
           if (p.type === 'groupe' && segments.filter(s => s.startPointId === p.id || s.endPointId === p.id).length >= 1) return false
@@ -1047,12 +1202,12 @@ if (drawing) commitDrawing()
         }
       }
 
-      // Nœud quelconque → émetteur : retour à l'origine si le merge donnerait >2 tronçons à l'émetteur
-      if (dragged?.type !== 'emetteur') {
+      // Nœud quelconque → terminal : retour à l'origine si le merge donnerait >2 tronçons au terminal
+      if (!isTerminalType(dragged)) {
         const segsOfDragged = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length
         const blockEmetteur = points.find(p => {
           if (p.id === ptId || !isNear(p)) return false
-          if (p.type !== 'emetteur') return false
+          if (!isTerminalType(p)) return false
           return segsOfDragged > 2
         })
         if (blockEmetteur) {
@@ -1066,19 +1221,18 @@ if (drawing) commitDrawing()
         if (p.id === ptId || !isNear(p)) return false
         if (p.type === 'groupe' && segments.filter(s => s.startPointId === p.id || s.endPointId === p.id).length >= 1) return false
         // Émetteur déplacé → nœud cible >2 tronçons : bloquer
-        if (dragged?.type === 'emetteur') {
+        if (isTerminalType(dragged)) {
           const segsOfP = segments.filter(s => s.startPointId === p.id || s.endPointId === p.id).length
           if (segsOfP > 2) return false
         }
-        // Nœud quelconque déplacé → émetteur cible : bloquer uniquement si le nœud déplacé a >2 tronçons
-        if (p.type === 'emetteur') {
+        if (isTerminalType(p)) {
           const segsOfDragged = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length
           if (segsOfDragged > 2) return false
         }
         return true
       })
       if (overlap && dragged) {
-        const rank = p => (p?.type === 'productionECS' || p?.type === 'productionChauffage') ? 3 : p?.type === 'groupe' ? 2 : (p?.type === 'pump' || p?.type === 'emetteur') ? 1 : 0
+        const rank = p => (p?.type === 'productionECS' || p?.type === 'productionChauffage' || p?.type === 'productionEauGlacee') ? 3 : p?.type === 'groupe' ? 2 : (p?.type === 'pump' || p?.type === 'emetteur' || p?.type === 'terminalFroid') ? 1 : 0
         const draggedWins = rank(dragged) > rank(overlap)
         const winner = draggedWins ? dragged : overlap
         const loser  = draggedWins ? overlap : dragged
@@ -1143,9 +1297,9 @@ if (drawing) commitDrawing()
         const moved = computeSegMove(segDragState.segId, segDragState.subIdx, segDragState.delta, segments, points)
         const { newSegs, newPts } = mergeCoincidentNodes(moved.newSegs, moved.newPts)
         // Annuler si un émetteur se retrouverait avec >2 tronçons, ou s'il a été absorbé par un nœud classique
-        const emetteurIds = new Set(points.filter(p => p.type === 'emetteur').map(p => p.id))
+        const emetteurIds = new Set(points.filter(p => p.type === 'emetteur' || p.type === 'terminalFroid').map(p => p.id))
         const hasInvalidEmetteur =
-          newPts.some(p => p.type === 'emetteur' &&
+          newPts.some(p => (p.type === 'emetteur' || p.type === 'terminalFroid') &&
             newSegs.filter(s => s.startPointId === p.id || s.endPointId === p.id).length > 2) ||
           [...emetteurIds].some(id => !newPts.find(p => p.id === id))
         if (!hasInvalidEmetteur) onNetworkChange(newSegs, newPts)
@@ -1480,7 +1634,103 @@ if (drawing) commitDrawing()
           )
         })}
 
-        {/* Chaufferie / Local ECS */}
+        {/* Locaux ECS */}
+        {(locauxECS ?? []).filter(z => z.enabled).map(z => {
+          const levelIdx = levels.findIndex(l => l.id === z.levelId)
+          if (levelIdx < 0 || levelIdx >= lineYs.length) return null
+          const yBot = lineYs[levelIdx]
+          const yTop = yBot - z.height
+          const { x1, x2 } = z
+          const H = 6
+          const isSel = selectedLocalECSId === z.id
+          const stroke = '#6b7280', fillHover = 'rgba(0,0,0,0.02)'
+          return (
+            <g key={z.id}>
+              <rect x={x1} y={yTop} width={x2 - x1} height={z.height}
+                fill={fillHover} stroke={stroke} strokeWidth={1.5}
+                style={{ pointerEvents: 'none' }} />
+              <text x={(x1 + x2) / 2} y={yTop + 13}
+                fontSize={10} fill={stroke} fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none', pointerEvents: 'none' }}>Local ECS</text>
+              {editLocauxECS && (isSel ? (
+                <>
+                  <rect x={x1 + H} y={yTop + H} width={x2 - x1 - H * 2} height={z.height - H * 2}
+                    fill="transparent" style={{ cursor: 'move' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLECS({ type: 'move', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height, origCenterY: yBot - z.height / 2 }) }} />
+                  <rect x={x1} y={yTop - H} width={x2 - x1} height={H * 2}
+                    fill="transparent" style={{ cursor: 'ns-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLECS({ type: 'top', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height }) }} />
+                  <rect x={x1 - H} y={yTop} width={H * 2} height={z.height}
+                    fill="transparent" style={{ cursor: 'ew-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLECS({ type: 'left', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height }) }} />
+                  <rect x={x2 - H} y={yTop} width={H * 2} height={z.height}
+                    fill="transparent" style={{ cursor: 'ew-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLECS({ type: 'right', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height }) }} />
+                </>
+              ) : (
+                <rect x={x1} y={yTop} width={x2 - x1} height={z.height}
+                  fill="transparent" style={{ cursor: 'pointer' }}
+                  onMouseDown={ev => {
+                    ev.stopPropagation()
+                    onSelectedLocalECSChange?.(z.id)
+                    onSelectIds([])
+                    onSelectedValveChange?.(null)
+                    onSelectedAccessoryChange?.(null)
+                  }} />
+              ))}
+            </g>
+          )
+        })}
+
+        {/* Locaux Chauffage */}
+        {(locauxChauffage ?? []).filter(z => z.enabled).map(z => {
+          const levelIdx = levels.findIndex(l => l.id === z.levelId)
+          if (levelIdx < 0 || levelIdx >= lineYs.length) return null
+          const yBot = lineYs[levelIdx]
+          const yTop = yBot - z.height
+          const { x1, x2 } = z
+          const H = 6
+          const isSel = selectedLocalChauffageId === z.id
+          const stroke = '#6b7280', fillHover = 'rgba(0,0,0,0.02)'
+          return (
+            <g key={z.id}>
+              <rect x={x1} y={yTop} width={x2 - x1} height={z.height}
+                fill={fillHover} stroke={stroke} strokeWidth={1.5}
+                style={{ pointerEvents: 'none' }} />
+              <text x={(x1 + x2) / 2} y={yTop + 13}
+                fontSize={10} fill={stroke} fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none', pointerEvents: 'none' }}>Local chauffage</text>
+              {editLocauxChauffage && (isSel ? (
+                <>
+                  <rect x={x1 + H} y={yTop + H} width={x2 - x1 - H * 2} height={z.height - H * 2}
+                    fill="transparent" style={{ cursor: 'move' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLCh({ type: 'move', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height, origCenterY: yBot - z.height / 2 }) }} />
+                  <rect x={x1} y={yTop - H} width={x2 - x1} height={H * 2}
+                    fill="transparent" style={{ cursor: 'ns-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLCh({ type: 'top', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height }) }} />
+                  <rect x={x1 - H} y={yTop} width={H * 2} height={z.height}
+                    fill="transparent" style={{ cursor: 'ew-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLCh({ type: 'left', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height }) }} />
+                  <rect x={x2 - H} y={yTop} width={H * 2} height={z.height}
+                    fill="transparent" style={{ cursor: 'ew-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLCh({ type: 'right', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height }) }} />
+                </>
+              ) : (
+                <rect x={x1} y={yTop} width={x2 - x1} height={z.height}
+                  fill="transparent" style={{ cursor: 'pointer' }}
+                  onMouseDown={ev => {
+                    ev.stopPropagation()
+                    onSelectedLocalChauffageChange?.(z.id)
+                    onSelectIds([])
+                    onSelectedValveChange?.(null)
+                    onSelectedAccessoryChange?.(null)
+                  }} />
+              ))}
+            </g>
+          )
+        })}
+
+        {/* Chaufferie / Production ECS / Chaufferie */}
         {chaufferie?.enabled && (() => {
           const levelIdx = levels.findIndex(l => l.id === chaufferie.levelId)
           if (levelIdx < 0 || levelIdx >= lineYs.length) return null
@@ -1490,7 +1740,7 @@ if (drawing) commitDrawing()
           const H = 6
           const localStroke = '#6b7280'
           const localFill   = 'rgba(0,0,0,0.02)'
-          const localLabel  = isAlimEF ? 'Local EF' : 'Local ECS'
+          const localLabel  = isAlimEF ? 'Local EF' : isChauffage ? 'Chaufferie' : isEauGlacee ? 'Production EG' : 'Production ECS'
           return (
             <g key="chaufferie">
               <rect x={x1} y={yTop} width={x2 - x1} height={chaufferie.height}
@@ -1524,7 +1774,12 @@ if (drawing) commitDrawing()
         {/* Segments */}
         {visRenderSegs.map(seg => {
           const sel  = selectedIds.includes(seg.id)
-          const col  = isAlimEF ? '#2563eb' : (seg.type === 'retour' ? '#f97316' : '#dc2626')
+          const _dp  = isAlimEF   ? (displayPrefs?.ef        ?? DEFAULT_DISPLAY_PREFS.ef)
+            : isChauffage ? (displayPrefs?.chauffage  ?? DEFAULT_DISPLAY_PREFS.chauffage)
+            : isEauGlacee ? (displayPrefs?.eauglacee  ?? DEFAULT_DISPLAY_PREFS.eauglacee)
+            : (displayPrefs?.ecs ?? DEFAULT_DISPLAY_PREFS.ecs)
+          const col  = seg.type === 'retour' ? _dp.colorRetour : _dp.colorAller
+          const _sw  = _dp.strokeWidth
           const dash = (seg.type === 'retour' && !isAlimEF) ? '10,6' : 'none'
           const path = seg.vertices.map((v, i) => `${i ? 'L' : 'M'}${v.x},${v.y}`).join(' ')
 
@@ -1575,16 +1830,24 @@ if (drawing) commitDrawing()
           const isHighlighted = connHighlightIds?.length > 0 && connHighlightIds.includes(seg.id)
           const isGrayed      = connHighlightIds?.length > 0 && !connHighlightIds.includes(seg.id)
 
+          // criticalPath: chemin défavorisé → bleu sélection, autres → atténués
+          const hasCritPath    = criticalPathIds != null && criticalPathIds.length > 0
+          const isCriticalPath = hasCritPath && criticalPathIds!.includes(seg.id)
+          const isCritDimmed   = hasCritPath && !isCriticalPath
+
           // match=green · missing=red(ECS)/blue(EF) · other=gray · dash always follows segment type
           const missingColor = isAlimEF ? '#93c5fd' : '#ef4444'
-          const strokeColor = isGrayed      ? '#d1d5db'
+          const strokeColor = isGrayed || isCritDimmed ? '#d1d5db'
             : editStyle === 'match'   ? '#16a34a'
             : editStyle === 'missing' ? missingColor
             : editStyle === 'other'   ? '#9ca3af'
+            : isCriticalPath ? '#2563eb'
             : sel ? (isAlimEF ? '#f97316' : '#2563eb') : col
-          const strokeW = isGrayed ? 1
-            : editStyle === 'match' ? 3 : editStyle === 'missing' ? 2 : editStyle === 'other' ? 1 : sel ? 2.5 : 1.5
-          const segDash = sel ? 'none' : dash
+          const strokeW = isGrayed || isCritDimmed ? 1
+            : editStyle === 'match' ? 3 : editStyle === 'missing' ? 2 : editStyle === 'other' ? 1
+            : isCriticalPath ? _sw + 2
+            : sel ? _sw + 1 : _sw
+          const segDash = (sel || isCriticalPath) ? 'none' : dash
           const opacity = 1
 
           return (
@@ -1725,6 +1988,10 @@ if (drawing) commitDrawing()
                     const ar = alimentationResults?.get(seg.id)
                     if (ar?.flowRateForPdc != null && ar.flowRateForPdc > 0)
                       lines.push({ text: `${ar.flowRateForPdc.toFixed(2)} l/s` })
+                  } else if (isChauffage || isEauGlacee) {
+                    const flow = activeTerminalFlows?.get(seg.id)
+                    if (flow?.flowRate != null && flow.flowRate > 0)
+                      lines.push({ text: `${flow.flowRate.toFixed(3)} m³/h` })
                   } else if (roleMap?.get(seg.id) !== 'antenne') {
                     const flow = networkFlows?.get(seg.id)
                     if (flow?.flowRate != null) lines.push({ text: `${flow.flowRate.toFixed(3)} m³/h` })
@@ -1742,6 +2009,12 @@ if (drawing) commitDrawing()
                     const area = di_mm ? Math.PI * (di_mm / 1000) ** 2 / 4 : null
                     const v = area && flowLs != null && flowLs > 0 ? (flowLs * 1e-3) / area : null
                     if (v != null) lines.push({ text: `${sf(v, 2)} m/s`, orange: v > 1.5 && v <= 2.0, red: v > 2.0 })
+                  } else if (isChauffage || isEauGlacee) {
+                    const flow = activeTerminalFlows?.get(seg.id)
+                    if (flow?.velocity != null) {
+                      const v = flow.velocity
+                      lines.push({ text: `${sf(v, 2)} m/s`, orange: v < 0.2 || v > 1.5 })
+                    }
                   } else if (roleMap?.get(seg.id) !== 'antenne') {
                     const flow = networkFlows?.get(seg.id)
                     if (flow?.velocity != null) {
@@ -1758,12 +2031,24 @@ if (drawing) commitDrawing()
                   const sr = thermalResults?.segResults?.get(seg.id)
                   if (sr?.deltaT != null) lines.push({ text: `ΔT ${sf(sr.deltaT, 2)} °C` })
                 }
-                if (canvasDisplay?.dpTroncon && isBouclage) {
+                if (canvasDisplay?.dpTroncon && (isBouclage || isChauffage || isEauGlacee)) {
                   const dp = pdcResults?.get(seg.id)?.dpTotal
                   if (dp != null) {
                     const u = pdcParams?.uniteAffichage ?? 'Pa'
                     const txt = u === 'mmCE' ? `ΔP ${(dp / 9.81).toFixed(0)} mmCE`
                       : `ΔP ${Math.round(dp)} Pa`
+                    lines.push({ text: txt })
+                  }
+                }
+                if (canvasDisplay?.rLinear && (isChauffage || isEauGlacee)) {
+                  const J = pdcResults?.get(seg.id)?.J
+                  if (J != null)
+                    lines.push({ text: `R ${J.toFixed(1)} Pa/m`, orange: J > 150 })
+                }
+                if (canvasDisplay?.puissanceTroncon && (isChauffage || isEauGlacee)) {
+                  const P = activeTerminalFlows?.get(seg.id)?.puissanceAmont
+                  if (P != null && P > 0) {
+                    const txt = P >= 1000 ? `${(P / 1000).toFixed(1)} kW` : `${Math.round(P)} W`
                     lines.push({ text: txt })
                   }
                 }
@@ -2080,7 +2365,7 @@ if (drawing) commitDrawing()
           }
 
           const resolveDpNoeud = (ptId: string): number | null => {
-            if (!canvasDisplay?.dpNoeud || !isBouclage) return null
+            if (!canvasDisplay?.dpNoeud || (!isBouclage && !isChauffage && !isEauGlacee)) return null
             return pdcCumResults?.nodeCumDp?.get(ptId) ?? null
           }
 
@@ -2251,6 +2536,58 @@ if (drawing) commitDrawing()
             )
           }
 
+          if (mixingNodes?.has(pt.id)) {
+            const cx = pt.x, cy = pt.y
+            const sqFill  = sel || dragged ? '#dbeafe' : '#fff'
+            const sqStroke = sel || dragged ? '#2563eb' : '#374151'
+            const triStroke = sel || dragged ? '#2563eb' : '#92400e'
+            const halfA = 22 * Math.PI / 180  // demi-angle étroit (22°)
+            const triR  = 13                   // distance center → base du triangle
+
+            const angles: number[] = segments
+              .filter((s: any) => s.startPointId === pt.id || s.endPointId === pt.id)
+              .map((s: any) => {
+                const vs = s.vertices || []
+                if (s.startPointId === pt.id && vs.length >= 2)
+                  return Math.atan2(vs[1].y - vs[0].y, vs[1].x - vs[0].x)
+                if (s.endPointId === pt.id && vs.length >= 2) {
+                  const last = vs.length - 1
+                  return Math.atan2(vs[last - 1].y - vs[last].y, vs[last - 1].x - vs[last].x)
+                }
+                const otherId = s.startPointId === pt.id ? s.endPointId : s.startPointId
+                const other = points.find((p: any) => p.id === otherId)
+                return other ? Math.atan2(other.y - cy, other.x - cx) : null
+              })
+              .filter((a: any): a is number => a !== null)
+
+            return (
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+                <rect x={cx - PT_R - 6} y={cy - PT_R - 6} width={(PT_R + 6) * 2} height={(PT_R + 6) * 2} fill="transparent" />
+                <g style={{ pointerEvents: 'none' }}>
+                  {/* Triangles blancs dans la direction de chaque tronçon */}
+                  {angles.map((θ: number, i: number) => {
+                    const p1x = cx + triR * Math.cos(θ - halfA)
+                    const p1y = cy + triR * Math.sin(θ - halfA)
+                    const p2x = cx + triR * Math.cos(θ + halfA)
+                    const p2y = cy + triR * Math.sin(θ + halfA)
+                    return (
+                      <polygon
+                        key={i}
+                        points={`${cx},${cy} ${p1x.toFixed(2)},${p1y.toFixed(2)} ${p2x.toFixed(2)},${p2y.toFixed(2)}`}
+                        fill="white"
+                        stroke={triStroke}
+                        strokeWidth={0.9}
+                      />
+                    )
+                  })}
+                  {/* Carré nœud standard par-dessus */}
+                  <rect x={cx - PT_R} y={cy - PT_R} width={PT_R * 2} height={PT_R * 2}
+                    fill={sqFill} stroke={sqStroke} strokeWidth={1.5} />
+                </g>
+              </g>
+            )
+          }
+
           if (pt.type === 'productionChauffage') {
             const w = pt.size?.w ?? 44, h = pt.size?.h ?? 28
             const fs = Math.max(6, Math.min(9, h * 0.28))
@@ -2265,6 +2602,42 @@ if (drawing) commitDrawing()
                   <text x={pt.x} y={pt.y - h * 0.15} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Production</text>
                   <text x={pt.x} y={pt.y + h * 0.28} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Chauffage</text>
                 </g>
+                {canvasDisplay?.dpNoeud && (() => {
+                  const retDps = Array.from(flowDirections?.entries() ?? [])
+                    .filter(([, dir]) => dir.toId === pt.id)
+                    .map(([sid]) => pdcCumResults?.segCumDp?.get(sid))
+                    .filter((v): v is number => v != null)
+                  if (retDps.length === 0) return null
+                  const maxDp = Math.max(...retDps)
+                  return <DpBadge x={pt.x + w / 2 + 4} y={pt.y} dp={maxDp} />
+                })()}
+              </g>
+            )
+          }
+
+          if (pt.type === 'productionEauGlacee') {
+            const w = pt.size?.w ?? 44, h = pt.size?.h ?? 28
+            const fs = Math.max(6, Math.min(9, h * 0.28))
+            const col = sel || dragged ? '#1d4ed8' : '#1e40af'
+            return (
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+                <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
+                <g style={{ pointerEvents: 'none' }}>
+                  <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
+                    fill={sel || dragged ? '#dbeafe' : '#eff6ff'}
+                    stroke={col} strokeWidth={1.5} rx={3} />
+                  <text x={pt.x} y={pt.y - h * 0.15} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Production</text>
+                  <text x={pt.x} y={pt.y + h * 0.28} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Eau glacée</text>
+                </g>
+                {canvasDisplay?.dpNoeud && (() => {
+                  const retDps = Array.from(flowDirections?.entries() ?? [])
+                    .filter(([, dir]) => dir.toId === pt.id)
+                    .map(([sid]) => pdcCumResults?.segCumDp?.get(sid))
+                    .filter((v): v is number => v != null)
+                  if (retDps.length === 0) return null
+                  const maxDp = Math.max(...retDps)
+                  return <DpBadge x={pt.x + w / 2 + 4} y={pt.y} dp={maxDp} />
+                })()}
               </g>
             )
           }
@@ -2274,6 +2647,7 @@ if (drawing) commitDrawing()
             const col = sel || dragged ? '#2563eb' : '#000'
             const bg  = sel || dragged ? '#dbeafe' : '#fff'
             const emDef = EMETTEUR_TYPES.find(e => e.id === pt.emetteurType)
+            const bx = pt.x + w / 2 + 4
             return (
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
                 <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
@@ -2294,6 +2668,110 @@ if (drawing) commitDrawing()
                     {emDef.label}
                   </text>
                 )}
+                {isChauffage && (() => {
+                  const badges: { txt: string }[] = []
+                  if (canvasDisplay?.puissanceEmetteur && pt.puissance != null) {
+                    const P = pt.puissance
+                    badges.push({ txt: P >= 1000 ? `${(P / 1000).toFixed(1)} kW` : `${Math.round(P)} W` })
+                  }
+                  if (canvasDisplay?.dpEmetteur) {
+                    const dpEm = (pt.dp_emetteur ?? 0) + (pt.dp_vanne_th ?? 0)
+                    if (dpEm > 0) {
+                      const u = pdcParams?.uniteAffichage ?? 'Pa'
+                      badges.push({ txt: u === 'mmCE' ? `ΔP ém. ${(dpEm / 9.81).toFixed(0)} mc` : `ΔP ém. ${Math.round(dpEm)} Pa` })
+                    }
+                  }
+                  if (canvasDisplay?.dpNoeud) {
+                    const dp = resolveDpNoeud(pt.id)
+                    if (dp != null) {
+                      const dpTotal = dp + (pt.dp_emetteur ?? 0) + (pt.dp_vanne_th ?? 0)
+                      const u = pdcParams?.uniteAffichage ?? 'Pa'
+                      badges.push({ txt: u === 'mmCE' ? `ΔP cum. ${(dpTotal / 9.81).toFixed(0)} mc` : `ΔP cum. ${Math.round(dpTotal)} Pa` })
+                    }
+                  }
+                  if (!badges.length) return null
+                  const LH = 11, PAD = 2
+                  const bgW = Math.max(...badges.map(b => b.txt.length)) * 5 + PAD * 2 + 2
+                  const bgH = badges.length * LH + PAD * 2
+                  const by = pt.y - bgH / 2
+                  return (
+                    <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                      <rect x={bx} y={by} width={bgW} height={bgH}
+                        fill="rgba(255,255,255,0.92)" stroke="#6b7280" strokeWidth={0.4} rx={2} />
+                      {badges.map((b, i) => (
+                        <text key={i} x={bx + PAD + 1} y={by + PAD + (i + 1) * LH - 2}
+                          fontSize={7.5} fill="#374151" fontWeight="600">{b.txt}</text>
+                      ))}
+                    </g>
+                  )
+                })()}
+              </g>
+            )
+          }
+
+          if (pt.type === 'terminalFroid') {
+            const w = 28, h = 18
+            const col = sel || dragged ? '#1d4ed8' : '#1e40af'
+            const bg  = sel || dragged ? '#dbeafe' : '#eff6ff'
+            const tfDef = TERMINAL_FROID_TYPES.find(t => t.id === pt.terminalFroidType)
+            const bx = pt.x + w / 2 + 4
+            return (
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+                <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
+                <g style={{ pointerEvents: 'none' }}>
+                  <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
+                    fill={bg} stroke={col} strokeWidth={1.2} rx={2} />
+                  {[-w/4 + 1, 1, w/4 - 1].map((ox, i) => (
+                    <line key={i}
+                      x1={pt.x + ox} y1={pt.y - h/2 + 3}
+                      x2={pt.x + ox} y2={pt.y + h/2 - 3}
+                      stroke={col} strokeWidth={0.9} strokeDasharray="2,1.5" />
+                  ))}
+                </g>
+                {tfDef && (
+                  <text x={pt.x} y={pt.y - h/2 - 3}
+                    fontSize={6} fill={col} textAnchor="middle"
+                    style={{ userSelect: 'none', pointerEvents: 'none' }}>
+                    {tfDef.label}
+                  </text>
+                )}
+                {isEauGlacee && (() => {
+                  const badges: { txt: string }[] = []
+                  if (canvasDisplay?.puissanceEmetteur && pt.puissance != null) {
+                    const P = pt.puissance
+                    badges.push({ txt: P >= 1000 ? `${(P / 1000).toFixed(1)} kW` : `${Math.round(P)} W` })
+                  }
+                  if (canvasDisplay?.dpEmetteur) {
+                    const dpEm = (pt.dp_emetteur ?? 0) + (pt.dp_vanne_th ?? 0)
+                    if (dpEm > 0) {
+                      const u = pdcParams?.uniteAffichage ?? 'Pa'
+                      badges.push({ txt: u === 'mmCE' ? `ΔP ém. ${(dpEm / 9.81).toFixed(0)} mc` : `ΔP ém. ${Math.round(dpEm)} Pa` })
+                    }
+                  }
+                  if (canvasDisplay?.dpNoeud) {
+                    const dp = resolveDpNoeud(pt.id)
+                    if (dp != null) {
+                      const dpTotal = dp + (pt.dp_emetteur ?? 0) + (pt.dp_vanne_th ?? 0)
+                      const u = pdcParams?.uniteAffichage ?? 'Pa'
+                      badges.push({ txt: u === 'mmCE' ? `ΔP cum. ${(dpTotal / 9.81).toFixed(0)} mc` : `ΔP cum. ${Math.round(dpTotal)} Pa` })
+                    }
+                  }
+                  if (!badges.length) return null
+                  const LH = 11, PAD = 2
+                  const bgW = Math.max(...badges.map(b => b.txt.length)) * 5 + PAD * 2 + 2
+                  const bgH = badges.length * LH + PAD * 2
+                  const by = pt.y - bgH / 2
+                  return (
+                    <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                      <rect x={bx} y={by} width={bgW} height={bgH}
+                        fill="rgba(255,255,255,0.92)" stroke="#6b7280" strokeWidth={0.4} rx={2} />
+                      {badges.map((b, i) => (
+                        <text key={i} x={bx + PAD + 1} y={by + PAD + (i + 1) * LH - 2}
+                          fontSize={7.5} fill="#374151" fontWeight="600">{b.txt}</text>
+                      ))}
+                    </g>
+                  )
+                })()}
               </g>
             )
           }
@@ -2405,7 +2883,7 @@ if (drawing) commitDrawing()
             : resolveNodeTemp(pt.id)
 
           const incomingDps = (() => {
-            if (!canvasDisplay?.dpNoeud || !isBouclage || !flowDirections) return []
+            if (!canvasDisplay?.dpNoeud || (!isBouclage && !isChauffage && !isEauGlacee) || !flowDirections) return []
             const res: { dp: number; dx: number; dy: number }[] = []
             for (const [sid, dir] of flowDirections) {
               if (dir.toId !== pt.id) continue
@@ -2466,15 +2944,26 @@ if (drawing) commitDrawing()
         {/* Drawing preview */}
         {previewPath && (
           <>
-            <path d={previewPath}
-              stroke={isAlimEF ? '#2563eb' : pipeType === 'retour' ? '#f97316' : '#dc2626'} strokeWidth={1.5}
-              strokeDasharray={!isAlimEF && pipeType === 'retour' ? '10,6' : '5,3'}
-              fill="none" opacity={0.6} style={{ pointerEvents: 'none' }} />
-            {drawing.vertices.map((v, i) =>
-              <rect key={i} x={v.x - 2.5} y={v.y - 2.5} width={5} height={5}
-                fill={isAlimEF ? '#2563eb' : pipeType === 'retour' ? '#f97316' : '#dc2626'}
-                style={{ pointerEvents: 'none' }} />
-            )}
+            {(() => {
+              const _pp = isAlimEF ? (displayPrefs?.ef ?? DEFAULT_DISPLAY_PREFS.ef)
+                : isChauffage ? (displayPrefs?.chauffage ?? DEFAULT_DISPLAY_PREFS.chauffage)
+                : isEauGlacee ? (displayPrefs?.eauglacee ?? DEFAULT_DISPLAY_PREFS.eauglacee)
+                : (displayPrefs?.ecs ?? DEFAULT_DISPLAY_PREFS.ecs)
+              const previewCol = pipeType === 'retour' ? _pp.colorRetour : _pp.colorAller
+              return (
+                <>
+                  <path d={previewPath}
+                    stroke={previewCol} strokeWidth={_pp.strokeWidth}
+                    strokeDasharray={!isAlimEF && pipeType === 'retour' ? '10,6' : '5,3'}
+                    fill="none" opacity={0.6} style={{ pointerEvents: 'none' }} />
+                  {drawing.vertices.map((v, i) =>
+                    <rect key={i} x={v.x - 2.5} y={v.y - 2.5} width={5} height={5}
+                      fill={previewCol}
+                      style={{ pointerEvents: 'none' }} />
+                  )}
+                </>
+              )
+            })()}
           </>
         )}
 
@@ -2523,15 +3012,32 @@ if (drawing) commitDrawing()
               <g style={{ pointerEvents: 'none' }}>
                 <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
                   fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
-                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">Prod.</text>
+                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">Production</text>
                 <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">Chauffage</text>
+              </g>
+            )
+          }
+          if (placingEquipment.type === 'productionEauGlacee') {
+            const w = placingEquipment.size?.w ?? 44, h = placingEquipment.size?.h ?? 28
+            const fs = Math.max(6, Math.min(9, h * 0.28))
+            return (
+              <g style={{ pointerEvents: 'none' }}>
+                <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
+                  fill="rgba(239,246,255,0.6)" stroke="rgba(30,64,175,0.5)" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
+                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(30,64,175,0.55)" fontWeight="700" textAnchor="middle">Production</text>
+                <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(30,64,175,0.55)" fontWeight="700" textAnchor="middle">Eau glacée</text>
               </g>
             )
           }
           if (placingEquipment.type === 'emetteur') {
             const w = placingEquipment.size?.w ?? 28, h = placingEquipment.size?.h ?? 18
+            const emDef = EMETTEUR_TYPES.find(e => e.id === placingEquipment.emetteurType)
             return (
               <g style={{ pointerEvents: 'none' }}>
+                {emDef && (
+                  <text x={gx} y={gy - h/2 - 3} fontSize={6} fill="rgba(0,0,0,0.5)" textAnchor="middle"
+                    style={{ userSelect: 'none' }}>{emDef.label}</text>
+                )}
                 <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
                   fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.5} strokeDasharray="4,3" rx={2} />
                 {[-w/4 + 1, 1, w/4 - 1].map((ox, i) => (
@@ -2539,6 +3045,26 @@ if (drawing) commitDrawing()
                     x1={gx + ox} y1={gy - h/2 + 3}
                     x2={gx + ox} y2={gy + h/2 - 3}
                     stroke="rgba(0,0,0,0.35)" strokeWidth={1.2} />
+                ))}
+              </g>
+            )
+          }
+          if (placingEquipment.type === 'terminalFroid') {
+            const w = placingEquipment.size?.w ?? 28, h = placingEquipment.size?.h ?? 18
+            const tfDef = TERMINAL_FROID_TYPES.find(t => t.id === placingEquipment.terminalFroidType)
+            return (
+              <g style={{ pointerEvents: 'none' }}>
+                {tfDef && (
+                  <text x={gx} y={gy - h/2 - 3} fontSize={6} fill="rgba(30,64,175,0.6)" textAnchor="middle"
+                    style={{ userSelect: 'none' }}>{tfDef.label}</text>
+                )}
+                <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
+                  fill="rgba(239,246,255,0.6)" stroke="rgba(30,64,175,0.5)" strokeWidth={1.5} strokeDasharray="4,3" rx={2} />
+                {[-w/4 + 1, 1, w/4 - 1].map((ox, i) => (
+                  <line key={i}
+                    x1={gx + ox} y1={gy - h/2 + 3}
+                    x2={gx + ox} y2={gy + h/2 - 3}
+                    stroke="rgba(30,64,175,0.4)" strokeWidth={1.2} strokeDasharray="2,1.5" />
                 ))}
               </g>
             )
@@ -2569,15 +3095,51 @@ if (drawing) commitDrawing()
           let li = findLevelIndexAt(mouse.y, lineYs)
           if (li < 0) li = (lineYs.length > levels.length && mouse.y <= lineYs[levels.length]) ? levels.length - 1 : 0
           const yBot = lineYs[li]
-          const LEF_W = 270, LEF_H = 150
-          const gx1 = snap(mouse.x - LEF_W / 2)
+          const W = 270, H = 150
+          const gx1 = snap(mouse.x - W / 2)
           return (
             <g style={{ pointerEvents: 'none' }}>
-              <rect x={gx1} y={yBot - LEF_H} width={LEF_W} height={LEF_H}
+              <rect x={gx1} y={yBot - H} width={W} height={H}
                 fill="rgba(0,0,0,0.04)" stroke="rgba(0,0,0,0.35)" strokeWidth={1.5} strokeDasharray="6,4" />
-              <text x={gx1 + LEF_W / 2} y={yBot - LEF_H + 13}
+              <text x={gx1 + W / 2} y={yBot - H + 13}
                 fontSize={10} fill="rgba(0,0,0,0.45)" fontWeight="600" textAnchor="middle"
                 style={{ userSelect: 'none' }}>Local EF</text>
+            </g>
+          )
+        })()}
+
+        {/* Ghost de placement local ECS */}
+        {placingLocalECS && levels.length > 0 && (() => {
+          let li = findLevelIndexAt(mouse.y, lineYs)
+          if (li < 0) li = (lineYs.length > levels.length && mouse.y <= lineYs[levels.length]) ? levels.length - 1 : 0
+          const yBot = lineYs[li]
+          const W = 270, H = 150
+          const gx1 = snap(mouse.x - W / 2)
+          return (
+            <g style={{ pointerEvents: 'none' }}>
+              <rect x={gx1} y={yBot - H} width={W} height={H}
+                fill="rgba(0,0,0,0.04)" stroke="rgba(0,0,0,0.35)" strokeWidth={1.5} strokeDasharray="6,4" />
+              <text x={gx1 + W / 2} y={yBot - H + 13}
+                fontSize={10} fill="rgba(0,0,0,0.45)" fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none' }}>Local ECS</text>
+            </g>
+          )
+        })()}
+
+        {/* Ghost de placement local Chauffage */}
+        {placingLocalChauffage && levels.length > 0 && (() => {
+          let li = findLevelIndexAt(mouse.y, lineYs)
+          if (li < 0) li = (lineYs.length > levels.length && mouse.y <= lineYs[levels.length]) ? levels.length - 1 : 0
+          const yBot = lineYs[li]
+          const W = 270, H = 150
+          const gx1 = snap(mouse.x - W / 2)
+          return (
+            <g style={{ pointerEvents: 'none' }}>
+              <rect x={gx1} y={yBot - H} width={W} height={H}
+                fill="rgba(0,0,0,0.04)" stroke="rgba(0,0,0,0.35)" strokeWidth={1.5} strokeDasharray="6,4" />
+              <text x={gx1 + W / 2} y={yBot - H + 13}
+                fontSize={10} fill="rgba(0,0,0,0.45)" fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none' }}>Local chauffage</text>
             </g>
           )
         })()}
@@ -2600,7 +3162,22 @@ if (drawing) commitDrawing()
       )}
       {placingChaufferie && (
         <text x={8} y={18} fontSize={10} fill="#818cf8">
-          Cliquez pour placer le local ECS · Échap pour annuler
+          Cliquez pour placer {isChauffage ? 'la chaufferie' : isEauGlacee ? 'la production EG' : 'la production ECS'} · Échap pour annuler
+        </text>
+      )}
+      {placingLocalEF && (
+        <text x={8} y={18} fontSize={10} fill="#4338ca">
+          Cliquez pour placer un local EF · Échap pour annuler
+        </text>
+      )}
+      {placingLocalECS && (
+        <text x={8} y={18} fontSize={10} fill="#4338ca">
+          Cliquez pour placer un local ECS · Échap pour annuler
+        </text>
+      )}
+      {placingLocalChauffage && (
+        <text x={8} y={18} fontSize={10} fill="#4338ca">
+          Cliquez pour placer un local chauffage · Échap pour annuler
         </text>
       )}
     </svg>

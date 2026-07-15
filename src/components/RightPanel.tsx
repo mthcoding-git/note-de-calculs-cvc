@@ -3,7 +3,8 @@ import type { CalcMode } from '../types'
 import { getDisplayName } from '../utils/naming'
 import { getModeFlags } from '../utils/calcModeFlags'
 import { sf } from '../utils/fmt'
-import { FITTING_TYPES, EQUIPMENT_TYPES, type TronconAmontEF, type TronconAmontResult } from '../utils/pdcCalc'
+import { type TronconAmontEF, type TronconAmontResult } from '../utils/pdcCalc'
+import { SegFittingsPanel, SegEquipPanel } from './segPanelShared'
 import { NumInput } from './NumInput'
 import { Field, SectionLabel, SegNameField } from './rpShared'
 import SegmentPanel from './SegmentPanel'
@@ -174,7 +175,7 @@ function TronconAmontPanel({ tr, index, result, materials, totalQpAlimM3h, pdcPa
                 <SegFittingsPanel seg={tr} set={(k, v) => set(k, v)} pdcParams={pdcParams} />
               )}
               {pdcParams.equipementsActifs && (
-                <SegEquipPanel seg={tr} set={(k, v) => set(k, v)} pdcParams={pdcParams} />
+                <SegEquipPanel seg={tr} set={(k, v) => set(k, v)} pdcParams={pdcParams} mode="alimentation-ecs" />
               )}
             </>
           )}
@@ -188,257 +189,6 @@ function TronconAmontPanel({ tr, index, result, materials, totalQpAlimM3h, pdcPa
           </button>
         </>
       )}
-    </div>
-  )
-}
-
-// ── Panneau compact accessoires (ξ) — utilisé par TronconAmontPanel ──────
-function SegFittingsPanel({ seg, set, pdcParams }) {
-  const [addOpen, setAddOpen] = useState(false)
-  const dropRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!addOpen) return
-    const h = (e: MouseEvent) => { if (!dropRef.current?.contains(e.target as Node)) setAddOpen(false) }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [addOpen])
-
-  const fittings: any[]  = seg.fittings ?? []
-  const libOverrides     = pdcParams?.fittingOverrides ?? {}
-
-  const setCount = (typeId: string, n: number) => {
-    if (n <= 0) set('fittings', fittings.filter(f => f.type !== typeId))
-    else set('fittings', fittings.map(f => f.type === typeId ? { ...f, count: n } : f))
-  }
-  const setXi = (typeId: string, val: number | null) => {
-    set('fittings', fittings.map(f => f.type === typeId ? { ...f, xiOverride: val ?? undefined } : f))
-  }
-  const del = (typeId: string) => set('fittings', fittings.filter(f => f.type !== typeId))
-  const add = (typeId: string) => {
-    setAddOpen(false)
-    if (!fittings.find(f => f.type === typeId)) {
-      set('fittings', [...fittings, { type: typeId, count: 1 }])
-    }
-  }
-
-  const customLibF: any[] = pdcParams?.customFittings ?? []
-  const allStdF = [
-    ...FITTING_TYPES,
-    ...customLibF.map(t => ({ id: t.id, label: t.label || 'Personnalisé', xi: t.xi })),
-  ]
-  const available = allStdF.filter(t => !fittings.find(f => f.type === t.id))
-
-  const rowStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4,
-    padding: '5px 8px', background: '#fef7f4', border: '1px solid #fbd5c5', borderRadius: 5,
-  }
-  const inp = (extra: React.CSSProperties = {}): React.CSSProperties => ({
-    fontSize: 10, padding: '2px 4px', borderRadius: 4, border: '1px solid #e5e7eb',
-    textAlign: 'center' as const, ...extra,
-  })
-
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, color: '#c2562d', marginBottom: 5, letterSpacing: '0.03em' }}>
-        Accessoires
-      </div>
-
-      {fittings.length === 0 && (
-        <div style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic', marginBottom: 6 }}>
-          Aucun accessoire sur ce tronçon
-        </div>
-      )}
-
-      {fittings.map(f => {
-        const def       = allStdF.find(t => t.id === f.type)
-        const libXi     = def ? (libOverrides[f.type] ?? def.xi) : null
-        const xi        = f.xiOverride ?? libXi
-        const overridden = f.xiOverride != null
-        return (
-          <div key={f.type} style={rowStyle}>
-            <span style={{ flex: 1, fontSize: 10, color: '#374151', lineHeight: 1.3 }}>
-              {def?.label ?? f.type}
-            </span>
-            <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>n</span>
-            <NumInput min={1} step={1} value={f.count ?? 1}
-              onChange={v => setCount(f.type, Math.max(1, Math.round(v ?? 1)))}
-              style={{ ...inp(), width: 32 }} />
-            <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>ξ</span>
-            <NumInput min={0} step={0.01} value={xi ?? null} allowEmpty
-              placeholder={libXi != null ? `${libXi} (par défaut)` : ''}
-              onChange={v => setXi(f.type, v)}
-              style={{ ...inp({ width: 44, color: overridden ? '#c2562d' : '#374151',
-                                border: `1px solid ${overridden ? '#fbd5c5' : '#e5e7eb'}` }) }} />
-            {overridden && (
-              <button onClick={() => setXi(f.type, null)} title={`Rétablir (ξ = ${libXi})`}
-                style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11, padding: 0, lineHeight: 1 }}>
-                ↺
-              </button>
-            )}
-            <button onClick={() => del(f.type)}
-              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 15, padding: '0 2px', lineHeight: 1 }}>
-              ×
-            </button>
-          </div>
-        )
-      })}
-
-      <div ref={dropRef} style={{ position: 'relative' }}>
-        <button onClick={() => setAddOpen(a => !a)}
-          style={{ fontSize: 10, padding: '3px 10px', border: '1px dashed #c2562d', borderRadius: 5,
-                   color: '#c2562d', background: addOpen ? '#fff7ed' : 'transparent', cursor: 'pointer', fontWeight: 600 }}>
-          + Ajouter
-        </button>
-        {addOpen && (
-          <div style={{ position: 'absolute', left: 0, top: '110%', zIndex: 300, background: '#fff',
-                        border: '1px solid #e5e7eb', borderRadius: 8,
-                        boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: 250, padding: 6 }}>
-            {available.length === 0 ? (
-              <div style={{ padding: '6px 10px', fontSize: 10, color: '#9ca3af' }}>
-                Tous les accessoires sont déjà ajoutés
-              </div>
-            ) : available.map(t => {
-              const libXi = libOverrides[t.id] ?? t.xi
-              const long = t.label.length > 32
-              return (
-                <div key={t.id} onClick={() => add(t.id)}
-                  style={{ padding: '5px 10px', fontSize: 10.5, cursor: 'pointer', borderRadius: 5,
-                           display: 'flex', flexDirection: long ? 'column' : 'row',
-                           alignItems: long ? 'flex-start' : 'baseline', gap: long ? 1 : 6 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#fef0ea')}
-                  onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                  <span>{t.label}</span>
-                  <span style={{ fontSize: 9.5, color: '#9ca3af', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>ξ = {libXi}</span>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ── Panneau compact équipements (Kv) — utilisé par TronconAmontPanel ─────
-function SegEquipPanel({ seg, set, pdcParams }) {
-  const [addOpen, setAddOpen] = useState(false)
-  const dropRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!addOpen) return
-    const h = (e: MouseEvent) => { if (!dropRef.current?.contains(e.target as Node)) setAddOpen(false) }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [addOpen])
-
-  const equipment: any[]  = seg.equipment ?? []
-  const libOverrides       = pdcParams?.equipmentOverrides ?? {}
-
-  const setKv = (typeId: string, val: number | null) => {
-    set('equipment', equipment.map(e => e.type === typeId ? { ...e, kvOverride: val ?? undefined } : e))
-  }
-  const del = (typeId: string) => set('equipment', equipment.filter(e => e.type !== typeId))
-  const add = (typeId: string) => {
-    setAddOpen(false)
-    if (!equipment.find(e => e.type === typeId)) {
-      set('equipment', [...equipment, { type: typeId }])
-    }
-  }
-
-  const customLibE: any[] = pdcParams?.customEquipments ?? []
-  const allStdE = [
-    ...EQUIPMENT_TYPES,
-    ...customLibE.map(t => ({ id: t.id, label: t.label || 'Personnalisé', kvDefault: t.kvDefault })),
-  ]
-  const available = allStdE.filter(t => !equipment.find(e => e.type === t.id))
-
-  const rowStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4,
-    padding: '5px 8px', background: '#faf8ff', border: '1px solid #ddd6fe', borderRadius: 5,
-  }
-  const inp = (extra: React.CSSProperties = {}): React.CSSProperties => ({
-    fontSize: 10, padding: '2px 4px', borderRadius: 4, border: '1px solid #e5e7eb',
-    textAlign: 'center' as const, ...extra,
-  })
-
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, color: '#7c3aed', marginBottom: 5, letterSpacing: '0.03em' }}>
-        Équipements
-      </div>
-
-      {equipment.length === 0 && (
-        <div style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic', marginBottom: 6 }}>
-          Aucun équipement sur ce tronçon
-        </div>
-      )}
-
-      {equipment.map(e => {
-        const def       = allStdE.find(t => t.id === e.type)
-        const libKv     = def ? (libOverrides[e.type] ?? def.kvDefault) : null
-        const kv        = e.kvOverride ?? libKv
-        const overridden = e.kvOverride != null
-        const needsKv   = kv == null
-        return (
-          <div key={e.type} style={rowStyle}>
-            <span style={{ flex: 1, fontSize: 10, color: '#374151', lineHeight: 1.3 }}>
-              {def?.label ?? e.type}
-            </span>
-            <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Kv</span>
-            <NumInput min={0} step={0.1} value={kv ?? null} allowEmpty
-              placeholder={libKv != null ? `${libKv} (par défaut)` : 'requis'}
-              onChange={val => setKv(e.type, val)}
-              style={{ ...inp({ width: 50,
-                                color: needsKv ? '#f97316' : overridden ? '#7c3aed' : '#374151',
-                                border: `1px solid ${needsKv ? '#fed7aa' : overridden ? '#ddd6fe' : '#e5e7eb'}` }) }} />
-            <span style={{ fontSize: 8, color: '#9ca3af', flexShrink: 0, lineHeight: 1 }}>m³/h<br/>√bar</span>
-            {overridden && libKv != null && (
-              <button onClick={() => setKv(e.type, null)} title={`Rétablir (Kv = ${libKv})`}
-                style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11, padding: 0 }}>
-                ↺
-              </button>
-            )}
-            <button onClick={() => del(e.type)}
-              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 15, padding: '0 2px', lineHeight: 1 }}>
-              ×
-            </button>
-          </div>
-        )
-      })}
-
-      <div ref={dropRef} style={{ position: 'relative' }}>
-        <button onClick={() => setAddOpen(a => !a)}
-          style={{ fontSize: 10, padding: '3px 10px', border: '1px dashed #7c3aed', borderRadius: 5,
-                   color: '#7c3aed', background: addOpen ? '#faf8ff' : 'transparent', cursor: 'pointer', fontWeight: 600 }}>
-          + Ajouter
-        </button>
-        {addOpen && (
-          <div style={{ position: 'absolute', left: 0, top: '110%', zIndex: 300, background: '#fff',
-                        border: '1px solid #e5e7eb', borderRadius: 8,
-                        boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: 250, padding: 6 }}>
-            {available.length === 0 ? (
-              <div style={{ padding: '6px 10px', fontSize: 10, color: '#9ca3af' }}>
-                Tous les équipements sont déjà ajoutés
-              </div>
-            ) : available.map(t => {
-              const libKv = libOverrides[t.id] ?? t.kvDefault
-              const long = t.label.length > 32
-              return (
-                <div key={t.id} onClick={() => add(t.id)}
-                  style={{ padding: '5px 10px', fontSize: 10.5, cursor: 'pointer', borderRadius: 5,
-                           display: 'flex', flexDirection: long ? 'column' : 'row',
-                           alignItems: long ? 'flex-start' : 'baseline', gap: long ? 1 : 6 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#faf8ff')}
-                  onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                  <span>{t.label}</span>
-                  <span style={{ fontSize: 9.5, color: '#9ca3af', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                    Kv = {libKv ?? '—'}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
     </div>
   )
 }
@@ -498,7 +248,7 @@ function ValvePanel({ valve, onUpdate, valveKvResult, activeCalcId, segToCol }) 
               <Row label="Débit" value={r.Q != null ? `${sf(r.Q, 3)} m³/h` : '—'} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
                 padding: '3px 0', borderBottom: '1px solid #f3f4f6', fontSize: 11 }}>
-                <span style={{ color: '#6b7280' }}>ΔP depuis Production ECS</span>
+                <span style={{ color: '#6b7280' }}>ΔP depuis {r.sourceLabel}</span>
                 <span style={{ fontWeight: 500, color: '#111827', fontFamily: 'ui-monospace, monospace' }}>
                   {fmtBar(r.branchDp)}
                 </span>
@@ -524,7 +274,7 @@ function ValvePanel({ valve, onUpdate, valveKvResult, activeCalcId, segToCol }) 
                 <span style={{ color: '#6b7280' }}>ΔP max à la jonction</span>
                 <div style={{ textAlign: 'right' }}>
                   <span style={{ fontWeight: 500, color: '#111827', fontFamily: 'ui-monospace, monospace' }}>{fmtBar(r.referenceDp)}</span>
-                  <div style={{ fontSize: 9, color: '#9ca3af' }}>depuis Production ECS</div>
+                  <div style={{ fontSize: 9, color: '#9ca3af' }}>depuis {r.sourceLabel}</div>
                 </div>
               </div>
               {r.nValves > 1 && (
@@ -540,20 +290,21 @@ function ValvePanel({ valve, onUpdate, valveKvResult, activeCalcId, segToCol }) 
   )
 }
 
-function ChaufferiePanel({ chaufferie, onChange, levels }) {
+function ChaufferiePanel({ chaufferie, onChange, levels, isChauffage = false }: { chaufferie: any; onChange: any; levels: any[]; isChauffage?: boolean }) {
   const set = (key, val) => onChange({ ...chaufferie, [key]: val })
   const width  = Math.round(chaufferie.x2 - chaufferie.x1)
   const height = Math.round(chaufferie.height)
+  const panelTitle = isChauffage ? 'Chaufferie' : 'Production ECS'
 
   return (
     <div className="rp-section">
-      <h3 className="rp-title">Local ECS</h3>
+      <h3 className="rp-title">{panelTitle}</h3>
 
       <label className="lp-checkbox-label" style={{ marginBottom: 8 }}>
         <input type="checkbox"
           checked={!!chaufferie.enabled}
           onChange={e => set('enabled', e.target.checked)} />
-        <span style={{ fontSize: 11, color: '#374151' }}>Afficher le local ECS</span>
+        <span style={{ fontSize: 11, color: '#374151' }}>Afficher {isChauffage ? 'la chaufferie' : 'la production ECS'}</span>
       </label>
 
       <Field label="Niveau">
@@ -587,7 +338,42 @@ function ChaufferiePanel({ chaufferie, onChange, levels }) {
             background: '#fef2f2', color: '#dc2626',
             border: '1px solid #fecaca', borderRadius: 5, cursor: 'pointer',
           }}>
-          Supprimer le local ECS
+          Supprimer {isChauffage ? 'la chaufferie' : 'la production ECS'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function LocalZonePanel({ zone, label, onClose, onChange, onDelete, levels }: { zone: any; label: string; onClose?: string; onChange: any; onDelete: any; levels: any[] }) {
+  const set = (key, val) => onChange({ ...zone, [key]: val })
+  const width  = Math.round(zone.x2 - zone.x1)
+  const height = Math.round(zone.height)
+  return (
+    <div className="rp-section">
+      <h3 className="rp-title">{label}</h3>
+      <label className="lp-checkbox-label" style={{ marginBottom: 8 }}>
+        <input type="checkbox" checked={!!zone.enabled} onChange={e => set('enabled', e.target.checked)} />
+        <span style={{ fontSize: 11, color: '#374151' }}>Afficher</span>
+      </label>
+      <Field label="Niveau">
+        <select value={zone.levelId ?? ''} onChange={e => set('levelId', e.target.value)}>
+          {levels.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
+      </Field>
+      <Field label="Largeur" unit="px">
+        <NumInput min={20} step={10} value={width}
+          onChange={v => { const w = Math.max(20, v ?? 20); set('x2', zone.x1 + w) }} />
+      </Field>
+      <Field label="Hauteur" unit="px">
+        <NumInput min={20} step={10} value={height}
+          onChange={v => set('height', Math.max(20, v ?? 20))} />
+      </Field>
+      <div style={{ marginTop: 16, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+        <button onClick={onDelete}
+          style={{ width: '100%', padding: '6px 0', fontSize: 12, fontWeight: 600,
+            background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 5, cursor: 'pointer' }}>
+          Supprimer {onClose ?? label.toLowerCase()}
         </button>
       </div>
     </div>
@@ -669,7 +455,19 @@ interface RightPanelProps {
   groupDisplayNames?: any
   locauxEF?: any[]; onLocauxEFChange: any
   selectedLocalEFId?: string | null; onSelectedLocalEFChange: any
+  locauxECS?: any[]; onLocauxECSChange: any
+  selectedLocalECSId?: string | null; onSelectedLocalECSChange: any
+  locauxChauffage?: any[]; onLocauxChauffageChange: any
+  selectedLocalChauffageId?: string | null; onSelectedLocalChauffageChange: any
   chauffageFlows?: any; chauffageParams?: any; onChauffageParamsChange?: any; chauffageThermal?: any
+  eauGlaceeFlows?: any; eauGlaceeParams?: any; onEauGlaceeParamsChange?: any; eauGlaceeThermal?: any
+  eauGlaceePumpHMT?: Map<string, any>
+  eauGlaceeSplitCumDp?: any
+  mixingNodes?: Set<string>
+  chauffagePumpHMT?: Map<string, any>
+  chauffageSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
+  onShowCriticalPath?: (segIds: string[]) => void
+  pumpCriticalMap?: Map<string, { critDp: number | null; criticalSegIds: Set<string> }> | null
 }
 
 export default function RightPanel({
@@ -687,16 +485,26 @@ export default function RightPanel({
   groupDisplayNames = null,
   locauxEF = [], onLocauxEFChange,
   selectedLocalEFId = null, onSelectedLocalEFChange,
+  locauxECS = [], onLocauxECSChange,
+  selectedLocalECSId = null, onSelectedLocalECSChange,
+  locauxChauffage = [], onLocauxChauffageChange,
+  selectedLocalChauffageId = null, onSelectedLocalChauffageChange,
   chauffageFlows, chauffageParams, onChauffageParamsChange, chauffageThermal,
+  eauGlaceeFlows, eauGlaceeParams, onEauGlaceeParamsChange, eauGlaceeThermal,
+  eauGlaceePumpHMT, eauGlaceeSplitCumDp,
+  mixingNodes, chauffagePumpHMT, chauffageSplitCumDp, onShowCriticalPath,
+  pumpCriticalMap = null,
 }: RightPanelProps) {
   const [resultsView, setResultsView] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
 
+  const { isChauffage: _isChauffage } = getModeFlags(activeCalcId)
   if (editChaufferie && chaufferie?.placed) {
     return (
       <ChaufferiePanel
         chaufferie={chaufferie}
         onChange={onChaufferieChange}
         levels={levels ?? []}
+        isChauffage={_isChauffage}
       />
     )
   }
@@ -708,6 +516,30 @@ export default function RightPanel({
         lef={selectedLEF}
         onChange={updated => onLocauxEFChange?.((locauxEF ?? []).map(l => l.id === updated.id ? updated : l))}
         onDelete={() => { onLocauxEFChange?.((locauxEF ?? []).filter(l => l.id !== selectedLocalEFId)); onSelectedLocalEFChange?.(null) }}
+        levels={levels ?? []}
+      />
+    )
+  }
+
+  const selectedLECS = selectedLocalECSId ? (locauxECS ?? []).find(l => l.id === selectedLocalECSId) : null
+  if (selectedLECS) {
+    return (
+      <LocalZonePanel
+        zone={selectedLECS} label="Local ECS" onClose="le local ECS"
+        onChange={updated => onLocauxECSChange?.((locauxECS ?? []).map(l => l.id === updated.id ? updated : l))}
+        onDelete={() => { onLocauxECSChange?.((locauxECS ?? []).filter(l => l.id !== selectedLocalECSId)); onSelectedLocalECSChange?.(null) }}
+        levels={levels ?? []}
+      />
+    )
+  }
+
+  const selectedLCh = selectedLocalChauffageId ? (locauxChauffage ?? []).find(l => l.id === selectedLocalChauffageId) : null
+  if (selectedLCh) {
+    return (
+      <LocalZonePanel
+        zone={selectedLCh} label="Local chauffage" onClose="le local chauffage"
+        onChange={updated => onLocauxChauffageChange?.((locauxChauffage ?? []).map(l => l.id === updated.id ? updated : l))}
+        onDelete={() => { onLocauxChauffageChange?.((locauxChauffage ?? []).filter(l => l.id !== selectedLocalChauffageId)); onSelectedLocalChauffageChange?.(null) }}
         levels={levels ?? []}
       />
     )
@@ -767,7 +599,7 @@ export default function RightPanel({
       allSegs={segments} levels={levels} lineYs={lineYs}
       columns={columns} columnXs={columnXs} chaufferie={chaufferie}
       points={points}
-      flowData={chauffageFlows?.get(seg.id) ?? networkFlows?.get(seg.id)}
+      flowData={chauffageFlows?.get(seg.id) ?? eauGlaceeFlows?.get(seg.id) ?? networkFlows?.get(seg.id)}
       globalParams={globalParams}
       thermalData={thermalResults?.segResults.get(seg.id)}
       chauffageThermal={chauffageThermal}
@@ -786,6 +618,7 @@ export default function RightPanel({
       segToCol={segToCol}
       flowDirections={flowDirections}
       groupDisplayNames={groupDisplayNames}
+      chauffageSplitCumDp={chauffageSplitCumDp}
     />
   )
   if (pt) {
@@ -794,7 +627,7 @@ export default function RightPanel({
       .map(s => ({
         id: s.id,
         name: getDisplayName(s, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(s.id), activeCalcId, roleMap, flowDirections),
-        flowRate: networkFlows?.get(s.id)?.flowRate ?? null,
+        flowRate: chauffageFlows?.get(s.id)?.flowRate ?? eauGlaceeFlows?.get(s.id)?.flowRate ?? networkFlows?.get(s.id)?.flowRate ?? null,
         T_to:     thermalResults?.segResults.get(s.id)?.T_to ?? null,
         type:     s.type,
       }))
@@ -831,6 +664,18 @@ export default function RightPanel({
         chauffageParams={chauffageParams}
         onChauffageParamsChange={onChauffageParamsChange}
         chauffageThermal={chauffageThermal}
+        eauGlaceeFlows={eauGlaceeFlows}
+        eauGlaceeParams={eauGlaceeParams}
+        onEauGlaceeParamsChange={onEauGlaceeParamsChange}
+        eauGlaceeThermal={eauGlaceeThermal}
+        eauGlaceePumpHMT={eauGlaceePumpHMT}
+        eauGlaceeSplitCumDp={eauGlaceeSplitCumDp}
+        networkFlows={networkFlows}
+        mixingNodes={mixingNodes}
+        chauffagePumpHMT={chauffagePumpHMT}
+        chauffageSplitCumDp={chauffageSplitCumDp}
+        onShowCriticalPath={onShowCriticalPath}
+        pumpCriticalMap={pumpCriticalMap}
       />
     )
   }

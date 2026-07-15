@@ -10,8 +10,8 @@ import { CalcFluidTabs, getAutoCalcId, getCalcLabel, getFluidLabel, getNetworkLa
 import NetworkSetupCard from './components/NetworkSetupCard'
 import { DEFAULT_MATERIALS } from './data/materials'
 import { computeFlowDirections, computeFlowDirectionsEF } from './utils/flowDirection'
-import { computeFlowDirectionsChauffage, computeChauffageFlows, computeChauffageThermalSimple } from './utils/chauffageCalc'
-import { DEFAULT_CHAUFFAGE_PARAMS } from './utils/projectBuilder'
+import { computeFlowDirectionsChauffage, computeChauffageFlows, computeChauffageThermalSimple, detectMixingNodes, recomputeRetourTemperatures, computeChauffagePumpHMT, computeChauffageSplitCumDp, type PumpHMTResult } from './utils/chauffageCalc'
+import { DEFAULT_CHAUFFAGE_PARAMS, DEFAULT_EAU_GLACEE_PARAMS } from './utils/projectBuilder'
 import { buildECSFlowRows, buildFlowRowsEF, buildChauffageFlowRows } from './utils/tableOrder'
 import { buildECSDistances } from './utils/pointLocation'
 import { getDisplayGroupNames } from './utils/naming'
@@ -19,21 +19,19 @@ import { computeNetworkFlows } from './utils/flowCalc'
 import { computeThermal } from './utils/thermalCalc'
 import { computeAlimentationResults } from './utils/alimentationCalc'
 import { computeSegPdc, computePresSourceECS, computePresSourceECSStatic, computeAmontResults, DEFAULT_PDC_PARAMS, DEFAULT_PDC_PARAMS_ALIM_ECS, DEFAULT_PDC_PARAMS_ALIM_EF, waterDensity } from './utils/pdcCalc'
-import { DEFAULT_GLOBAL_PARAMS, DEFAULT_ALIMENTATION_PARAMS, DEFAULT_LEVELS, DEFAULT_LINE_YS, DEFAULT_COLUMNS, DEFAULT_COLUMN_XS, DEFAULT_CHAUFFERIE, resolveAlimentationParams, initProject, buildFluidSetupProject } from './utils/projectBuilder'
+import { DEFAULT_GLOBAL_PARAMS, DEFAULT_ALIMENTATION_PARAMS, DEFAULT_LEVELS, DEFAULT_LINE_YS, DEFAULT_COLUMNS, DEFAULT_COLUMN_XS, DEFAULT_CHAUFFERIE, DEFAULT_DISPLAY_PREFS, DEFAULT_MATERIALS_CHAUFFAGE, resolveAlimentationParams, initProject, buildFluidSetupProject } from './utils/projectBuilder'
+import { SettingsModal } from './components/SettingsModal'
 import { getNodeCote } from './utils/coteCalc'
 import { computeCumDp, computeCumDpAlim } from './utils/pdcCumul'
-import { computeValveKvs, computeValveKvsAlim } from './utils/valveKv'
+import { partitionNetworkByProduction } from './utils/networkPartition'
+import { computeValveKvs, computeValveKvsAlim, computeValveKvsChauffage } from './utils/valveKv'
 import ResultsTable from './components/ResultsTable'
-import { PipeIcon, InsulatedPipeIcon, FaucetIcon, FaucetsGroupIcon, GaugeIcon, BuildingFloorsIcon } from './components/icons'
+import { PipeIcon, InsulatedPipeIcon, FaucetIcon, FaucetsGroupIcon, GaugeIcon, BuildingFloorsIcon, GearIcon } from './components/icons'
 import { uid } from './utils/idGen'
 import { findMidpointLevelIndexAt } from './utils/levelUtils'
-import { LOCAL_W, LOCAL_GAP, expandZone, removeGapColumn, removeRegularColumn, moveGaine, adjustPPZone, removeGroupeBranch } from './utils/projectActions'
+import { LOCAL_W, LOCAL_GAP, COL_PIPE_W, COL_LOCAL_OFFSET, expandZone, removeGapColumn, removeRegularColumn, moveGaine, adjustPPZone, removeGroupeBranch } from './utils/projectActions'
 import { useVariantHistory } from './hooks/useProjectHistory'
 import './App.css'
-
-const COL_LOCAL_OFFSET = 333
-const COL_PIPE_W = 320
-const COL_SEP_DEFAULT = 160
 const snapG = v => Math.round(v / 10) * 10
 
 const CANVAS_DISPLAY_RESET = { nomTroncon: false, length: false, material: false, dn: false, insulation: false, debit: false, vitesse: false, temperatureNoeud: false, deltaT: false, equipment: false, dpTroncon: false, dpNoeud: false, pressionDispo: false, pressionStat: false }
@@ -41,9 +39,10 @@ const CANVAS_DISPLAY_RESET = { nomTroncon: false, length: false, material: false
 // ── Undo/redo + variants store ─────────────────────────
 
 const FLUID_FALLBACKS: Record<FluidId, FluidId[]> = {
-  'ecs':       ['ef', 'chauffage'],
-  'ef':        ['ecs', 'chauffage'],
-  'chauffage': ['ecs', 'ef'],
+  'ecs':       ['ef', 'chauffage', 'eauglacee'],
+  'ef':        ['ecs', 'chauffage', 'eauglacee'],
+  'chauffage': ['ecs', 'ef', 'eauglacee'],
+  'eauglacee': ['ecs', 'ef', 'chauffage'],
 }
 
 export default function App() {
@@ -58,6 +57,7 @@ export default function App() {
   const [activeFluidId,     setActiveFluidId]     = useState<FluidId | null>(null)
   const [activeCalcId,      setActiveCalcId]      = useState<CalcMode | null>(null)
   const [fitViewRequest, setFitViewRequest] = useState(1)
+  const [showSettings,      setShowSettings]      = useState(false)
 
   // Sauvegarde d'état par type de réseau : fluidId → { state, calcId }
   const fluidStashRef = useRef(new Map<FluidId, { state: any; calcId: CalcMode | null }>())
@@ -66,55 +66,7 @@ export default function App() {
 
   const [pendingSetup, setPendingSetup] = useState(true)
 
-  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, hasPdc } = getModeFlags(activeCalcId)
-
-  // Sens d'écoulement par tronçon — recalculé à chaque modification du réseau
-  const flowDirections = useMemo(
-    () => isChauffage
-      ? computeFlowDirectionsChauffage(project.segments, project.points)
-      : isAlimEF
-        ? computeFlowDirectionsEF(project.segments, project.points)
-        : computeFlowDirections(project.segments, project.points),
-    [project.segments, project.points, activeCalcId]
-  )
-
-  const chauffageFlows = useMemo(
-    () => isChauffage
-      ? computeChauffageFlows(
-          project.segments, project.points, project.materialsECS,
-          project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS,
-          flowDirections
-        )
-      : new Map(),
-    [project.segments, project.points, project.materialsECS, project.chauffageParams, flowDirections, isChauffage]
-  )
-
-  const chauffageThermal = useMemo(() => {
-    if (!isChauffage) return null
-    return computeChauffageThermalSimple(
-      project.segments, project.points,
-      project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS,
-      flowDirections, chauffageFlows
-    )
-  }, [isChauffage, project.segments, project.points, project.chauffageParams,
-      flowDirections, chauffageFlows])
-
-  // Débits/vitesses résolus par loi des nœuds
-  const networkFlows = useMemo(
-    () => computeNetworkFlows(project.segments, project.points, project.materialsECS, flowDirections),
-    [project.segments, project.points, project.materialsECS, flowDirections]
-  )
-
-  // Températures et pertes thermiques propagées depuis la Production ECS
-  const thermalResults = useMemo(
-    () => computeThermal(
-      project.segments, project.points, project.materialsECS, project.insulations,
-      flowDirections, networkFlows,
-      project.levels, project.lineYs, project.globalParams
-    ),
-    [project.segments, project.points, project.materialsECS, project.insulations,
-     flowDirections, networkFlows, project.levels, project.lineYs, project.globalParams]
-  )
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, isEauGlacee, hasPdc } = getModeFlags(activeCalcId)
 
   const segIsSousSolMap = useMemo(() => {
     const map = new Map<string, boolean>()
@@ -127,14 +79,275 @@ export default function App() {
     return map
   }, [project.segments, project.levels, project.lineYs])
 
-  const alimentationResultsECS = useMemo(
-    () => computeAlimentationResults(
+  // ── Partitionnement multi-production ECS (bouclage et alimentation) ───────
+  const ecsPartitionResult = useMemo(
+    () => (isBouclage || isAlimECS)
+      ? partitionNetworkByProduction(project.segments, project.points)
+      : null,
+    [isBouclage, isAlimECS, project.segments, project.points]
+  )
+
+  // ── Partitionnement multi-production Chauffage ────────────────────────────
+  const chauffagePartitionResult = useMemo(
+    () => isChauffage
+      ? partitionNetworkByProduction(project.segments, project.points, 'productionChauffage')
+      : null,
+    [isChauffage, project.segments, project.points]
+  )
+
+  // ── Partitionnement multi-production Eau glacée ───────────────────────────
+  const eauGlaceePartitionResult = useMemo(
+    () => isEauGlacee
+      ? partitionNetworkByProduction(project.segments, project.points, 'productionEauGlacee')
+      : null,
+    [isEauGlacee, project.segments, project.points]
+  )
+
+  // Pré-calcul par partition pour le mode multi-production ECS (bouclage et alimentation)
+  const multiECSPreData = useMemo(() => {
+    if ((!isBouclage && !isAlimECS) || !ecsPartitionResult || ecsPartitionResult.partitions.length <= 1) return null
+
+    const perPartition = ecsPartitionResult.partitions.map(part => {
+      const fd = computeFlowDirections(part.segments, part.points)
+      let nf = new Map<string, any>()
+      let th: any = { segResults: new Map<string, any>(), nodeTemps: new Map<string, number>() }
+      let alimentationResults = new Map<string, any>()
+      let totalQpM3h = 0
+
+      if (isBouclage) {
+        nf = computeNetworkFlows(part.segments, part.points, project.materialsECS, fd)
+        th = computeThermal(
+          part.segments, part.points, project.materialsECS, project.insulations,
+          fd, nf, project.levels, project.lineYs, project.globalParams,
+        )
+      }
+      if (isAlimECS) {
+        alimentationResults = computeAlimentationResults(
+          part.segments, part.points,
+          resolveAlimentationParams(project.alimentationParamsECS),
+          fd, segIsSousSolMap,
+        )
+        const prodECS = part.points.find((p: any) => p.type === 'productionECS')
+        for (const seg of part.segments) {
+          const dir = fd.get(seg.id)
+          if (dir?.fromId === prodECS?.id) {
+            const ar = alimentationResults.get(seg.id)
+            if (ar?.flowRateForPdc) totalQpM3h += ar.flowRateForPdc
+          }
+        }
+        totalQpM3h *= 3.6
+      }
+
+      const { rows, roleMap } = (() => {
+        const res = buildECSFlowRows(
+          part.segments, part.points, fd,
+          project.columns, project.columnXs, project.levels, project.lineYs,
+          isBouclage ? 'bouclage-ecs' : 'alimentation-ecs',
+        )
+        return Array.isArray(res) ? { rows: [], roleMap: new Map() } : res
+      })()
+      return { prodId: part.prodId, fd, nf, th, alimentationResults, totalQpM3h, rows, roleMap }
+    })
+
+    const mergedFD          = new Map<string, any>()
+    const mergedNF          = new Map<string, any>()
+    const mergedTH          = { segResults: new Map<string, any>(), nodeTemps: new Map<string, number>() }
+    const mergedAlimResults = new Map<string, any>()
+
+    for (const p of perPartition) {
+      for (const [k, v] of p.fd) mergedFD.set(k, v)
+      if (isBouclage) {
+        for (const [k, v] of p.nf) mergedNF.set(k, v)
+        for (const [k, v] of (p.th.segResults ?? [])) mergedTH.segResults.set(k, v)
+        for (const [k, v] of (p.th.nodeTemps ?? [])) mergedTH.nodeTemps.set(k, v)
+      }
+      if (isAlimECS) {
+        for (const [k, v] of p.alimentationResults) mergedAlimResults.set(k, v)
+      }
+    }
+
+    return { perPartition, mergedFD, mergedNF, mergedTH, mergedAlimResults }
+  }, [isBouclage, isAlimECS, ecsPartitionResult, project.materialsECS, project.insulations,
+      project.levels, project.lineYs, project.globalParams, project.columns, project.columnXs,
+      project.alimentationParamsECS, segIsSousSolMap])
+
+  // Pré-calcul par partition pour le mode multi-production Chauffage
+  const multiChauffagePreData = useMemo(() => {
+    if (!isChauffage || !chauffagePartitionResult || chauffagePartitionResult.partitions.length <= 1) return null
+    const mats     = project.materialsChauffage ?? DEFAULT_MATERIALS_CHAUFFAGE
+    const chParams = project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS
+
+    const perPartition = chauffagePartitionResult.partitions.map((part: any) => {
+      const fd      = computeFlowDirectionsChauffage(part.segments, part.points)
+      const mixing  = detectMixingNodes(part.points, part.segments, fd)
+      const flows   = computeChauffageFlows(part.segments, part.points, mats, chParams, fd, mixing)
+      const thermal = computeChauffageThermalSimple(part.segments, part.points, chParams, fd, flows, mixing)
+      recomputeRetourTemperatures(thermal, flows, part.segments, part.points, fd, chParams, mixing)
+      const { rows, roleMap } = (() => {
+        const res = buildChauffageFlowRows(
+          part.segments, part.points, fd,
+          project.columns, project.columnXs, project.levels, project.lineYs, mixing,
+        )
+        return Array.isArray(res) ? { rows: [], roleMap: new Map() } : res as any
+      })()
+      return { prodId: part.prodId, fd, mixing, flows, thermal, rows, roleMap }
+    })
+
+    const mergedFD      = new Map<string, any>()
+    const mergedMixing  = new Set<string>()
+    const mergedFlows   = new Map<string, any>()
+    const mergedThermal = { segResults: new Map<string, any>(), nodeRetourT: new Map<string, number | null>() }
+
+    for (const p of perPartition) {
+      for (const [k, v] of p.fd)    mergedFD.set(k, v)
+      for (const id of p.mixing)    mergedMixing.add(id)
+      for (const [k, v] of p.flows) mergedFlows.set(k, v)
+      if (p.thermal?.segResults) for (const [k, v] of p.thermal.segResults) mergedThermal.segResults.set(k, v)
+      if (p.thermal?.nodeRetourT) for (const [k, v] of p.thermal.nodeRetourT) mergedThermal.nodeRetourT.set(k, v)
+    }
+
+    return { perPartition, mergedFD, mergedMixing, mergedFlows, mergedThermal }
+  }, [isChauffage, chauffagePartitionResult, project.materialsChauffage, project.chauffageParams,
+      project.columns, project.columnXs, project.levels, project.lineYs])
+
+  // Pré-calcul par partition pour le mode multi-production Eau glacée
+  const multiEauGlaceePreData = useMemo(() => {
+    if (!isEauGlacee || !eauGlaceePartitionResult || eauGlaceePartitionResult.partitions.length <= 1) return null
+    const mats    = project.materialsEauGlacee ?? DEFAULT_MATERIALS_CHAUFFAGE
+    const egParams = project.eauGlaceeParams ?? DEFAULT_EAU_GLACEE_PARAMS
+
+    const perPartition = eauGlaceePartitionResult.partitions.map((part: any) => {
+      const fd      = computeFlowDirectionsChauffage(part.segments, part.points)
+      const mixing  = detectMixingNodes(part.points, part.segments, fd)
+      const flows   = computeChauffageFlows(part.segments, part.points, mats, egParams, fd, mixing)
+      const thermal = computeChauffageThermalSimple(part.segments, part.points, egParams, fd, flows, mixing)
+      recomputeRetourTemperatures(thermal, flows, part.segments, part.points, fd, egParams, mixing)
+      const { rows, roleMap } = (() => {
+        const res = buildChauffageFlowRows(
+          part.segments, part.points, fd,
+          project.columns, project.columnXs, project.levels, project.lineYs, mixing,
+        )
+        return Array.isArray(res) ? { rows: [], roleMap: new Map() } : res as any
+      })()
+      return { prodId: part.prodId, fd, mixing, flows, thermal, rows, roleMap }
+    })
+
+    const mergedFD      = new Map<string, any>()
+    const mergedMixing  = new Set<string>()
+    const mergedFlows   = new Map<string, any>()
+    const mergedThermal = { segResults: new Map<string, any>(), nodeRetourT: new Map<string, number | null>() }
+
+    for (const p of perPartition) {
+      for (const [k, v] of p.fd)    mergedFD.set(k, v)
+      for (const id of p.mixing)    mergedMixing.add(id)
+      for (const [k, v] of p.flows) mergedFlows.set(k, v)
+      if (p.thermal?.segResults) for (const [k, v] of p.thermal.segResults) mergedThermal.segResults.set(k, v)
+      if (p.thermal?.nodeRetourT) for (const [k, v] of p.thermal.nodeRetourT) mergedThermal.nodeRetourT.set(k, v)
+    }
+
+    return { perPartition, mergedFD, mergedMixing, mergedFlows, mergedThermal }
+  }, [isEauGlacee, eauGlaceePartitionResult, project.materialsEauGlacee, project.eauGlaceeParams,
+      project.columns, project.columnXs, project.levels, project.lineYs])
+
+  // Sens d'écoulement par tronçon — recalculé à chaque modification du réseau
+  const flowDirections = useMemo(
+    () => {
+      if (multiECSPreData) return multiECSPreData.mergedFD
+      if (multiChauffagePreData) return multiChauffagePreData.mergedFD
+      if (multiEauGlaceePreData) return multiEauGlaceePreData.mergedFD
+      return (isChauffage || isEauGlacee)
+        ? computeFlowDirectionsChauffage(project.segments, project.points)
+        : isAlimEF
+          ? computeFlowDirectionsEF(project.segments, project.points)
+          : computeFlowDirections(project.segments, project.points)
+    },
+    [multiECSPreData, multiChauffagePreData, multiEauGlaceePreData, isChauffage, isEauGlacee, isAlimEF, project.segments, project.points, activeCalcId]
+  )
+
+  const mixingNodes = useMemo(
+    () => {
+      if (!isChauffage && !isEauGlacee) return new Set<string>()
+      if (multiChauffagePreData) return multiChauffagePreData.mergedMixing
+      if (multiEauGlaceePreData) return multiEauGlaceePreData.mergedMixing
+      return flowDirections
+        ? detectMixingNodes(project.points, project.segments, flowDirections)
+        : new Set<string>()
+    },
+    [isChauffage, isEauGlacee, multiChauffagePreData, multiEauGlaceePreData, project.points, project.segments, flowDirections]
+  )
+
+  const activeMaterials = isChauffage
+    ? (project.materialsChauffage ?? DEFAULT_MATERIALS_CHAUFFAGE)
+    : isEauGlacee
+      ? (project.materialsEauGlacee ?? DEFAULT_MATERIALS_CHAUFFAGE)
+      : isAlimEF
+        ? (project.materialsEF ?? DEFAULT_MATERIALS)
+        : project.materialsECS
+
+  const { chauffageFlows, chauffageThermal } = useMemo(() => {
+    if (!isChauffage) return { chauffageFlows: new Map<string, any>(), chauffageThermal: null }
+    if (multiChauffagePreData) return { chauffageFlows: multiChauffagePreData.mergedFlows, chauffageThermal: multiChauffagePreData.mergedThermal }
+    const flows = computeChauffageFlows(
+      project.segments, project.points, activeMaterials,
+      project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS,
+      flowDirections, mixingNodes
+    )
+    const thermal = computeChauffageThermalSimple(
       project.segments, project.points,
-      resolveAlimentationParams(project.alimentationParamsECS),
-      flowDirections,
-      segIsSousSolMap
-    ),
-    [project.segments, project.points, project.alimentationParamsECS, flowDirections, segIsSousSolMap]
+      project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS,
+      flowDirections, flows, mixingNodes
+    )
+    recomputeRetourTemperatures(thermal, flows, project.segments, project.points, flowDirections, project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS, mixingNodes)
+    return { chauffageFlows: flows, chauffageThermal: thermal }
+  }, [isChauffage, multiChauffagePreData, project.segments, project.points, activeMaterials,
+      project.chauffageParams, flowDirections, mixingNodes])
+
+  const { eauGlaceeFlows, eauGlaceeThermal } = useMemo(() => {
+    if (!isEauGlacee) return { eauGlaceeFlows: new Map<string, any>(), eauGlaceeThermal: null }
+    if (multiEauGlaceePreData) return { eauGlaceeFlows: multiEauGlaceePreData.mergedFlows, eauGlaceeThermal: multiEauGlaceePreData.mergedThermal }
+    const egParams = project.eauGlaceeParams ?? DEFAULT_EAU_GLACEE_PARAMS
+    const flows = computeChauffageFlows(
+      project.segments, project.points, activeMaterials, egParams, flowDirections, mixingNodes
+    )
+    const thermal = computeChauffageThermalSimple(
+      project.segments, project.points, egParams, flowDirections, flows, mixingNodes
+    )
+    recomputeRetourTemperatures(thermal, flows, project.segments, project.points, flowDirections, egParams, mixingNodes)
+    return { eauGlaceeFlows: flows, eauGlaceeThermal: thermal }
+  }, [isEauGlacee, multiEauGlaceePreData, project.segments, project.points, activeMaterials,
+      project.eauGlaceeParams, flowDirections, mixingNodes])
+
+  // Débits/vitesses résolus par loi des nœuds
+  const networkFlows = useMemo(
+    () => multiECSPreData
+      ? multiECSPreData.mergedNF
+      : computeNetworkFlows(project.segments, project.points, project.materialsECS, flowDirections),
+    [multiECSPreData, project.segments, project.points, project.materialsECS, flowDirections]
+  )
+
+  // Températures et pertes thermiques propagées depuis la Production ECS
+  const thermalResults = useMemo(
+    () => multiECSPreData
+      ? multiECSPreData.mergedTH
+      : computeThermal(
+          project.segments, project.points, project.materialsECS, project.insulations,
+          flowDirections, networkFlows,
+          project.levels, project.lineYs, project.globalParams
+        ),
+    [multiECSPreData, project.segments, project.points, project.materialsECS, project.insulations,
+     flowDirections, networkFlows, project.levels, project.lineYs, project.globalParams]
+  )
+
+  const alimentationResultsECS = useMemo(
+    () => (isAlimECS && multiECSPreData)
+      ? multiECSPreData.mergedAlimResults
+      : computeAlimentationResults(
+          project.segments, project.points,
+          resolveAlimentationParams(project.alimentationParamsECS),
+          flowDirections,
+          segIsSousSolMap
+        ),
+    [isAlimECS, multiECSPreData, project.segments, project.points, project.alimentationParamsECS, flowDirections, segIsSousSolMap]
   )
 
   const alimentationResultsEF = useMemo(
@@ -180,20 +393,42 @@ export default function App() {
 
   const pdcResults = useMemo(() => {
     const results = new Map()
-    if (!isBouclage && !isAlimECS && !isAlimEF && !isChauffage) return results
+    if (!isBouclage && !isAlimECS && !isAlimEF && !isChauffage && !isEauGlacee) return results
 
     if (isChauffage) {
-      const pdcParams   = project.pdcParamsChauffage ?? DEFAULT_PDC_PARAMS
+      const pdcParams   = { ...(project.pdcParamsChauffage ?? DEFAULT_PDC_PARAMS), methodeReg: 'darcy-colebrook' as const }
       const chParams    = project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS
       const prodCH      = project.points.find((p: any) => p.type === 'productionChauffage')
-      const T_aller     = prodCH?.T_depart_override ?? chParams.T_depart ?? 70
-      const T_retour    = T_aller - (chParams.deltaT_reseau ?? 20)
+      const T_aller_def = prodCH?.T_depart_override ?? chParams.T_depart ?? 70
+      const T_retour_def = T_aller_def - (chParams.deltaT_reseau ?? 20)
       for (const seg of project.segments) {
         const flowEntry = chauffageFlows.get(seg.id)
         const flowRate  = flowEntry?.flowRate ?? null
         const isRetour  = seg.type === 'retour' || seg.type === 'retour-ch'
-        const T         = isRetour ? T_retour : T_aller
-        const mat       = project.materialsECS.find((m: any) => m.id === seg.materialId)
+        const T_seg     = chauffageThermal?.segResults?.get(seg.id)?.T_from ?? null
+        const T         = T_seg != null ? T_seg : (isRetour ? T_retour_def : T_aller_def)
+        const mat       = activeMaterials.find((m: any) => m.id === seg.materialId)
+        const dnDef     = mat?.dns.find((d: any) => d.dn === seg.dn)
+        const di_mm     = seg.di_override ?? dnDef?.di ?? null
+        const result    = computeSegPdc(seg, pdcParams, flowRate, di_mm, T, mat)
+        if (result) results.set(seg.id, result)
+      }
+      return results
+    }
+
+    if (isEauGlacee) {
+      const pdcParams    = { ...(project.pdcParamsEauGlacee ?? DEFAULT_PDC_PARAMS), methodeReg: 'darcy-colebrook' as const }
+      const egParams     = project.eauGlaceeParams ?? DEFAULT_EAU_GLACEE_PARAMS
+      const prodEG       = project.points.find((p: any) => p.type === 'productionEauGlacee')
+      const T_aller_def  = prodEG?.T_depart_override ?? egParams.T_depart ?? 7
+      const T_retour_def = T_aller_def + (egParams.deltaT_reseau ?? 5)
+      for (const seg of project.segments) {
+        const flowEntry = eauGlaceeFlows.get(seg.id)
+        const flowRate  = flowEntry?.flowRate ?? null
+        const isRetour  = seg.type === 'retour'
+        const T_seg     = eauGlaceeThermal?.segResults?.get(seg.id)?.T_from ?? null
+        const T         = T_seg != null ? T_seg : (isRetour ? T_retour_def : T_aller_def)
+        const mat       = activeMaterials.find((m: any) => m.id === seg.materialId)
         const dnDef     = mat?.dns.find((d: any) => d.dn === seg.dn)
         const di_mm     = seg.di_override ?? dnDef?.di ?? null
         const result    = computeSegPdc(seg, pdcParams, flowRate, di_mm, T, mat)
@@ -207,7 +442,7 @@ export default function App() {
       : isAlimEF
         ? (project.pdcParamsAlimEF ?? DEFAULT_PDC_PARAMS_ALIM_EF)
         : (project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS)
-    const activeMats = isAlimEF ? (project.materialsEF ?? DEFAULT_MATERIALS) : project.materialsECS
+    const activeMats = activeMaterials
     const prodECS = project.points.find((p: any) => p.type === 'productionECS')
     const _rawT = prodECS?.T_depart_override ?? project.globalParams.T_depart ?? 60
     const T_depart_eff = typeof _rawT === 'number' && !isNaN(_rawT) ? _rawT : (parseFloat(String(_rawT)) || 60)
@@ -269,19 +504,52 @@ export default function App() {
     }
     return results
   }, [activeCalcId, project.segments, project.pdcParamsBouclageECS, project.pdcParamsChauffage,
-      project.pdcParamsAlimECS, project.pdcParamsAlimEF,
-      project.materialsECS, project.materialsEF,
-      project.globalParams, project.points, project.chauffageParams,
-      networkFlows, chauffageFlows, thermalResults, alimentationResultsECS, alimentationResultsEF])
+      project.pdcParamsAlimECS, project.pdcParamsAlimEF, project.pdcParamsEauGlacee,
+      project.materialsECS, project.materialsEF, project.materialsChauffage, project.materialsEauGlacee,
+      project.globalParams, project.points, project.chauffageParams, project.eauGlaceeParams,
+      networkFlows, chauffageFlows, chauffageThermal, eauGlaceeFlows, eauGlaceeThermal,
+      thermalResults, alimentationResultsECS, alimentationResultsEF])
 
-  const { rows: flowRows, roleMap } = useMemo(
-    () => isChauffage
-      ? buildChauffageFlowRows(project.segments, project.points, flowDirections,
-          project.columns, project.columnXs, project.levels, project.lineYs)
-      : buildECSFlowRows(project.segments, project.points, flowDirections,
-          project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId),
-    [project.segments, project.points, flowDirections,
-     project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId, isChauffage]
+  const { rows: flowRows, roleMap } = useMemo(() => {
+    if (isChauffage) {
+      if (multiChauffagePreData) {
+        const allRows: any[] = []
+        const mergedRM = new Map<any, any>()
+        for (const p of multiChauffagePreData.perPartition) {
+          allRows.push(...p.rows)
+          for (const [k, v] of (p.roleMap ?? [])) mergedRM.set(k, v)
+        }
+        return { rows: allRows, roleMap: mergedRM }
+      }
+      return buildChauffageFlowRows(project.segments, project.points, flowDirections,
+        project.columns, project.columnXs, project.levels, project.lineYs, mixingNodes) as any
+    }
+    if (isEauGlacee) {
+      if (multiEauGlaceePreData) {
+        const allRows: any[] = []
+        const mergedRM = new Map<any, any>()
+        for (const p of multiEauGlaceePreData.perPartition) {
+          allRows.push(...p.rows)
+          for (const [k, v] of (p.roleMap ?? [])) mergedRM.set(k, v)
+        }
+        return { rows: allRows, roleMap: mergedRM }
+      }
+      return buildChauffageFlowRows(project.segments, project.points, flowDirections,
+        project.columns, project.columnXs, project.levels, project.lineYs, mixingNodes) as any
+    }
+    if (multiECSPreData) {
+      const allRows: any[]          = []
+      const mergedRM = new Map<any, any>()
+      for (const p of multiECSPreData.perPartition) {
+        allRows.push(...p.rows)
+        for (const [k, v] of (p.roleMap ?? [])) mergedRM.set(k, v)
+      }
+      return { rows: allRows, roleMap: mergedRM }
+    }
+    return buildECSFlowRows(project.segments, project.points, flowDirections,
+      project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId) as any
+  }, [multiECSPreData, multiChauffagePreData, multiEauGlaceePreData, project.segments, project.points, flowDirections,
+      project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId, isChauffage, isEauGlacee, mixingNodes]
   ) as { rows: any[], roleMap: Map<any, any> }
 
   const efFlowRowsArr = useMemo(
@@ -341,22 +609,316 @@ export default function App() {
       : isAlimEF
         ? (hasAllerSegs && !hasArriveeEF ? 1 : 0)
         : (hasAllerRetour && !hasProdECS ? 1 : 0)
-    return conn + flow + missingProd
-  }, [project.segments, project.points, networkFlows, activeCalcId])
+    const connectedProds = (
+      ((isBouclage || isAlimECS) && ecsPartitionResult?.hasConnectedProductions) ||
+      (isChauffage && chauffagePartitionResult?.hasConnectedProductions)
+    ) ? 1 : 0
+    return conn + flow + missingProd + connectedProds
+  }, [project.segments, project.points, networkFlows, activeCalcId, isBouclage, isChauffage, ecsPartitionResult, chauffagePartitionResult])
 
   const [selectedAmontId, setSelectedAmontId] = useState<string | null>(null)
 
-  const pdcCumResults = useMemo(
-    () => isBouclage
-      ? computeCumDp(project.segments, project.points, flowDirections, pdcResults)
-      : isChauffage
-        ? computeCumDp(project.segments, project.points, flowDirections, pdcResults, 'productionChauffage')
-        : null,
-    [activeCalcId, project.segments, project.points, flowDirections, pdcResults]
-  )
+  // ── ΔP cumulées par partition ECS bouclage (multi-production) ────────────
+  const pdcCumResultsArr = useMemo(() => {
+    if (!multiECSPreData || !isBouclage || !ecsPartitionResult) return null
+    return multiECSPreData.perPartition.map((p: any, i: number) => {
+      const part = ecsPartitionResult.partitions[i]
+      if (!part) return null
+      return computeCumDp(part.segments, part.points, p.fd, pdcResults)
+    })
+  }, [multiECSPreData, isBouclage, ecsPartitionResult, pdcResults])
+
+  // ── ΔP cumulées par partition ECS alimentation (multi-production) ─────────
+  const alimPartitionPostPdc = useMemo(() => {
+    if (!isAlimECS || !multiECSPreData || !ecsPartitionResult) return null
+    const T   = project.globalParams?.T_depart ?? 60
+    const rho = waterDensity(T)
+    const nodeCotes = new Map<string, number>()
+    for (const pt of project.points) {
+      nodeCotes.set(pt.id, getNodeCote(pt, project.levels, project.lineYs).value)
+    }
+    return multiECSPreData.perPartition.map((p: any, i: number) => {
+      const part = ecsPartitionResult.partitions[i]
+      if (!part) return null
+      const presSource = computePresSourceECS(
+        project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS,
+        p.totalQpM3h,
+        project.materialsECS
+      )
+      const pdcCumAlim = computeCumDpAlim(
+        part.segments, part.points, p.fd, pdcResults,
+        presSource, nodeCotes, rho
+      )
+      return { prodId: p.prodId, totalQpM3h: p.totalQpM3h, pressionSource: presSource, pdcCumAlimResults: pdcCumAlim }
+    })
+  }, [isAlimECS, multiECSPreData, ecsPartitionResult, project.pdcParamsAlimECS, project.materialsECS,
+      project.globalParams, project.levels, project.lineYs, project.points, pdcResults])
+
+  // ── ecsFlowRowsArr : une entrée par production ECS (multi-production) ────
+  const ecsFlowRowsArr = useMemo(() => {
+    if (!multiECSPreData) return null
+    if (isBouclage) {
+      return multiECSPreData.perPartition.map((p: any, i: number) => ({
+        prodId:            p.prodId,
+        rows:              p.rows,
+        roleMap:           p.roleMap,
+        pdcCumResults:     pdcCumResultsArr?.[i] ?? null,
+        pdcCumAlimResults: null,
+      }))
+    }
+    if (isAlimECS) {
+      return multiECSPreData.perPartition.map((p: any, i: number) => ({
+        prodId:            p.prodId,
+        rows:              p.rows,
+        roleMap:           p.roleMap,
+        pdcCumResults:     null,
+        pdcCumAlimResults: alimPartitionPostPdc?.[i]?.pdcCumAlimResults ?? null,
+      }))
+    }
+    return null
+  }, [multiECSPreData, isBouclage, isAlimECS, pdcCumResultsArr, alimPartitionPostPdc])
+
+  // ── ΔP cumulées par partition Chauffage (multi-production) ────────────────
+  const chauffagePdcCumResultsArr = useMemo(() => {
+    if (!isChauffage || !multiChauffagePreData || !chauffagePartitionResult) return null
+    return multiChauffagePreData.perPartition.map((p: any, i: number) => {
+      const part = chauffagePartitionResult.partitions[i]
+      if (!part) return null
+      const emDps = new Map<string, number>()
+      for (const pt of part.points)
+        if (pt.type === 'emetteur') { const v = (pt.dp_emetteur ?? 0) + (pt.dp_vanne_th ?? 0); if (v > 0) emDps.set(pt.id, v) }
+      return computeCumDp(part.segments, part.points, p.fd, pdcResults, 'productionChauffage', emDps)
+    })
+  }, [isChauffage, multiChauffagePreData, chauffagePartitionResult, pdcResults])
+
+  // ── ΔP cumulées par partition Eau glacée (multi-production) ───────────────
+  const eauGlaceePdcCumResultsArr = useMemo(() => {
+    if (!isEauGlacee || !multiEauGlaceePreData || !eauGlaceePartitionResult) return null
+    return multiEauGlaceePreData.perPartition.map((p: any, i: number) => {
+      const part = eauGlaceePartitionResult.partitions[i]
+      if (!part) return null
+      const termDps = new Map<string, number>()
+      for (const pt of part.points)
+        if (pt.type === 'terminalFroid') { const v = (pt.dp_emetteur ?? 0) + (pt.dp_vanne_th ?? 0); if (v > 0) termDps.set(pt.id, v) }
+      return computeCumDp(part.segments, part.points, p.fd, pdcResults, 'productionEauGlacee', termDps)
+    })
+  }, [isEauGlacee, multiEauGlaceePreData, eauGlaceePartitionResult, pdcResults])
+
+  const pdcCumResults = useMemo(() => {
+    const mergeParts = (arr: any[]) => {
+      const merged = {
+        segCumDp:         new Map<string, number>(),
+        nodeCumDp:        new Map<string, number>(),
+        nodeIncoming:     new Map<string, any[]>(),
+        nodePostJunction: new Map<string, boolean>(),
+        segPostJunction:  new Map<string, boolean>(),
+        criticalSegIds:   new Set<string>(),
+        criticalLeafSegId: null as string | null,
+        criticalDp:       null as number | null,
+      }
+      let worstDp = -Infinity
+      for (const r of arr) {
+        if (!r) continue
+        for (const [k, v] of r.segCumDp)         merged.segCumDp.set(k, v)
+        for (const [k, v] of r.nodeCumDp)        merged.nodeCumDp.set(k, v)
+        for (const [k, v] of r.nodeIncoming)     merged.nodeIncoming.set(k, v)
+        for (const [k, v] of r.nodePostJunction) merged.nodePostJunction.set(k, v)
+        for (const [k, v] of r.segPostJunction)  merged.segPostJunction.set(k, v)
+        for (const id of r.criticalSegIds)        merged.criticalSegIds.add(id)
+        if ((r.criticalDp ?? -Infinity) > worstDp) {
+          worstDp = r.criticalDp ?? -Infinity
+          merged.criticalDp        = r.criticalDp
+          merged.criticalLeafSegId = r.criticalLeafSegId
+        }
+      }
+      return merged
+    }
+    if (isBouclage && pdcCumResultsArr) return mergeParts(pdcCumResultsArr)
+    if (isChauffage && chauffagePdcCumResultsArr) return mergeParts(chauffagePdcCumResultsArr)
+    if (isEauGlacee && eauGlaceePdcCumResultsArr) return mergeParts(eauGlaceePdcCumResultsArr)
+    if (isBouclage)
+      return computeCumDp(project.segments, project.points, flowDirections, pdcResults)
+    if (isChauffage) {
+      const emDps = new Map<string, number>()
+      for (const pt of project.points)
+        if (pt.type === 'emetteur') { const v = (pt.dp_emetteur ?? 0) + (pt.dp_vanne_th ?? 0); if (v > 0) emDps.set(pt.id, v) }
+      return computeCumDp(project.segments, project.points, flowDirections, pdcResults, 'productionChauffage', emDps)
+    }
+    if (isEauGlacee) {
+      const termDps = new Map<string, number>()
+      for (const pt of project.points)
+        if (pt.type === 'terminalFroid') { const v = (pt.dp_emetteur ?? 0) + (pt.dp_vanne_th ?? 0); if (v > 0) termDps.set(pt.id, v) }
+      return computeCumDp(project.segments, project.points, flowDirections, pdcResults, 'productionEauGlacee', termDps)
+    }
+    return null
+  }, [isBouclage, isChauffage, isEauGlacee, pdcCumResultsArr, chauffagePdcCumResultsArr, eauGlaceePdcCumResultsArr, project.segments, project.points, flowDirections, pdcResults])
+
+  const chauffagePumpHMT = useMemo(() => {
+    if (!isChauffage) return new Map()
+    if (multiChauffagePreData && chauffagePartitionResult) {
+      const merged = new Map<string, PumpHMTResult>()
+      multiChauffagePreData.perPartition.forEach((p: any, i: number) => {
+        if (!p.mixing || p.mixing.size === 0) return
+        const part = chauffagePartitionResult.partitions[i]
+        if (!part) return
+        const hmt = computeChauffagePumpHMT(part.segments, part.points, p.fd, pdcResults, p.mixing)
+        for (const [k, v] of hmt) merged.set(k, v)
+      })
+      return merged
+    }
+    return mixingNodes && mixingNodes.size > 0
+      ? computeChauffagePumpHMT(project.segments, project.points, flowDirections, pdcResults, mixingNodes)
+      : new Map()
+  }, [isChauffage, multiChauffagePreData, chauffagePartitionResult, project.segments, project.points, flowDirections, pdcResults, mixingNodes])
+
+  const eauGlaceePumpHMT = useMemo(() => {
+    if (!isEauGlacee) return new Map()
+    if (multiEauGlaceePreData && eauGlaceePartitionResult) {
+      const merged = new Map<string, PumpHMTResult>()
+      multiEauGlaceePreData.perPartition.forEach((p: any, i: number) => {
+        if (!p.mixing || p.mixing.size === 0) return
+        const part = eauGlaceePartitionResult.partitions[i]
+        if (!part) return
+        const hmt = computeChauffagePumpHMT(part.segments, part.points, p.fd, pdcResults, p.mixing)
+        for (const [k, v] of hmt) merged.set(k, v)
+      })
+      return merged
+    }
+    return mixingNodes && mixingNodes.size > 0
+      ? computeChauffagePumpHMT(project.segments, project.points, flowDirections, pdcResults, mixingNodes)
+      : new Map()
+  }, [isEauGlacee, multiEauGlaceePreData, eauGlaceePartitionResult, project.segments, project.points, flowDirections, pdcResults, mixingNodes])
+
+  const chauffageSplitCumDp = useMemo(() => {
+    if (!isChauffage) return null
+    if (multiChauffagePreData && chauffagePartitionResult) {
+      const merged = {
+        segCumDp:                new Map<string, number>(),
+        secondarySegIds:         new Set<string>(),
+        segPostJunction:         new Map<string, boolean>(),
+        criticalSegIds:          new Set<string>(),
+        segJunctionWinner:       new Map<string, string>(),
+        secondaryCriticalSegIds: new Set<string>(),
+        secondaryCriticalDp:     null as number | null,
+        criticalDp:              null as number | null,
+      }
+      let hasData = false
+      multiChauffagePreData.perPartition.forEach((p: any, i: number) => {
+        if (!p.mixing || p.mixing.size === 0) return
+        const part = chauffagePartitionResult.partitions[i]
+        if (!part) return
+        const split = computeChauffageSplitCumDp(part.segments, part.points, p.fd, pdcResults, p.mixing)
+        if (!split) return
+        hasData = true
+        for (const [k, v] of split.segCumDp)         merged.segCumDp.set(k, v)
+        for (const id of split.secondarySegIds)       merged.secondarySegIds.add(id)
+        for (const [k, v] of split.segPostJunction)   merged.segPostJunction.set(k, v)
+        for (const id of split.criticalSegIds)        merged.criticalSegIds.add(id)
+        for (const [k, v] of split.segJunctionWinner) merged.segJunctionWinner.set(k, v)
+        for (const id of split.secondaryCriticalSegIds) merged.secondaryCriticalSegIds.add(id)
+        if (split.secondaryCriticalDp != null &&
+            (merged.secondaryCriticalDp == null || split.secondaryCriticalDp > merged.secondaryCriticalDp))
+          merged.secondaryCriticalDp = split.secondaryCriticalDp
+        if (split.criticalDp != null &&
+            (merged.criticalDp == null || split.criticalDp > merged.criticalDp))
+          merged.criticalDp = split.criticalDp
+      })
+      return hasData ? merged : null
+    }
+    return mixingNodes && mixingNodes.size > 0
+      ? computeChauffageSplitCumDp(project.segments, project.points, flowDirections, pdcResults, mixingNodes)
+      : null
+  }, [isChauffage, multiChauffagePreData, chauffagePartitionResult, project.segments, project.points, flowDirections, pdcResults, mixingNodes])
+
+  const eauGlaceeSplitCumDp = useMemo(() => {
+    if (!isEauGlacee) return null
+    if (multiEauGlaceePreData && eauGlaceePartitionResult) {
+      const merged = {
+        segCumDp:                new Map<string, number>(),
+        secondarySegIds:         new Set<string>(),
+        segPostJunction:         new Map<string, boolean>(),
+        criticalSegIds:          new Set<string>(),
+        segJunctionWinner:       new Map<string, string>(),
+        secondaryCriticalSegIds: new Set<string>(),
+        secondaryCriticalDp:     null as number | null,
+        criticalDp:              null as number | null,
+      }
+      let hasData = false
+      multiEauGlaceePreData.perPartition.forEach((p: any, i: number) => {
+        if (!p.mixing || p.mixing.size === 0) return
+        const part = eauGlaceePartitionResult.partitions[i]
+        if (!part) return
+        const split = computeChauffageSplitCumDp(part.segments, part.points, p.fd, pdcResults, p.mixing)
+        if (!split) return
+        hasData = true
+        for (const [k, v] of split.segCumDp)         merged.segCumDp.set(k, v)
+        for (const id of split.secondarySegIds)       merged.secondarySegIds.add(id)
+        for (const [k, v] of split.segPostJunction)   merged.segPostJunction.set(k, v)
+        for (const id of split.criticalSegIds)        merged.criticalSegIds.add(id)
+        for (const [k, v] of split.segJunctionWinner) merged.segJunctionWinner.set(k, v)
+        for (const id of split.secondaryCriticalSegIds) merged.secondaryCriticalSegIds.add(id)
+        if (split.secondaryCriticalDp != null &&
+            (merged.secondaryCriticalDp == null || split.secondaryCriticalDp > merged.secondaryCriticalDp))
+          merged.secondaryCriticalDp = split.secondaryCriticalDp
+        if (split.criticalDp != null &&
+            (merged.criticalDp == null || split.criticalDp > merged.criticalDp))
+          merged.criticalDp = split.criticalDp
+      })
+      return hasData ? merged : null
+    }
+    return mixingNodes && mixingNodes.size > 0
+      ? computeChauffageSplitCumDp(project.segments, project.points, flowDirections, pdcResults, mixingNodes)
+      : null
+  }, [isEauGlacee, multiEauGlaceePreData, eauGlaceePartitionResult, project.segments, project.points, flowDirections, pdcResults, mixingNodes])
+
+  // ── chauffageFlowRowsArr : une entrée par production chauffage (multi-production) ─
+  const chauffageFlowRowsArr = useMemo(() => {
+    if (!isChauffage || !multiChauffagePreData || !chauffagePartitionResult) return null
+    return multiChauffagePreData.perPartition.map((p: any, i: number) => {
+      const part = chauffagePartitionResult.partitions[i]
+      const splitCumDp = (part && p.mixing && p.mixing.size > 0)
+        ? computeChauffageSplitCumDp(part.segments, part.points, p.fd, pdcResults, p.mixing)
+        : null
+      const pumpHMT = (part && p.mixing && p.mixing.size > 0)
+        ? computeChauffagePumpHMT(part.segments, part.points, p.fd, pdcResults, p.mixing)
+        : new Map<string, any>()
+      return {
+        prodId:              p.prodId,
+        rows:                p.rows,
+        roleMap:             p.roleMap,
+        pdcCumResults:       chauffagePdcCumResultsArr?.[i] ?? null,
+        chauffageSplitCumDp: splitCumDp,
+        chauffagePumpHMT:    pumpHMT,
+      }
+    })
+  }, [isChauffage, multiChauffagePreData, chauffagePartitionResult, chauffagePdcCumResultsArr, pdcResults])
+
+  const eauGlaceeFlowRowsArr = useMemo(() => {
+    if (!isEauGlacee || !multiEauGlaceePreData || !eauGlaceePartitionResult) return null
+    return multiEauGlaceePreData.perPartition.map((p: any, i: number) => {
+      const part = eauGlaceePartitionResult.partitions[i]
+      const splitCumDp = (part && p.mixing && p.mixing.size > 0)
+        ? computeChauffageSplitCumDp(part.segments, part.points, p.fd, pdcResults, p.mixing)
+        : null
+      const pumpHMT = (part && p.mixing && p.mixing.size > 0)
+        ? computeChauffagePumpHMT(part.segments, part.points, p.fd, pdcResults, p.mixing)
+        : new Map<string, any>()
+      return {
+        prodId:              p.prodId,
+        rows:                p.rows,
+        roleMap:             p.roleMap,
+        pdcCumResults:       eauGlaceePdcCumResultsArr?.[i] ?? null,
+        chauffageSplitCumDp: splitCumDp,
+        chauffagePumpHMT:    pumpHMT,
+      }
+    })
+  }, [isEauGlacee, multiEauGlaceePreData, eauGlaceePartitionResult, eauGlaceePdcCumResultsArr, pdcResults])
 
   const totalQpAlimM3h = useMemo(() => {
     if (!isAlimECS) return 0
+    if (multiECSPreData) {
+      return multiECSPreData.perPartition.reduce((sum: number, p: any) => sum + (p.totalQpM3h ?? 0), 0)
+    }
     const prodECS = project.points.find(p => p.type === 'productionECS')
     if (!prodECS) return 0
     let total = 0
@@ -367,8 +929,8 @@ export default function App() {
         if (ar?.flowRateForPdc) total += ar.flowRateForPdc
       }
     }
-    return total * 3.6  // L/s → m³/h
-  }, [activeCalcId, project.points, project.segments, flowDirections, alimentationResultsECS])
+    return total * 3.6
+  }, [activeCalcId, isAlimECS, multiECSPreData, project.points, project.segments, flowDirections, alimentationResultsECS])
 
   const pressionSourceAlimECS = useMemo(
     () => computePresSourceECS(project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS, totalQpAlimM3h, project.materialsECS),
@@ -387,6 +949,46 @@ export default function App() {
 
   const pdcCumAlimResults = useMemo(() => {
     if (!isAlimECS) return null
+
+    if (alimPartitionPostPdc) {
+      const merged = {
+        segCumDp:         new Map<string, number>(),
+        segCumDpFriction: new Map<string, number>(),
+        segDpStatic:      new Map<string, number>(),
+        segDeltaH:        new Map<string, number>(),
+        segCoteAmont:     new Map<string, number>(),
+        segCoteAval:      new Map<string, number>(),
+        segPressionAval:  new Map<string, number>(),
+        segPStatAval:     new Map<string, number>(),
+        nodePression:     new Map<string, number>(),
+        nodePStat:        new Map<string, number>(),
+        criticalDp:       null as number | null,
+        criticalSegIds:   new Set<string>(),
+      }
+      let worstDp = -Infinity
+      for (const p of alimPartitionPostPdc) {
+        if (!p) continue
+        const r = p.pdcCumAlimResults
+        if (!r) continue
+        for (const [k, v] of (r.segCumDp         ?? [])) merged.segCumDp.set(k, v)
+        for (const [k, v] of (r.segCumDpFriction  ?? [])) merged.segCumDpFriction.set(k, v)
+        for (const [k, v] of (r.segDpStatic       ?? [])) merged.segDpStatic.set(k, v)
+        for (const [k, v] of (r.segDeltaH         ?? [])) merged.segDeltaH.set(k, v)
+        for (const [k, v] of (r.segCoteAmont      ?? [])) merged.segCoteAmont.set(k, v)
+        for (const [k, v] of (r.segCoteAval       ?? [])) merged.segCoteAval.set(k, v)
+        for (const [k, v] of (r.segPressionAval   ?? [])) merged.segPressionAval.set(k, v)
+        for (const [k, v] of (r.segPStatAval      ?? [])) merged.segPStatAval.set(k, v)
+        for (const [k, v] of (r.nodePression      ?? [])) merged.nodePression.set(k, v)
+        for (const [k, v] of (r.nodePStat         ?? [])) merged.nodePStat.set(k, v)
+        for (const id of (r.criticalSegIds ?? [])) merged.criticalSegIds.add(id)
+        if ((r.criticalDp ?? -Infinity) > worstDp) {
+          worstDp = r.criticalDp ?? -Infinity
+          merged.criticalDp = r.criticalDp
+        }
+      }
+      return merged
+    }
+
     const T   = project.globalParams?.T_depart ?? 60
     const rho = waterDensity(T)
     const nodeCotes = new Map<string, number>()
@@ -398,7 +1000,7 @@ export default function App() {
       pressionSourceAlimECS,
       nodeCotes, rho
     )
-  }, [activeCalcId, project.segments, project.points, flowDirections, pdcResults,
+  }, [activeCalcId, isAlimECS, alimPartitionPostPdc, project.segments, project.points, flowDirections, pdcResults,
       pressionSourceAlimECS, project.globalParams, project.levels, project.lineYs])
 
   const totalQpAlimEFM3h = useMemo(() => {
@@ -442,7 +1044,41 @@ export default function App() {
       ? (project.pdcParamsAlimEF ?? DEFAULT_PDC_PARAMS_ALIM_EF)
       : isChauffage
         ? (project.pdcParamsChauffage ?? DEFAULT_PDC_PARAMS)
-        : (project.pdcParamsBouclageECS ?? DEFAULT_PDC_PARAMS)
+        : isEauGlacee
+          ? (project.pdcParamsEauGlacee ?? DEFAULT_PDC_PARAMS)
+          : (project.pdcParamsBouclageECS ?? DEFAULT_PDC_PARAMS)
+
+  const displayPrefs = project.displayPrefs ?? DEFAULT_DISPLAY_PREFS
+  const activeDisplayPrefs = isAlimEF ? displayPrefs.ef
+    : isChauffage   ? displayPrefs.chauffage
+    : isEauGlacee   ? displayPrefs.eauglacee
+    : displayPrefs.ecs
+
+  // Injecte les préférences d'affichage dans activePdcParams pour que tous les composants
+  // lisent pdcParams.uniteAffichage / pdcParams.unitDebit sans avoir besoin d'une prop dédiée.
+  const activePdcParamsDisplay = useMemo(() => ({
+    ...activePdcParams,
+    uniteAffichage: activeDisplayPrefs.unitDp,
+    unitDebit: activeDisplayPrefs.unitDebit,
+  }), [activePdcParams, activeDisplayPrefs])
+
+  // Pour chaque pompe ECS bouclage multi-production : circuit critique de sa partition uniquement
+  const pumpCriticalMap = useMemo(() => {
+    if (!isBouclage || !pdcCumResultsArr || !ecsPartitionResult) return null
+    const map = new Map<string, { critDp: number | null; criticalSegIds: Set<string> }>()
+    for (let i = 0; i < pdcCumResultsArr.length; i++) {
+      const r = pdcCumResultsArr[i]
+      if (!r) continue
+      const part = ecsPartitionResult.partitions[i]
+      if (!part) continue
+      for (const pt of part.points) {
+        if (pt.type === 'pump') {
+          map.set(pt.id, { critDp: r.criticalDp, criticalSegIds: r.criticalSegIds })
+        }
+      }
+    }
+    return map.size > 0 ? map : null
+  }, [isBouclage, pdcCumResultsArr, ecsPartitionResult])
 
   const valveKvBouclageResults = useMemo(
     () => computeValveKvs(
@@ -460,7 +1096,26 @@ export default function App() {
     [project.valves, project.segments, project.points, flowDirections, pdcCumAlimResults, alimentationResultsECS]
   )
 
-  const activeValveKvResults = isAlimECS ? valveKvAlimECSResults : valveKvBouclageResults
+  const valveKvChauffageResults = useMemo(
+    () => isChauffage ? computeValveKvsChauffage(
+      project.valves ?? [], project.segments, project.points,
+      flowDirections, pdcCumResults, chauffageFlows, chauffageSplitCumDp, mixingNodes,
+    ) : new Map(),
+    [isChauffage, project.valves, project.segments, project.points, flowDirections, pdcCumResults, chauffageFlows, chauffageSplitCumDp, mixingNodes]
+  )
+
+  const valveKvEauGlaceeResults = useMemo(
+    () => isEauGlacee ? computeValveKvsChauffage(
+      project.valves ?? [], project.segments, project.points,
+      flowDirections, pdcCumResults, eauGlaceeFlows, eauGlaceeSplitCumDp, mixingNodes,
+    ) : new Map(),
+    [isEauGlacee, project.valves, project.segments, project.points, flowDirections, pdcCumResults, eauGlaceeFlows, eauGlaceeSplitCumDp, mixingNodes]
+  )
+
+  const activeValveKvResults = isAlimECS ? valveKvAlimECSResults
+    : isChauffage  ? valveKvChauffageResults
+    : isEauGlacee  ? valveKvEauGlaceeResults
+    : valveKvBouclageResults
 
   // Map segId → nom de colonne (depuis les col-headers de flowRows)
   const segToCol = useMemo(() => {
@@ -475,6 +1130,7 @@ export default function App() {
 
   const [drawMode,           setDrawMode]           = useState('select')
   const [connHighlightIds,   setConnHighlightIds]   = useState([])
+  const [criticalPathIds,    setCriticalPathIds]    = useState<string[]>([])
   const [groupesEditMode,    setGroupesEditMode]    = useState(false)
   const [showGroupeNames,    setShowGroupeNames]    = useState(false)
   const [canvasDisplay, setCanvasDisplay] = useState(CANVAS_DISPLAY_RESET)
@@ -484,19 +1140,27 @@ export default function App() {
   tableHeightRef.current = tableHeight
   const [pipeType,           setPipeType]           = useState('aller')
   const [selectedIds,        setSelectedIds]        = useState([])
+  // Effacer le chemin critique affiché quand la sélection change
+  useEffect(() => { setCriticalPathIds([]) }, [selectedIds])
   const [selectedValveId,    setSelectedValveId]    = useState(null)
   const [selectedAccessoryId, setSelectedAccessoryId] = useState(null)
   const [activeSection,      setActiveSection]      = useState<string | null>(null)
   const [editLinesEnabled,     setEditLinesEnabled]     = useState(false)
   const [editChaufferie,       setEditChaufferie]       = useState(false)
   const [placingChaufferie,    setPlacingChaufferie]    = useState(false)
-  const [editLocauxEF,         setEditLocauxEF]         = useState(false)
-  const [placingLocalEF,       setPlacingLocalEF]       = useState(false)
-  const [selectedLocalEFId,    setSelectedLocalEFId]    = useState<string | null>(null)
+  const [editLocauxEF,            setEditLocauxEF]            = useState(false)
+  const [placingLocalEF,          setPlacingLocalEF]          = useState(false)
+  const [selectedLocalEFId,       setSelectedLocalEFId]       = useState<string | null>(null)
+  const [editLocauxECS,           setEditLocauxECS]           = useState(false)
+  const [placingLocalECS,         setPlacingLocalECS]         = useState(false)
+  const [selectedLocalECSId,      setSelectedLocalECSId]      = useState<string | null>(null)
+  const [editLocauxChauffage,     setEditLocauxChauffage]     = useState(false)
+  const [placingLocalChauffage,   setPlacingLocalChauffage]   = useState(false)
+  const [selectedLocalChauffageId,setSelectedLocalChauffageId]= useState<string | null>(null)
   const [placingEquipment,     setPlacingEquipment]     = useState(null)  // null | { type, name, rotation?, size }
   const [placingAccessoryType, setPlacingAccessoryType] = useState<string | null>(null)  // accessoire visuel en cours de pose (ACCESSORY_TYPES id)
   const [editParam, setEditParam] = useState({
-    paramType: 'type', segType: 'aller',
+    paramType: 'material', segType: 'aller',
     materialId: null, dn: null,
     insulationId: null, thickness: null,
     length: null,
@@ -972,6 +1636,11 @@ export default function App() {
     })
   }, [setProject])
 
+  // Creates a history snapshot before chaufferie drag begins, so the whole drag is one undo step
+  const handleChaufferieStartDrag = useCallback(() => {
+    setProject(p => ({ ...p }))
+  }, [setProject])
+
   // Patches the current undo entry for auto-corrections — does NOT create a new undo step
   const patchNetwork = useCallback((segsFnOrVal, ptsFnOrVal) => {
     patchProject(p => {
@@ -1012,7 +1681,10 @@ export default function App() {
     const handler = e => {
       const tag = e.target.tagName
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo() }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault(); undo()
+        setPlacingEquipment(null); setPlacingChaufferie(false)
+      }
       if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo() }
       if (e.key === 'Escape') {
         setDrawMode('select')
@@ -1031,9 +1703,25 @@ export default function App() {
     const name = count === 0
       ? 'Pompe bouclage ECS'
       : `Pompe bouclage ECS n°${count + 1}`
+    const firstPump = count === 1 ? pumps[0] : null
+    const shouldRename = firstPump && (!firstPump.name || firstPump.name === 'Pompe bouclage ECS')
     setPlacingEquipment({
       type: 'pump', name, rotation: 180, size: 12,
-      ...(count === 1 ? { renameFirstPump: pumps[0].id } : {}),
+      ...(shouldRename ? { renameFirstPump: firstPump.id, renameFirstPumpName: 'Pompe bouclage ECS n°1' } : {}),
+    })
+  }
+
+  const handleAddPumpChauffage = () => {
+    const pumps = project.points.filter(p => p.type === 'pump' && (!p.name || p.name.startsWith('Pompe chauffage')))
+    const count = pumps.length
+    const name = count === 0
+      ? 'Pompe chauffage'
+      : `Pompe chauffage n°${count + 1}`
+    const firstPump = count === 1 ? pumps[0] : null
+    const shouldRename = firstPump && (!firstPump.name || firstPump.name === 'Pompe chauffage')
+    setPlacingEquipment({
+      type: 'pump', name, rotation: 180, size: 12,
+      ...(shouldRename ? { renameFirstPump: firstPump.id, renameFirstPumpName: 'Pompe chauffage n°1' } : {}),
     })
   }
 
@@ -1049,8 +1737,16 @@ export default function App() {
     setPlacingEquipment({ type: 'productionChauffage', name: 'Production Chauffage', size: { w: 52, h: 28 } })
   }
 
-  const handleAddEmetteur = (emetteurType: string, deltaT: number, puissance: number | null) => {
-    setPlacingEquipment({ type: 'emetteur', emetteurType, deltaT, puissance, name: '', size: { w: 28, h: 18 } })
+  const handleAddEmetteur = (emetteurType: string, T_entree: number, T_sortie: number, puissance: number | null) => {
+    setPlacingEquipment({ type: 'emetteur', emetteurType, T_entree, T_sortie, puissance, name: '', size: { w: 28, h: 18 } })
+  }
+
+  const handleAddProductionEauGlacee = () => {
+    setPlacingEquipment({ type: 'productionEauGlacee', name: 'Production Eau Glacée', size: { w: 52, h: 28 } })
+  }
+
+  const handleAddTerminalFroid = (terminalFroidType: string, T_entree: number, T_sortie: number, puissance: number | null) => {
+    setPlacingEquipment({ type: 'terminalFroid', terminalFroidType, T_entree_emetteur: T_entree, T_sortie_emetteur: T_sortie, puissance, name: '', size: { w: 28, h: 18 } })
   }
 
   const handleAddChaufferie = () => setPlacingChaufferie(true)
@@ -1058,6 +1754,16 @@ export default function App() {
   const handleLocauxEFChange = (v: any[]) => {
     update('locauxEF', v)
     if (v.length === 0) { setEditLocauxEF(false); setSelectedLocalEFId(null) }
+  }
+  const handleAddLocalECS    = () => setPlacingLocalECS(true)
+  const handleLocauxECSChange = (v: any[]) => {
+    update('locauxECS', v)
+    if (v.length === 0) { setEditLocauxECS(false); setSelectedLocalECSId(null) }
+  }
+  const handleAddLocalChauffage    = () => setPlacingLocalChauffage(true)
+  const handleLocauxChauffageChange = (v: any[]) => {
+    update('locauxChauffage', v)
+    if (v.length === 0) { setEditLocauxChauffage(false); setSelectedLocalChauffageId(null) }
   }
 
   const handleSave = () => {
@@ -1159,17 +1865,22 @@ export default function App() {
         placingEquipment={placingEquipment}
         onCancelPlacingEquipment={() => setPlacingEquipment(null)}
         onAddProductionECS={handleAddProductionECS}
-        hasProductionECS={project.points.some(p => p.type === 'productionECS')}
+        hasProductionECS={false}
         onAddArriveeEF={handleAddArriveeEF}
         onAddPump={handleAddPump}
+        onAddPumpChauffage={handleAddPumpChauffage}
         onAddProductionChauffage={handleAddProductionChauffage}
-        hasProductionChauffage={project.points.some(p => p.type === 'productionChauffage')}
+        hasProductionChauffage={false}
         onAddEmetteur={handleAddEmetteur}
+        onAddProductionEauGlacee={handleAddProductionEauGlacee}
+        hasProductionEauGlacee={false}
+        onAddTerminalFroid={handleAddTerminalFroid}
         canvasDisplay={canvasDisplay}
         onCanvasDisplayToggle={key => setCanvasDisplay(d => ({ ...d, [key]: !d[key] }))}
         activeFluidId={activeFluidId}
         activeCalcId={pendingSetup ? null : activeCalcId}
-        pdcParams={activePdcParams}
+        pdcParams={activePdcParamsDisplay}
+        displayPrefs={displayPrefs}
         placingAccessoryType={placingAccessoryType}
         onPlacingAccessoryTypeChange={type => { setPlacingAccessoryType(type); if (type) setSelectedIds([]) }}
       />
@@ -1201,6 +1912,15 @@ export default function App() {
                 {icon}
               </button>
             ))}
+            {/* Engrenage paramètres — toujours en bas */}
+            <button
+              className={`icon-sidebar-btn${showSettings ? ' active' : ''}`}
+              onClick={() => setShowSettings(o => !o)}
+              data-tooltip="Paramètres d'affichage"
+              style={{ marginTop: 'auto' }}
+            >
+              <GearIcon size={22} />
+            </button>
           </nav>
         )}
 
@@ -1225,6 +1945,8 @@ export default function App() {
               onPdcParamsChange={v => update('pdcParamsBouclageECS', v)}
               pdcParamsChauffage={project.pdcParamsChauffage ?? DEFAULT_PDC_PARAMS}
               onPdcParamsChauffageChange={(v: any) => update('pdcParamsChauffage', v)}
+              pdcParamsEauGlacee={project.pdcParamsEauGlacee ?? DEFAULT_PDC_PARAMS}
+              onPdcParamsEauGlaceeChange={(v: any) => update('pdcParamsEauGlacee', v)}
               pdcParamsAlimECS={project.pdcParamsAlimECS ?? DEFAULT_PDC_PARAMS_ALIM_ECS}
               onPdcParamsAlimECSChange={v => update('pdcParamsAlimECS', v)}
               totalQpAlimM3h={totalQpAlimM3h}
@@ -1241,10 +1963,16 @@ export default function App() {
               onLineYsChange={v => update('lineYs', v)}
               editLinesEnabled={editLinesEnabled}
               onEditLinesChange={setEditLinesEnabled}
-              materials={project.materialsECS}
-              onMaterialsChange={v => update('materialsECS', typeof v === 'function' ? v(project.materialsECS) : v)}
+              materials={activeMaterials}
+              onMaterialsChange={v => {
+                const key = isChauffage ? 'materialsChauffage' : 'materialsECS'
+                const cur = activeMaterials
+                update(key, typeof v === 'function' ? v(cur) : v)
+              }}
               materialsEF={project.materialsEF ?? DEFAULT_MATERIALS}
               onMaterialsEFChange={v => update('materialsEF', typeof v === 'function' ? v(project.materialsEF ?? DEFAULT_MATERIALS) : v)}
+              materialsEauGlacee={project.materialsEauGlacee ?? DEFAULT_MATERIALS_CHAUFFAGE}
+              onMaterialsEauGlaceeChange={v => update('materialsEauGlacee', typeof v === 'function' ? v(project.materialsEauGlacee ?? DEFAULT_MATERIALS_CHAUFFAGE) : v)}
               insulations={project.insulations}
               onInsulationsChange={v => update('insulations', typeof v === 'function' ? v(project.insulations) : v)}
               columns={project.columns}
@@ -1268,11 +1996,22 @@ export default function App() {
               placingLocalEF={placingLocalEF}
               editLocauxEF={editLocauxEF}
               onEditLocauxEFChange={v => { setEditLocauxEF(v); if (!v) setSelectedLocalEFId(null) }}
+              locauxECS={project.locauxECS ?? []}
+              onAddLocalECS={handleAddLocalECS}
+              placingLocalECS={placingLocalECS}
+              editLocauxECS={editLocauxECS}
+              onEditLocauxECSChange={v => { setEditLocauxECS(v); if (!v) setSelectedLocalECSId(null) }}
+              locauxChauffage={project.locauxChauffage ?? []}
+              onAddLocalChauffage={handleAddLocalChauffage}
+              placingLocalChauffage={placingLocalChauffage}
+              editLocauxChauffage={editLocauxChauffage}
+              onEditLocauxChauffageChange={v => { setEditLocauxChauffage(v); if (!v) setSelectedLocalChauffageId(null) }}
               segments={project.segments}
               points={project.points}
               networkFlows={networkFlows}
               flowDirections={flowDirections}
               roleMap={effectiveRoleMap}
+              hasConnectedProductions={ecsPartitionResult?.hasConnectedProductions ?? false}
               drawMode={drawMode}
               editParam={editParam}
               onEditParamChange={setEditParam}
@@ -1311,6 +2050,8 @@ export default function App() {
             onPPZoneDrag={handlePPZoneDrag}
             chaufferie={project.chaufferie}
             onChaufferieChange={v => update('chaufferie', v)}
+            onChaufferiePatch={v => patchProject(p => ({ ...p, chaufferie: v }))}
+            onChaufferieStartDrag={handleChaufferieStartDrag}
             editChaufferie={editChaufferie || editLinesEnabled}
             onEditChaufferieChange={setEditChaufferie}
             placingChaufferie={placingChaufferie}
@@ -1321,17 +2062,21 @@ export default function App() {
             onAssignParam={onAssignParam}
             connHighlightIds={connHighlightIds}
             onConnHighlight={setConnHighlightIds}
+            criticalPathIds={criticalPathIds}
             networkFlows={isChauffage ? chauffageFlows : networkFlows}
             flowDirections={flowDirections}
             chauffageFlows={chauffageFlows}
+            eauGlaceeFlows={eauGlaceeFlows}
             chauffageParams={project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS}
+            mixingNodes={mixingNodes}
+            displayPrefs={displayPrefs}
             groupesEditMode={groupesEditMode}
             onRemoveGroupeById={handleRemoveGroupeById}
             showGroupeNames={showGroupeNames}
             groupDisplayNames={groupDisplayNames}
             canvasDisplay={canvasDisplay}
             roleMap={effectiveRoleMap}
-            materials={isAlimEF ? (project.materialsEF ?? DEFAULT_MATERIALS) : project.materialsECS}
+            materials={activeMaterials}
             insulations={project.insulations}
             alimentationParams={resolveAlimentationParams(project.alimentationParamsECS)}
             activeCalcId={activeCalcId}
@@ -1348,7 +2093,7 @@ export default function App() {
             onPlacingAccessoryDone={() => setPlacingAccessoryType(null)}
             selectedAccessoryId={selectedAccessoryId}
             onSelectedAccessoryChange={id => { setSelectedAccessoryId(id); if (id) setSelectedIds([]) }}
-            pdcParams={activePdcParams}
+            pdcParams={activePdcParamsDisplay}
             pdcResults={pdcResults}
             pdcCumResults={pdcCumResults}
             pdcCumAlimResults={activePdcCumAlimResults}
@@ -1364,12 +2109,28 @@ export default function App() {
             onEditLocauxEFChange={v => { setEditLocauxEF(v); if (!v) setSelectedLocalEFId(null) }}
             selectedLocalEFId={selectedLocalEFId}
             onSelectedLocalEFChange={id => { setSelectedLocalEFId(id); if (id) setSelectedIds([]) }}
+            locauxECS={project.locauxECS ?? []}
+            onLocauxECSChange={handleLocauxECSChange}
+            placingLocalECS={placingLocalECS}
+            onPlacingLocalECSDone={() => setPlacingLocalECS(false)}
+            editLocauxECS={editLocauxECS}
+            onEditLocauxECSChange={v => { setEditLocauxECS(v); if (!v) setSelectedLocalECSId(null) }}
+            selectedLocalECSId={selectedLocalECSId}
+            onSelectedLocalECSChange={id => { setSelectedLocalECSId(id); if (id) setSelectedIds([]) }}
+            locauxChauffage={project.locauxChauffage ?? []}
+            onLocauxChauffageChange={handleLocauxChauffageChange}
+            placingLocalChauffage={placingLocalChauffage}
+            onPlacingLocalChauffageDone={() => setPlacingLocalChauffage(false)}
+            editLocauxChauffage={editLocauxChauffage}
+            onEditLocauxChauffageChange={v => { setEditLocauxChauffage(v); if (!v) setSelectedLocalChauffageId(null) }}
+            selectedLocalChauffageId={selectedLocalChauffageId}
+            onSelectedLocalChauffageChange={id => { setSelectedLocalChauffageId(id); if (id) setSelectedIds([]) }}
           />
         </main>
 
         {!pendingSetup && activeCalcId && (() => {
           const leftOpen = activeSection !== null || drawMode === 'editParams' || drawMode === 'errors'
-          const rightOpen = (selectedIds.length > 0 && !isCircuitSelection) || editChaufferie || !!selectedValveId || !!selectedAmontId || !!selectedLocalEFId || editLocauxEF
+          const rightOpen = (selectedIds.length > 0 && !isCircuitSelection) || editChaufferie || !!selectedValveId || !!selectedAmontId || !!selectedLocalEFId || editLocauxEF || !!selectedLocalECSId || editLocauxECS || !!selectedLocalChauffageId || editLocauxChauffage
           return (
             <div style={{
               marginLeft: leftOpen ? 280 : 0,
@@ -1386,11 +2147,12 @@ export default function App() {
                   rows={flowRows}
                   roleMap={roleMap}
                   efFlowRowsArr={efFlowRowsArr}
+                  ecsFlowRowsArr={ecsFlowRowsArr}
                   activeCalcId={activeCalcId}
                   activeTable={activeTable}
                   segments={project.segments}
                   points={project.points}
-                  materials={isAlimEF ? (project.materialsEF ?? DEFAULT_MATERIALS) : project.materialsECS}
+                  materials={activeMaterials}
                   insulations={project.insulations}
                   levels={project.levels}
                   lineYs={project.lineYs}
@@ -1401,11 +2163,15 @@ export default function App() {
                   networkFlows={networkFlows}
                   chauffageFlows={chauffageFlows}
                   chauffageParams={project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS}
+                  eauGlaceeFlows={eauGlaceeFlows}
+                  eauGlaceeSplitCumDp={eauGlaceeSplitCumDp}
+                  eauGlaceePumpHMT={eauGlaceePumpHMT}
+                  eauGlaceeFlowRowsArr={eauGlaceeFlowRowsArr}
                   thermalResults={thermalResults}
                   alimentationResults={alimentationResultsECS}
                   alimentationResultsEF={alimentationResultsEF}
                   pdcResults={pdcResults}
-                  pdcParams={activePdcParams}
+                  pdcParams={activePdcParamsDisplay}
                   pdcCumResults={pdcCumResults}
                   pdcCumAlimResults={activePdcCumAlimResults}
                   segToCol={segToCol}
@@ -1413,6 +2179,9 @@ export default function App() {
                   selectedIds={selectedIds}
                   onSelectIds={setSelectedIds}
                   onCircuitSelect={handleCircuitSelect}
+                  chauffageSplitCumDp={chauffageSplitCumDp}
+                  chauffagePumpHMT={chauffagePumpHMT}
+                  chauffageFlowRowsArr={chauffageFlowRowsArr}
                 />
               )}
               <div className="rt-toggle-bar">
@@ -1440,19 +2209,19 @@ export default function App() {
 
         </div>{/* canvas-col */}
 
-        <aside className={`sidebar-right${(pendingSetup || ((selectedIds.length === 0 || isCircuitSelection) && !editChaufferie && !selectedValveId && !selectedAmontId && !selectedLocalEFId && !editLocauxEF)) ? ' sidebar-right-closed' : ''}`}>
+        <aside className={`sidebar-right${(pendingSetup || ((selectedIds.length === 0 || isCircuitSelection) && !editChaufferie && !selectedValveId && !selectedAmontId && !selectedLocalEFId && !editLocauxEF && !selectedLocalECSId && !editLocauxECS && !selectedLocalChauffageId && !editLocauxChauffage)) ? ' sidebar-right-closed' : ''}`}>
           <RightPanel
             selectedIds={selectedIds}
             segments={project.segments}
             points={project.points}
             onUpdate={updateElement}
-            materials={isAlimEF ? (project.materialsEF ?? DEFAULT_MATERIALS) : project.materialsECS}
+            materials={activeMaterials}
             insulations={project.insulations}
             activeCalcId={activeCalcId}
             alimentationParams={isAlimEF && project.alimentationParamsEF != null
               ? resolveAlimentationParams(project.alimentationParamsEF)
               : resolveAlimentationParams(project.alimentationParamsECS)}
-            pdcParams={activePdcParams}
+            pdcParams={activePdcParamsDisplay}
             pdcResults={pdcResults}
             pdcCumResults={pdcCumResults}
             pdcCumAlimResults={activePdcCumAlimResults}
@@ -1469,12 +2238,31 @@ export default function App() {
             onLocauxEFChange={handleLocauxEFChange}
             selectedLocalEFId={selectedLocalEFId}
             onSelectedLocalEFChange={setSelectedLocalEFId}
+            locauxECS={project.locauxECS ?? []}
+            onLocauxECSChange={handleLocauxECSChange}
+            selectedLocalECSId={selectedLocalECSId}
+            onSelectedLocalECSChange={setSelectedLocalECSId}
+            locauxChauffage={project.locauxChauffage ?? []}
+            onLocauxChauffageChange={handleLocauxChauffageChange}
+            selectedLocalChauffageId={selectedLocalChauffageId}
+            onSelectedLocalChauffageChange={setSelectedLocalChauffageId}
             flowDirections={flowDirections}
             networkFlows={networkFlows}
             chauffageFlows={chauffageFlows}
             chauffageParams={project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS}
             onChauffageParamsChange={v => update('chauffageParams', v)}
             chauffageThermal={chauffageThermal}
+            eauGlaceeFlows={eauGlaceeFlows}
+            eauGlaceeParams={project.eauGlaceeParams ?? DEFAULT_EAU_GLACEE_PARAMS}
+            onEauGlaceeParamsChange={v => update('eauGlaceeParams', v)}
+            eauGlaceeThermal={eauGlaceeThermal}
+            eauGlaceePumpHMT={eauGlaceePumpHMT}
+            eauGlaceeSplitCumDp={eauGlaceeSplitCumDp}
+            mixingNodes={mixingNodes}
+            chauffagePumpHMT={chauffagePumpHMT}
+            chauffageSplitCumDp={chauffageSplitCumDp}
+            onShowCriticalPath={setCriticalPathIds}
+            pumpCriticalMap={pumpCriticalMap}
             globalParams={project.globalParams}
             thermalResults={thermalResults}
             alimentationResults={isAlimEF ? alimentationResultsEF : alimentationResultsECS}
@@ -1507,6 +2295,14 @@ export default function App() {
         </aside>
         </div>{/* content-area */}
       </div>
+
+      {showSettings && (
+        <SettingsModal
+          displayPrefs={displayPrefs}
+          onChange={prefs => update('displayPrefs', prefs)}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
     </div>
   )
 }

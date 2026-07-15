@@ -3,263 +3,13 @@ import type { CalcMode } from '../types'
 import { getDisplayName } from '../utils/naming'
 import { getModeFlags } from '../utils/calcModeFlags'
 import { computeSegUI, getSegAmbTemp } from '../utils/thermalCalc'
-import { sf } from '../utils/fmt'
-import { FITTING_TYPES, EQUIPMENT_TYPES } from '../utils/pdcCalc'
+import { sf, fmtDpLabel } from '../utils/fmt'
 import { NumInput } from './NumInput'
+import { SegFittingsPanel, SegEquipPanel } from './segPanelShared'
 import { tAvalStyle, Field, SectionLabel, SegNameField, CoteSection, TempBadge, AntenneGroupesAval } from './rpShared'
 import PdcSegResults from './PdcSegResults'
 import { ABAQUE } from '../utils/alimentationCalc'
 
-// ── Panneau compact accessoires (ξ) ──────────────────────────────────────
-function SegFittingsPanel({ seg, set, pdcParams }) {
-  const [addOpen, setAddOpen] = useState(false)
-  const dropRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!addOpen) return
-    const h = (e: MouseEvent) => { if (!dropRef.current?.contains(e.target as Node)) setAddOpen(false) }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [addOpen])
-
-  const fittings: any[]  = seg.fittings ?? []
-  const libOverrides     = pdcParams?.fittingOverrides ?? {}
-
-  const setCount = (typeId: string, n: number) => {
-    if (n <= 0) set('fittings', fittings.filter(f => f.type !== typeId))
-    else set('fittings', fittings.map(f => f.type === typeId ? { ...f, count: n } : f))
-  }
-  const setXi = (typeId: string, val: number | null) => {
-    set('fittings', fittings.map(f => f.type === typeId ? { ...f, xiOverride: val ?? undefined } : f))
-  }
-  const del = (typeId: string) => set('fittings', fittings.filter(f => f.type !== typeId))
-  const add = (typeId: string) => {
-    setAddOpen(false)
-    if (!fittings.find(f => f.type === typeId)) {
-      set('fittings', [...fittings, { type: typeId, count: 1 }])
-    }
-  }
-
-  const customLibF: any[] = pdcParams?.customFittings ?? []
-  const allStdF = [
-    ...FITTING_TYPES,
-    ...customLibF.map(t => ({ id: t.id, label: t.label || 'Personnalisé', xi: t.xi })),
-  ]
-  const available = allStdF.filter(t => !fittings.find(f => f.type === t.id))
-
-  const row: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4,
-    padding: '5px 8px', background: '#fef7f4', border: '1px solid #fbd5c5', borderRadius: 5,
-  }
-  const inp = (extra: React.CSSProperties = {}): React.CSSProperties => ({
-    fontSize: 10, padding: '2px 4px', borderRadius: 4, border: '1px solid #e5e7eb',
-    textAlign: 'center' as const, ...extra,
-  })
-
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, color: '#c2562d', marginBottom: 5, letterSpacing: '0.03em' }}>
-        Accessoires
-      </div>
-
-      {fittings.length === 0 && (
-        <div style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic', marginBottom: 6 }}>
-          Aucun accessoire sur ce tronçon
-        </div>
-      )}
-
-      {fittings.map(f => {
-        const def       = allStdF.find(t => t.id === f.type)
-        const libXi     = def ? (libOverrides[f.type] ?? def.xi) : null
-        const xi        = f.xiOverride ?? libXi
-        const overridden = f.xiOverride != null
-        return (
-          <div key={f.type} style={row}>
-            <span style={{ flex: 1, fontSize: 10, color: '#374151', lineHeight: 1.3 }}>
-              {def?.label ?? f.type}
-            </span>
-            <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>n</span>
-            <NumInput min={1} step={1} value={f.count ?? 1}
-              onChange={v => setCount(f.type, Math.max(1, Math.round(v ?? 1)))}
-              style={{ ...inp(), width: 32 }} />
-            <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>ξ</span>
-            <NumInput min={0} step={0.01} value={xi ?? null} allowEmpty
-              placeholder={libXi != null ? `${libXi} (par défaut)` : ''}
-              onChange={v => setXi(f.type, v)}
-              style={{ ...inp({ width: 44, color: overridden ? '#c2562d' : '#374151',
-                                border: `1px solid ${overridden ? '#fbd5c5' : '#e5e7eb'}` }) }} />
-            {overridden && (
-              <button onClick={() => setXi(f.type, null)} title={`Rétablir (ξ = ${libXi})`}
-                style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11, padding: 0, lineHeight: 1 }}>
-                ↺
-              </button>
-            )}
-            <button onClick={() => del(f.type)}
-              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 15, padding: '0 2px', lineHeight: 1 }}>
-              ×
-            </button>
-          </div>
-        )
-      })}
-
-      <div ref={dropRef} style={{ position: 'relative' }}>
-        <button onClick={() => setAddOpen(a => !a)}
-          style={{ fontSize: 10, padding: '3px 10px', border: '1px dashed #c2562d', borderRadius: 5,
-                   color: '#c2562d', background: addOpen ? '#fff7ed' : 'transparent', cursor: 'pointer', fontWeight: 600 }}>
-          + Ajouter
-        </button>
-        {addOpen && (
-          <div style={{ position: 'absolute', left: 0, top: '110%', zIndex: 300, background: '#fff',
-                        border: '1px solid #e5e7eb', borderRadius: 8,
-                        boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: 250, padding: 6 }}>
-            {available.length === 0 ? (
-              <div style={{ padding: '6px 10px', fontSize: 10, color: '#9ca3af' }}>
-                Tous les accessoires sont déjà ajoutés
-              </div>
-            ) : available.map(t => {
-              const libXi = libOverrides[t.id] ?? t.xi
-              const long = t.label.length > 32
-              return (
-                <div key={t.id} onClick={() => add(t.id)}
-                  style={{ padding: '5px 10px', fontSize: 10.5, cursor: 'pointer', borderRadius: 5,
-                           display: 'flex', flexDirection: long ? 'column' : 'row',
-                           alignItems: long ? 'flex-start' : 'baseline', gap: long ? 1 : 6 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#fef0ea')}
-                  onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                  <span>{t.label}</span>
-                  <span style={{ fontSize: 9.5, color: '#9ca3af', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>ξ = {libXi}</span>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ── Panneau compact équipements (Kv) ─────────────────────────────────────
-function SegEquipPanel({ seg, set, pdcParams }) {
-  const [addOpen, setAddOpen] = useState(false)
-  const dropRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!addOpen) return
-    const h = (e: MouseEvent) => { if (!dropRef.current?.contains(e.target as Node)) setAddOpen(false) }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [addOpen])
-
-  const equipment: any[]  = seg.equipment ?? []
-  const libOverrides       = pdcParams?.equipmentOverrides ?? {}
-
-  const setKv = (typeId: string, val: number | null) => {
-    set('equipment', equipment.map(e => e.type === typeId ? { ...e, kvOverride: val ?? undefined } : e))
-  }
-  const del = (typeId: string) => set('equipment', equipment.filter(e => e.type !== typeId))
-  const add = (typeId: string) => {
-    setAddOpen(false)
-    if (!equipment.find(e => e.type === typeId)) {
-      set('equipment', [...equipment, { type: typeId }])
-    }
-  }
-
-  const customLibE: any[] = pdcParams?.customEquipments ?? []
-  const allStdE = [
-    ...EQUIPMENT_TYPES,
-    ...customLibE.map(t => ({ id: t.id, label: t.label || 'Personnalisé', kvDefault: t.kvDefault })),
-  ]
-  const available = allStdE.filter(t => !equipment.find(e => e.type === t.id))
-
-  const row: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4,
-    padding: '5px 8px', background: '#faf8ff', border: '1px solid #ddd6fe', borderRadius: 5,
-  }
-  const inp = (extra: React.CSSProperties = {}): React.CSSProperties => ({
-    fontSize: 10, padding: '2px 4px', borderRadius: 4, border: '1px solid #e5e7eb',
-    textAlign: 'center' as const, ...extra,
-  })
-
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, color: '#7c3aed', marginBottom: 5, letterSpacing: '0.03em' }}>
-        Équipements
-      </div>
-
-      {equipment.length === 0 && (
-        <div style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic', marginBottom: 6 }}>
-          Aucun équipement sur ce tronçon
-        </div>
-      )}
-
-      {equipment.map(e => {
-        const def       = allStdE.find(t => t.id === e.type)
-        const libKv     = def ? (libOverrides[e.type] ?? def.kvDefault) : null
-        const kv        = e.kvOverride ?? libKv
-        const overridden = e.kvOverride != null
-        const needsKv   = kv == null
-        return (
-          <div key={e.type} style={row}>
-            <span style={{ flex: 1, fontSize: 10, color: '#374151', lineHeight: 1.3 }}>
-              {def?.label ?? e.type}
-            </span>
-            <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Kv</span>
-            <NumInput min={0} step={0.1} value={kv ?? null} allowEmpty
-              placeholder={libKv != null ? `${libKv} (par défaut)` : 'requis'}
-              onChange={val => setKv(e.type, val)}
-              style={{ ...inp({ width: 50,
-                                color: needsKv ? '#f97316' : overridden ? '#7c3aed' : '#374151',
-                                border: `1px solid ${needsKv ? '#fed7aa' : overridden ? '#ddd6fe' : '#e5e7eb'}` }) }} />
-            <span style={{ fontSize: 8, color: '#9ca3af', flexShrink: 0, lineHeight: 1 }}>m³/h<br/>√bar</span>
-            {overridden && libKv != null && (
-              <button onClick={() => setKv(e.type, null)} title={`Rétablir (Kv = ${libKv})`}
-                style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11, padding: 0 }}>
-                ↺
-              </button>
-            )}
-            <button onClick={() => del(e.type)}
-              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 15, padding: '0 2px', lineHeight: 1 }}>
-              ×
-            </button>
-          </div>
-        )
-      })}
-
-      <div ref={dropRef} style={{ position: 'relative' }}>
-        <button onClick={() => setAddOpen(a => !a)}
-          style={{ fontSize: 10, padding: '3px 10px', border: '1px dashed #7c3aed', borderRadius: 5,
-                   color: '#7c3aed', background: addOpen ? '#faf8ff' : 'transparent', cursor: 'pointer', fontWeight: 600 }}>
-          + Ajouter
-        </button>
-        {addOpen && (
-          <div style={{ position: 'absolute', left: 0, top: '110%', zIndex: 300, background: '#fff',
-                        border: '1px solid #e5e7eb', borderRadius: 8,
-                        boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: 250, padding: 6 }}>
-            {available.length === 0 ? (
-              <div style={{ padding: '6px 10px', fontSize: 10, color: '#9ca3af' }}>
-                Tous les équipements sont déjà ajoutés
-              </div>
-            ) : available.map(t => {
-              const libKv = libOverrides[t.id] ?? t.kvDefault
-              const long = t.label.length > 32
-              return (
-                <div key={t.id} onClick={() => add(t.id)}
-                  style={{ padding: '5px 10px', fontSize: 10.5, cursor: 'pointer', borderRadius: 5,
-                           display: 'flex', flexDirection: long ? 'column' : 'row',
-                           alignItems: long ? 'flex-start' : 'baseline', gap: long ? 1 : 6 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#faf8ff')}
-                  onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                  <span>{t.label}</span>
-                  <span style={{ fontSize: 9.5, color: '#9ca3af', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                    Kv = {libKv ?? '—'}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 interface SegmentPanelProps {
   seg: any; onUpdate: any; materials: any[]; insulations: any[]
@@ -272,9 +22,10 @@ interface SegmentPanelProps {
   pdcCumResults: any; pdcCumAlimResults: any; segToCol: any; flowDirections: any
   groupDisplayNames?: any
   chauffageThermal?: any
+  chauffageSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
 }
 
-export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null, chauffageThermal = null }: SegmentPanelProps) {
+export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null, chauffageThermal = null, chauffageSplitCumDp = null }: SegmentPanelProps) {
   const [tab, setTab]                       = useState('params')
   const [openDetailTherm, setOpenDetailTherm] = useState(false)
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
@@ -503,7 +254,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                 <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} />
               )}
               {pdcParams.equipementsActifs && (
-                <SegEquipPanel seg={seg} set={set} pdcParams={pdcParams} />
+                <SegEquipPanel seg={seg} set={set} pdcParams={pdcParams} mode={activeCalcId as string | null} />
               )}
             </>
           )}
@@ -810,13 +561,27 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                   alimentationData={isAlimECS ? alimentationData : null}
                   cumDp={isAlimMode
                     ? pdcCumAlimResults?.segCumDp?.get(seg.id)
-                    : pdcCumResults?.segCumDp.get(seg.id)}
-                  postJunction={isAlimMode ? false : (pdcCumResults?.segPostJunction.get(seg.id) ?? false)}
-                  segCol={segToCol?.get(seg.id) ?? null}
+                    : isChauffage
+                      ? (chauffageSplitCumDp?.segCumDp.get(seg.id) ?? pdcCumResults?.segCumDp.get(seg.id))
+                      : pdcCumResults?.segCumDp.get(seg.id)}
+                  cumDpLabel={isChauffage
+                    ? (chauffageSplitCumDp?.secondarySegIds.has(seg.id) ? 'ΔP depuis vanne mélange' : 'ΔP depuis production CH')
+                    : 'ΔP depuis production ECS'}
+                  postJunction={isAlimMode ? false : isChauffage
+                    ? (chauffageSplitCumDp?.segPostJunction.get(seg.id) ?? false)
+                    : (pdcCumResults?.segPostJunction.get(seg.id) ?? false)}
+                  segCol={isChauffage
+                    ? (() => {
+                        const winnerId = chauffageSplitCumDp?.segJunctionWinner?.get(seg.id)
+                        return winnerId ? (segToCol?.get(winnerId) ?? null) : null
+                      })()
+                    : (segToCol?.get(seg.id) ?? null)}
                   isOnCriticalPath={isAlimMode
                     ? (pdcCumAlimResults?.criticalSegIds?.has(seg.id) ?? false)
-                    : (pdcCumResults?.criticalSegIds?.has(seg.id) ?? false)}
-                  criticalCol={isAlimMode ? null : (segToCol?.get(pdcCumResults?.criticalLeafSegId ?? '') ?? null)}
+                    : isChauffage
+                      ? (chauffageSplitCumDp?.criticalSegIds.has(seg.id) ?? false)
+                      : (pdcCumResults?.criticalSegIds?.has(seg.id) ?? false)}
+                  criticalCol={isAlimMode ? null : isChauffage ? null : (segToCol?.get(pdcCumResults?.criticalLeafSegId ?? '') ?? null)}
                   isAlimEcs={isAlimMode}
                   deltaH={pdcCumAlimResults?.segDeltaH?.get(seg.id) ?? null}
                   dpStatic={pdcCumAlimResults?.segDpStatic?.get(seg.id) ?? null}
@@ -837,34 +602,28 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             const puissanceKW  = puissanceW != null ? puissanceW / 1000 : null
             const di_mm        = seg.di_override ?? dnDef?.di ?? null
 
-            const V_LOW  = 0.2
-            const V_WARN = 1.0
-            const V_MAX  = 1.5
+            // Recommandations chauffage (règle de l'art, non réglementaire)
+            const V_LOW = 0.2   // en dessous : risque sédimentation/boues
+            const V_MAX = 1.5   // au-dessus  : risque bruit/érosion
 
-            const velLow   = velocity != null && velocity < V_LOW
-            const velWarn  = velocity != null && velocity > V_WARN && velocity <= V_MAX
-            const velErr   = velocity != null && velocity > V_MAX
-            const velOk    = velocity != null && !velLow && !velWarn && !velErr
-            const velColor = '#111827'
-            const velStatusColor = velErr || velLow ? '#dc2626' : velWarn ? '#f97316' : '#16a34a'
-            const velStatus = velLow  ? '✗ v < 0,2 m/s — risque de sédimentation'
-              : velErr    ? '✗ v > 1,5 m/s — risque d\'érosion et bruit'
-              : velWarn   ? '⚠ 1,0 < v ≤ 1,5 m/s — vérifier le dimensionnement'
-              : velOk     ? '✓ 0,2 ≤ v ≤ 1,0 m/s — plage recommandée'
+            const velLow  = velocity != null && velocity < V_LOW
+            const velHigh = velocity != null && velocity > V_MAX
+            const velOk   = velocity != null && !velLow && !velHigh
+            const velStatusColor = velOk ? '#16a34a' : '#f97316'
+            const velStatus = velLow  ? '⚠ v < 0,2 m/s — risque de sédimentation'
+              : velHigh ? '⚠ v > 1,5 m/s — risque d\'érosion et bruit'
+              : velOk   ? '✓ 0,2 ≤ v ≤ 1,5 m/s — plage recommandée'
               : null
 
             const J = pdcResult?.J ?? null   // gradient linéaire Pa/m
-            const J_OPT_LOW  = 100
-            const J_OPT_HIGH = 250
+            // Recommandation : 50–150 Pa/m (règle de l'art BET France)
+            const J_OPT_HIGH = 150
 
-            const jOk  = J != null && J >= J_OPT_LOW && J <= J_OPT_HIGH
-            const jErr = J != null && !jOk
-            const jColor = '#111827'
-            const jStatusColor = jOk ? '#16a34a' : '#dc2626'
+            const jOk  = J != null && J <= J_OPT_HIGH
+            const jStatusColor = jOk ? '#16a34a' : '#f97316'
             const jStatus = J == null ? null
-              : J < J_OPT_LOW  ? '✗ R < 100 Pa/m — canalisation surdimensionnée'
-              : J > J_OPT_HIGH ? '✗ R > 250 Pa/m — pertes de charge excessives'
-              : '✓ 100 ≤ R ≤ 250 Pa/m — plage recommandée (COSTIC)'
+              : J > J_OPT_HIGH ? '⚠ R > 150 Pa/m — au-delà de la plage recommandée'
+              : '✓ R ≤ 150 Pa/m — plage recommandée'
 
             const dRow = (label: string, value: string) => (
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
@@ -885,7 +644,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                     <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
                       textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Vitesse</div>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                      <span style={{ fontSize: 20, fontWeight: 700, color: velColor }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>
                         {velocity.toFixed(3)}
                       </span>
                       <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
@@ -912,7 +671,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                     <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
                       textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Pertes de charge linéaires</div>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                      <span style={{ fontSize: 20, fontWeight: 700, color: jColor }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>
                         {J.toFixed(1)}
                       </span>
                       <span style={{ fontSize: 11, color: '#9ca3af' }}>Pa/m</span>
@@ -1101,10 +860,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                       {dRow('Pertes th.', `${sf(Q, 1)} W`)}
                       {isBouclage && pdcResult?.dpTotal != null && (() => {
                         const u = pdcParams?.uniteAffichage ?? 'Pa'
-                        const fmt = (pa: number) => u === 'mmCE' ? `${(pa / 9.81).toFixed(0)} mmCE`
-                          : u === 'both' ? `${Math.round(pa)} Pa / ${(pa / 9.81).toFixed(0)} mmCE`
-                          : `${Math.round(pa)} Pa`
-                        return dRow('ΔP tronçon', fmt(pdcResult.dpTotal))
+                        return dRow('ΔP tronçon', fmtDpLabel(pdcResult.dpTotal, u))
                       })()}
                     </div>
                     <div style={{ marginTop: 4 }}>
@@ -1178,8 +934,13 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
 
       <Field label="Type de tronçon" labelFlex="44%">
         <select value={seg.type} onChange={e => set('type', e.target.value)}>
-          <option value="aller">Aller ECS</option>
-          <option value="retour">Retour ECS</option>
+          {isChauffage ? (<>
+            <option value="aller">Aller CH</option>
+            <option value="retour">Retour CH</option>
+          </>) : (<>
+            <option value="aller">Aller ECS</option>
+            <option value="retour">Retour ECS</option>
+          </>)}
         </select>
       </Field>
 
@@ -1413,6 +1174,25 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
       })()}
       </>)}
 
+      {isChauffage && (() => {
+        const chauffEntry = chauffageThermal?.segResults?.get(seg.id)
+        const T_calc = chauffEntry?.T_from ?? null
+        return (
+          <>
+            <SectionLabel>Température</SectionLabel>
+            <Field label="Tronçon" unit="°C">
+              <NumInput
+                className="temp-ch-input"
+                min={0} max={150} step={0.5} allowEmpty
+                value={seg.T_ch_override ?? null}
+                placeholder={T_calc != null ? `calculé : ${T_calc.toFixed(1)} °C` : 'calculé : —'}
+                onChange={v => set('T_ch_override', v)}
+              />
+            </Field>
+          </>
+        )
+      })()}
+
       {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (
         <>
           <hr className="rp-divider" />
@@ -1421,7 +1201,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} />
           )}
           {pdcParams.equipementsActifs && (
-            <SegEquipPanel seg={seg} set={set} pdcParams={pdcParams} />
+            <SegEquipPanel seg={seg} set={set} pdcParams={pdcParams} mode={activeCalcId as string | null} />
           )}
         </>
       )}

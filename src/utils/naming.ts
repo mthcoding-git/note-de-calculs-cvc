@@ -3,6 +3,7 @@ import { findLevelIndexAt } from './levelUtils'
 import { getNodeLocation, buildECSDistances, buildRetourDistances } from './pointLocation'
 import { getModeFlags } from './calcModeFlags'
 import { EMETTEUR_TYPES } from '../data/emetteurs'
+import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
 
 export { getNodeLocation }
 
@@ -70,10 +71,12 @@ function findAntenneColLoc(seg, allSegs, roleMap, allerDist, levels, lineYs, col
 
 // Nom par défaut d'un tronçon, sans disambiguation.
 export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null, role = null, activeCalcId: CalcMode | null | string = null, allSegs = null, roleMap = null, flowDirections = null) {
-  const { isBouclage, isAlimECS, isAlimEF, isChauffage: isChauffageMode } = getModeFlags(activeCalcId as CalcMode | null)
+  const { isBouclage, isAlimECS, isAlimEF, isChauffage: isChauffageMode, isEauGlacee: isEauGlaceeMode } = getModeFlags(activeCalcId as CalcMode | null)
   const isChaufSeg = seg.type === 'aller-ch' || seg.type === 'retour-ch'
     || (isChauffageMode && (seg.type === 'aller' || seg.type === 'retour'))
+  const isEGSeg    = isEauGlaceeMode && (seg.type === 'aller' || seg.type === 'retour')
   const isRetourCh = isChaufSeg && (seg.type === 'retour-ch' || seg.type === 'retour')
+  const isRetourEG = isEGSeg && seg.type === 'retour'
   const ecsDistances = allerDist
   if (!seg.vertices?.length) return ''
   const verts    = seg.vertices
@@ -81,11 +84,56 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
   const endV     = verts[verts.length - 1]
   const startHint = verts.length > 1 ? verts[1]                : null
   const endHint   = verts.length > 1 ? verts[verts.length - 2] : null
+
+  // Bypass retour CH : la chaîne physique depuis ce tronçon mène d'un côté au nœud mélange
+  // (≥2 aller + ≥1 retour) et de l'autre au nœud séparation (≥3 retour).
+  const isBypassToMixing = isRetourCh && allSegs != null && (() => {
+    const segs = allSegs as any[]
+    const nRetour = (ptId: string) => segs.filter(s =>
+      (s.type === 'retour' || s.type === 'retour-ch') &&
+      (s.startPointId === ptId || s.endPointId === ptId)).length
+    const nAller  = (ptId: string) => segs.filter(s =>
+      (s.type === 'aller' || s.type === 'aller-ch') &&
+      (s.startPointId === ptId || s.endPointId === ptId)).length
+    const isMixing = (ptId: string) => nAller(ptId) >= 2 && nRetour(ptId) >= 1
+    const isSep    = (ptId: string) => nRetour(ptId) >= 3
+
+    // Traverse les tronçons retour depuis startPtId (sans repasser par fromSegId).
+    // Retourne 'mixing' | 'separation' | 'none'.
+    const traverse = (startPtId: string, fromSegId: string): 'mixing' | 'separation' | 'none' => {
+      const visitedSegs = new Set<string>([fromSegId])
+      const visitedPts  = new Set<string>()
+      const queue = [startPtId]
+      while (queue.length > 0) {
+        const ptId = queue.shift()!
+        if (visitedPts.has(ptId)) continue
+        visitedPts.add(ptId)
+        if (isMixing(ptId)) return 'mixing'
+        if (isSep(ptId))    return 'separation'
+        for (const s of segs) {
+          if (visitedSegs.has(s.id)) continue
+          if (s.type !== 'retour' && s.type !== 'retour-ch') continue
+          if (s.startPointId === ptId) { visitedSegs.add(s.id); queue.push(s.endPointId) }
+          else if (s.endPointId === ptId) { visitedSegs.add(s.id); queue.push(s.startPointId) }
+        }
+      }
+      return 'none'
+    }
+
+    const fromStart = traverse(seg.startPointId, seg.id)
+    const fromEnd   = traverse(seg.endPointId,   seg.id)
+    return (fromStart === 'mixing' && fromEnd === 'separation') ||
+           (fromEnd   === 'mixing' && fromStart === 'separation')
+  })()
+
   const prefix = isAlimEF ? 'EF'
+    : isRetourCh  && isBypassToMixing            ? 'Retour CH vers mélange'
     : isRetourCh  && role === 'collecteur-retour' ? 'Collecteur Retour CH'
     : isRetourCh  ? 'Retour CH'
     : isChaufSeg  && role === 'collecteur-aller'  ? 'Collecteur Aller CH'
     : isChaufSeg  ? 'Aller CH'
+    : isRetourEG  ? 'Retour EG'
+    : isEGSeg     ? 'Aller EG'
     : role === 'collecteur-aller'  ? 'Collecteur aller ECS'
     : role === 'collecteur-retour' ? 'Collecteur retour ECS'
     : role === 'antenne'           ? 'Antenne ECS'
@@ -145,12 +193,19 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
       return `${prefix} – ${firstL} → ${secondL}`
     }
   }
-  if (isChaufSeg) {
+  if (isChaufSeg || isEGSeg) {
     const fmtNode = (ptId: string, loc: string) => {
       const pt = specialPts?.find((p: any) => p.id === ptId)
-      if (!pt || pt.type !== 'emetteur') return loc
-      const typeName = EMETTEUR_TYPES.find(e => e.id === pt.emetteurType)?.label ?? 'Émetteur'
-      return `${typeName} (${loc})`
+      if (!pt) return loc
+      if (pt.type === 'emetteur') {
+        const typeName = EMETTEUR_TYPES.find(e => e.id === pt.emetteurType)?.label ?? 'Émetteur'
+        return `${typeName} (${loc})`
+      }
+      if (pt.type === 'terminalFroid') {
+        const typeName = TERMINAL_FROID_TYPES.find(t => t.id === pt.terminalFroidType)?.label ?? 'Terminal froid'
+        return `${typeName} (${loc})`
+      }
+      return loc
     }
     if (flowDirections) {
       const fd = (flowDirections as Map<string, { fromId: string; toId: string }>).get(seg.id)
@@ -252,9 +307,9 @@ export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, 
       getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist,
         roleMap.get(s.id) ?? null, activeCalcId, allSegs, roleMap, flowDirections) === base)
   } else {
-    const baseRoute = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId, null, null, flowDirections)
+    const baseRoute = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId, allSegs, null, flowDirections)
     dupes = allSegs.filter(s => !s.name &&
-      getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId, null, null, flowDirections) === baseRoute)
+      getDefaultSegName(s, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, null, activeCalcId, allSegs, null, flowDirections) === baseRoute)
   }
 
   if (dupes.length <= 1) return base

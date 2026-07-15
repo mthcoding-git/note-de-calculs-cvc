@@ -1,7 +1,31 @@
 import { DEFAULT_MATERIALS } from '../data/materials'
+import { DEFAULT_MATERIALS_CHAUFFAGE } from '../data/materialsChauffage'
+export { DEFAULT_MATERIALS_CHAUFFAGE }
 import { DEFAULT_INSULATIONS } from '../data/insulations'
 import { DEFAULT_PDC_PARAMS, DEFAULT_PDC_PARAMS_ALIM_ECS, DEFAULT_PDC_PARAMS_ALIM_EF } from './pdcCalc'
 import { uid } from './idGen'
+import type { DisplayPrefs } from '../types'
+import { LOCAL_GAP, COL_PIPE_W, COL_LOCAL_OFFSET } from './projectActions'
+const LOCAL_W = 50
+
+export const DEFAULT_DISPLAY_PREFS: DisplayPrefs = {
+  ecs: {
+    unitDebit: 'm3/h', unitDp: 'Pa',
+    colorAller: '#dc2626', colorRetour: '#f97316', strokeWidth: 1.5,
+  },
+  ef: {
+    unitDebit: 'm3/h', unitDp: 'Pa',
+    colorAller: '#2563eb', colorRetour: '#2563eb', strokeWidth: 1.5,
+  },
+  chauffage: {
+    unitDebit: 'm3/h', unitDp: 'Pa', unitPuissance: 'W',
+    colorAller: '#dc2626', colorRetour: '#f97316', strokeWidth: 1.5,
+  },
+  eauglacee: {
+    unitDebit: 'm3/h', unitDp: 'Pa', unitPuissance: 'W',
+    colorAller: '#1d4ed8', colorRetour: '#60a5fa', strokeWidth: 1.5,
+  },
+}
 
 // ── Paramètres globaux ───────────────────────────────────────────────────────
 
@@ -12,6 +36,11 @@ export const DEFAULT_GLOBAL_PARAMS = {
 export const DEFAULT_CHAUFFAGE_PARAMS = {
   T_depart: 70,
   deltaT_reseau: 20,
+}
+
+export const DEFAULT_EAU_GLACEE_PARAMS = {
+  T_depart: 7,
+  deltaT_reseau: 5,
 }
 
 export const DEFAULT_ALIMENTATION_PARAMS = {
@@ -108,11 +137,6 @@ export function buildColumns(nCols: number, columnLevelIds?: any[]) {
   }))
 }
 
-// Largeur locale et décalage (layout du wizard, distinct de l'affichage App)
-const LOCAL_W          = 50
-const LOCAL_GAP        = 10
-const COL_PIPE_W       = 320
-const COL_LOCAL_OFFSET = COL_PIPE_W + 8 + 5  // 333
 
 function _maxGroupesParCol(nCols: number, nLevels: number, grid: Record<string, number>) {
   return Array.from({ length: nCols }, (_, c) => {
@@ -166,10 +190,13 @@ export function initProject() {
     alimentationParamsEF:  null,
     pdcParamsBouclageECS:  DEFAULT_PDC_PARAMS,
     pdcParamsChauffage:    DEFAULT_PDC_PARAMS,
+    pdcParamsEauGlacee:    DEFAULT_PDC_PARAMS,
     pdcParamsAlimECS:      DEFAULT_PDC_PARAMS_ALIM_ECS,
     pdcParamsAlimEF:       null,
     materialsECS:          DEFAULT_MATERIALS,
     materialsEF:           DEFAULT_MATERIALS,
+    materialsChauffage:    DEFAULT_MATERIALS_CHAUFFAGE,
+    materialsEauGlacee:    DEFAULT_MATERIALS_CHAUFFAGE,
     insulations:           DEFAULT_INSULATIONS,
     levels:                DEFAULT_LEVELS,
     lineYs:                DEFAULT_LINE_YS,
@@ -177,11 +204,16 @@ export function initProject() {
     columnXs:              DEFAULT_COLUMN_XS,
     chaufferie:            DEFAULT_CHAUFFERIE,
     chauffageParams:       DEFAULT_CHAUFFAGE_PARAMS,
+    eauGlaceeParams:       DEFAULT_EAU_GLACEE_PARAMS,
+    displayPrefs:          DEFAULT_DISPLAY_PREFS,
     segments:              [],
     points:                [],
     valves:                [],
     accessories:           [],
     locauxEF:              [],
+    locauxECS:             [],
+    locauxChauffage:       [],
+    locauxEauGlacee:       [],
   }
 }
 

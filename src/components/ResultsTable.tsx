@@ -3,8 +3,11 @@ import type { CalcMode } from '../types'
 import { computeSegUI } from '../utils/thermalCalc'
 import { getDisplayName } from '../utils/naming'
 import { FITTING_TYPES, EQUIPMENT_TYPES } from '../utils/pdcCalc'
+import { EMETTEUR_TYPES } from '../data/emetteurs'
+import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
 import { findMidpointLevelIndexAt } from '../utils/levelUtils'
 import { getModeFlags } from '../utils/calcModeFlags'
+import { fmtDpLabel, fmtDpCellVal } from '../utils/fmt'
 
 const fmt = (v, d) => { const n = Number(v); return typeof v === 'number' && Number.isFinite(n) ? n.toFixed(d) : '—' }
 const TOTAL_COLS = 21
@@ -45,7 +48,12 @@ function extractColonne(shortName, columns) {
   const nameFirst = clean(parts[0])
   const nameLast  = clean(parts[parts.length - 1])
   const isCol = n => columns?.some(c => !c.isGap && c.name === n)
-  return (isCol(nameFirst) && nameFirst === nameLast) ? nameFirst : null
+  if (isCol(nameFirst) && nameFirst === nameLast) return nameFirst
+  // Tronçon aller terminal vers émetteur : colonne en début, émetteur contient le nom de colonne
+  if (isCol(nameFirst) && parts[parts.length - 1].includes(nameFirst)) return nameFirst
+  // Tronçon retour depuis émetteur : émetteur en début (contient la colonne), colonne en fin
+  if (isCol(nameLast) && parts[0].includes(nameLast)) return nameLast
+  return null
 }
 
 function tAvalStyle(T_aval, T_depart) {
@@ -156,7 +164,7 @@ function SegRow({ row, segments, points, materials, insulations,
 
       <td className="rt-cell"><span className={cls(flowIsDefault)}>{flowRate != null ? flowRate.toFixed(3) : '—'}</span></td>
       <td className="rt-cell" style={{
-        color: velocityRedMin ? '#dc2626' : velocityOrangeMax ? '#f97316' : undefined,
+        color: (velocityRedMin || velocityOrangeMax) ? '#f97316' : undefined,
         fontWeight: (velocityRedMin || velocityOrangeMax) ? 700 : undefined }}>
         {velocity != null ? fmt(velocity, 3) : '—'}
       </td>
@@ -350,7 +358,8 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
   const e_encr = mat?.encrassement ? (seg.encrassementEpaisseur ?? mat?.encrassementEpaisseur ?? 0) : 0
   const di_eff = (di != null && e_encr > 0) ? Math.max(1, di - 2 * e_encr) : null
   const fr    = networkFlows?.get(seg.id)
-  const { isAlimEF, isAlimMode, isChauffage } = getModeFlags(activeCalcId)
+  const { isAlimEF, isAlimMode, isChauffage, isEauGlacee: isEG } = getModeFlags(activeCalcId)
+  const isChaufOrEGLocal = isChauffage || isEG
   const alimResult = isAlimMode ? alimentationResults?.get(seg.id) : null
   const displayFlowRate = isAlimMode
     ? (alimResult?.flowRateForPdc != null && alimResult.flowRateForPdc > 0 ? alimResult.flowRateForPdc * 3.6 : null)
@@ -362,21 +371,16 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
   const hasCoef       = !!pdcParams?.coefPompeActif
   const unite         = pdcParams?.uniteAffichage ?? 'Pa'
 
-  const fmtDp = (pa) => {
-    if (pa == null || !Number.isFinite(pa)) return '—'
-    if (unite === 'mmCE') return `${(pa / 9.81).toFixed(0)}`
-    if (unite === 'both') return `${Math.round(pa)} / ${(pa / 9.81).toFixed(0)}`
-    return `${Math.round(pa)}`
-  }
+  const fmtDp = (pa) => fmtDpCellVal(pa, unite)
 
   const isSelected = selectedIds?.includes(seg.id)
   const isAller    = segType === 'aller'
   const role       = roleMap?.get(seg.id)
   const isAntenne      = role === 'antenne'
   const isLeafBranchEF = isAlimEF && role === 'leaf-branch'
-  const badgeText  = isChauffage && isAntenne ? (isAller ? 'A' : 'R')
+  const badgeText  = isChaufOrEGLocal && isAntenne ? (isAller ? 'A' : 'R')
     : isAntenne ? 'ANT' : role === 'collecteur-aller' ? 'CA' : role === 'collecteur-retour' ? 'CR' : isAller ? 'A' : 'R'
-  const badgeCls   = (isAntenne && !isChauffage) ? 'rt-badge-ant' : isAller ? 'rt-badge-a' : 'rt-badge-r'
+  const badgeCls   = (isAntenne && !isChaufOrEGLocal) ? 'rt-badge-ant' : isAller ? 'rt-badge-a' : 'rt-badge-r'
   const indent     = depth * 13
 
   const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections)
@@ -433,7 +437,7 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
           <td className="rt-cell rt-cell-name" {...rs({ paddingLeft: 6 + indent })}>
             {!isAlimEF && <span className={badgeCls}>{badgeText}</span>}
             {depth > 0 && <span className="rt-depth">{'└─'}</span>}
-            {(isAntenne || isLeafBranchEF) && <span style={{ marginRight: 4 }}>↳</span>}
+            {(isAntenne || isLeafBranchEF) && !isChaufOrEGLocal && <span style={{ marginRight: 4 }}>↳</span>}
             {shortName}
           </td>
           <td className="rt-cell rt-cell-sm" {...rs()}>{levelName}</td>
@@ -584,6 +588,7 @@ interface ResultsTableProps {
   activeCalcId: CalcMode | null
   activeTable: string
   efFlowRowsArr: any[]
+  ecsFlowRowsArr?: Array<{ prodId: string; rows: any[]; roleMap: any; pdcCumResults: any; pdcCumAlimResults?: any }> | null
   segments: any[]; points: any[]; materials: any[]; insulations: any[]
   levels: any[]; lineYs: number[]; columns: any[]; columnXs: number[]; chaufferie: any
   flowDirections: any; networkFlows: any; thermalResults: any
@@ -592,6 +597,13 @@ interface ResultsTableProps {
   globalParams: any; selectedIds: any[]; onSelectIds: any; onCircuitSelect: any
   height: number
   chauffageFlows?: any; chauffageParams?: any
+  chauffageSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string>; secondaryCriticalSegIds: Set<string>; secondaryCriticalDp: number | null; criticalDp: number | null } | null
+  chauffagePumpHMT?: Map<string, { hmt: number | null; criticalSegIds: Set<string>; isSecondary: boolean }>
+  chauffageFlowRowsArr?: Array<{ prodId: string; rows: any[]; roleMap: any; pdcCumResults: any; chauffageSplitCumDp: any; chauffagePumpHMT: any }> | null
+  eauGlaceeFlows?: any
+  eauGlaceeSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string>; secondaryCriticalSegIds: Set<string>; secondaryCriticalDp: number | null; criticalDp: number | null } | null
+  eauGlaceePumpHMT?: Map<string, { hmt: number | null; criticalSegIds: Set<string>; isSecondary: boolean }>
+  eauGlaceeFlowRowsArr?: Array<{ prodId: string; rows: any[]; roleMap: any; pdcCumResults: any; chauffageSplitCumDp: any; chauffagePumpHMT: any }> | null
 }
 
 export default function ResultsTable({
@@ -599,6 +611,7 @@ export default function ResultsTable({
   activeCalcId,
   activeTable,
   efFlowRowsArr,
+  ecsFlowRowsArr = null,
   segments, points, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie,
   flowDirections, networkFlows, thermalResults,
@@ -608,13 +621,25 @@ export default function ResultsTable({
   globalParams, selectedIds, onSelectIds, onCircuitSelect,
   height,
   chauffageFlows, chauffageParams,
+  chauffageSplitCumDp = null,
+  chauffagePumpHMT = null,
+  chauffageFlowRowsArr = null,
+  eauGlaceeFlows,
+  eauGlaceeSplitCumDp = null,
+  eauGlaceePumpHMT = null,
+  eauGlaceeFlowRowsArr = null,
 }: ResultsTableProps) {
   const selectedRowRef = useRef(null)
   useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [selectedIds])
 
-  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, hasPdc, isChauffage } = getModeFlags(activeCalcId)
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, hasPdc, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
+  const isChaufOrEG = isChauffage || isEauGlacee
+  const activeChaufFlows = isChauffage ? chauffageFlows : isEauGlacee ? eauGlaceeFlows : null
+  const activeSplitCumDp = isChauffage ? chauffageSplitCumDp : isEauGlacee ? eauGlaceeSplitCumDp : null
+  const activePumpHMT = isChauffage ? chauffagePumpHMT : isEauGlacee ? eauGlaceePumpHMT : null
+  const activeChaufFlowRowsArr = isChauffage ? chauffageFlowRowsArr : isEauGlacee ? eauGlaceeFlowRowsArr : null
   const isEF = isAlimEF
 
   const displayRows = useMemo(() => {
@@ -622,15 +647,18 @@ export default function ResultsTable({
     let lastCollecteurRole = null
     let pastFlowEnd = false
     let prevKind = null
+    let insideMelange = false
     for (const row of (rows ?? [])) {
+      if (row.kind === 'melange-header') insideMelange = true
+      if (row.kind === 'melange-end')    insideMelange = false
       if (row.kind === 'separation') continue
       if (row.kind === 'flow-end') pastFlowEnd = true
       // En alimentation, tous les segments aller sont avant flow-end → pastFlowEnd toujours false
       if (row.kind === 'segment' && (!pastFlowEnd || isAlimMode)) {
         const r = roleMap?.get(row.seg.id)
         const isCollecteur = r === 'collecteur-aller' || r === 'collecteur-retour'
-        const afterBanner = prevKind === 'flow-start' || prevKind === 'flow-end' || prevKind === 'col-header' || prevKind === 'junction' || prevKind === 'collecteur-header'
-        if (isCollecteur && r !== lastCollecteurRole && !afterBanner) {
+        const afterBanner = prevKind === 'flow-start' || prevKind === 'flow-end' || prevKind === 'col-header' || prevKind === 'junction' || prevKind === 'collecteur-header' || prevKind === 'melange-header' || prevKind === 'melange-end'
+        if (isCollecteur && r !== lastCollecteurRole && !afterBanner && !insideMelange) {
           result.push({ kind: 'collecteur-header', role: r })
         }
         lastCollecteurRole = isCollecteur ? r : null
@@ -671,9 +699,9 @@ export default function ResultsTable({
   if (isPdc) {
     const isAlimModePdc = isAlimMode
     const isAlimECSPdc  = isAlimModePdc
-    const prodLabel     = isChauffage ? 'Production chauffage' : 'Production ECS'
-    const cumDpLabel    = isChauffage ? 'ΔP depuis prod. CH' : 'ΔP depuis prod. ECS'
-    const flowsForPdc   = isChauffage ? chauffageFlows : networkFlows
+    const prodLabel     = isChauffage ? 'Production chauffage' : isEauGlacee ? 'Production eau glacée' : 'Production ECS'
+    const cumDpLabel    = isChaufOrEG ? 'ΔP cumulé' : 'ΔP depuis prod. ECS'
+    const flowsForPdc   = isChauffage ? chauffageFlows : isEauGlacee ? eauGlaceeFlows : networkFlows
     const isDarcy       = pdcParams?.methodeReg === 'darcy-colebrook'
     const isAccessoires = pdcParams?.methodeSing === 'accessoires'
     const hasEquip      = !!pdcParams?.equipementsActifs
@@ -704,6 +732,74 @@ export default function ResultsTable({
       pdcRows = flatRows
     }
 
+    // ECS bouclage multi-production : aplatir ecsFlowRowsArr avec banners + circuit critique par partition
+    if (isBouclage && ecsFlowRowsArr && ecsFlowRowsArr.length > 1) {
+      const mergedRoleMap = new Map()
+      for (const entry of ecsFlowRowsArr) {
+        for (const [k, v] of (entry.roleMap ?? [])) mergedRoleMap.set(k, v)
+      }
+      pdcRoleMap = mergedRoleMap
+      const flatRows: any[] = []
+      ecsFlowRowsArr.forEach((entry, idx) => {
+        const networkLabel = `Réseau n°${idx + 1}`
+        if (idx > 0) flatRows.push({ kind: 'ef-source-spacer' })
+        flatRows.push({ kind: 'ecs-network-header', networkLabel })
+        for (const row of (entry.rows ?? [])) {
+          if (row.kind === 'separation') continue
+          flatRows.push(row)
+        }
+        flatRows.push({ kind: 'ecs-partition-critical', pdcCumResults: entry.pdcCumResults, networkLabel })
+      })
+      pdcRows = flatRows
+    }
+
+    // ECS alimentation multi-production : aplatir ecsFlowRowsArr avec banners
+    if (isAlimECS && ecsFlowRowsArr && ecsFlowRowsArr.length > 1) {
+      const mergedRoleMap = new Map()
+      for (const entry of ecsFlowRowsArr) {
+        for (const [k, v] of (entry.roleMap ?? [])) mergedRoleMap.set(k, v)
+      }
+      pdcRoleMap = mergedRoleMap
+      const flatRows: any[] = []
+      ecsFlowRowsArr.forEach((entry, idx) => {
+        const networkLabel = `Réseau n°${idx + 1}`
+        if (idx > 0) flatRows.push({ kind: 'ef-source-spacer' })
+        flatRows.push({ kind: 'ecs-network-header', networkLabel })
+        for (const row of (entry.rows ?? [])) {
+          if (row.kind === 'separation' || row.kind === 'flow-end') continue
+          flatRows.push(row)
+        }
+      })
+      pdcRows = flatRows
+    }
+
+    // Chauffage / EG multi-production : aplatir avec headers + circuit critique par partition
+    if (isChaufOrEG && activeChaufFlowRowsArr && activeChaufFlowRowsArr.length > 1) {
+      const mergedRoleMap = new Map()
+      for (const entry of activeChaufFlowRowsArr) {
+        for (const [k, v] of (entry.roleMap ?? [])) mergedRoleMap.set(k, v)
+      }
+      pdcRoleMap = mergedRoleMap
+      const flatRows: any[] = []
+      activeChaufFlowRowsArr.forEach((entry, idx) => {
+        const networkLabel = `Réseau n°${idx + 1}`
+        if (idx > 0) flatRows.push({ kind: 'ef-source-spacer' })
+        flatRows.push({ kind: 'ecs-network-header', networkLabel })
+        for (const row of (entry.rows ?? [])) {
+          if (row.kind === 'separation') continue
+          flatRows.push(row)
+        }
+        flatRows.push({
+          kind: 'chauffage-partition-critical',
+          pdcCumResults: entry.pdcCumResults,
+          chauffageSplitCumDp: entry.chauffageSplitCumDp,
+          chauffagePumpHMT: entry.chauffagePumpHMT,
+          networkLabel,
+        })
+      })
+      pdcRows = flatRows
+    }
+
     // Colonnes "tot" uniquement si au moins un tronçon a >1 accessoire ou >1 équipement
     const needsSingTot = isAccessoires && pdcRows.some(r =>
       r.kind === 'segment' && (r.seg.fittings ?? []).filter(f => (f.count ?? 0) > 0).length > 1
@@ -727,6 +823,9 @@ export default function ResultsTable({
       ? 7 + (hasCoef ? 1 : 0)   // ΔP frottement + majoré + Cote amont + Cote aval + Δh + ΔP stat + P dispo + P stat
       : 3 + (hasCoef ? 1 : 0)   // ΔP total + majoré + ΔP depuis prod. ECS
     const nPdcCols  = fixedCols + singCols + equipCols + totalCols
+
+    const fmtDpLocal = (pa: number) => fmtDpLabel(pa, unite)
+    const fmtDpCell  = (pa: number) => fmtDpCellVal(pa, unite)
 
     const activeAlimResults = isAlimEF ? alimentationResultsEF : alimentationResults
     const sharedPdc = {
@@ -810,7 +909,7 @@ export default function ResultsTable({
             </thead>
             <tbody>
               {pdcRows.length === 0 && (
-                <tr><td colSpan={nPdcCols} className="rt-empty">{isAlimEF ? 'Aucun tronçon — tracez des tronçons EF et placez une Arrivée EF' : isChauffage ? 'Aucun tronçon — tracez des tronçons CH et placez une Production chauffage' : 'Aucun tronçon — tracez des tronçons et placez une Production ECS'}</td></tr>
+                <tr><td colSpan={nPdcCols} className="rt-empty">{isAlimEF ? 'Aucun tronçon — tracez des tronçons EF et placez une Arrivée EF' : isChauffage ? 'Aucun tronçon — tracez des tronçons CH et placez une Production chauffage' : isEauGlacee ? 'Aucun tronçon — tracez des tronçons EG et placez une Production eau glacée' : 'Aucun tronçon — tracez des tronçons et placez une Production ECS'}</td></tr>
               )}
               {pdcRows.map((row, i) => {
                 if (row.kind === 'ef-source-banner') return (
@@ -821,6 +920,118 @@ export default function ResultsTable({
                 if (row.kind === 'ef-source-spacer') return (
                   <tr key={`ef-spacer-${i}`} className="rt-ef-spacer"><td colSpan={nPdcCols} /></tr>
                 )
+                if (row.kind === 'ecs-network-header') return (
+                  <tr key={`net-hdr-${i}`}>
+                    <td colSpan={nPdcCols} style={{
+                      padding: '5px 12px',
+                      background: '#f1f5f9',
+                      borderTop: '2px solid #cbd5e1',
+                      borderBottom: '1px solid #e2e8f0',
+                      fontWeight: 600,
+                      fontSize: 11,
+                      color: '#374151',
+                    }}>
+                      {row.networkLabel}
+                    </td>
+                  </tr>
+                )
+                if (row.kind === 'chauffage-partition-critical') {
+                  const fmtDpCrit = (pa: number) => fmtDpLabel(pa, unite)
+                  const circuits: { label: string; critIds: Set<string>; hmt: number | null }[] = []
+                  const splitCumDp = row.chauffageSplitCumDp
+                  const pumpHMT: Map<string, any> = row.chauffagePumpHMT ?? new Map()
+                  const primEntry = pumpHMT ? [...pumpHMT.entries()].find(([, v]) => !v.isSecondary) : null
+                  const primIds: Set<string> = splitCumDp?.criticalSegIds ?? row.pdcCumResults?.criticalSegIds ?? new Set()
+                  if (primIds.size > 0 || primEntry != null) {
+                    circuits.push({ label: `${row.networkLabel} — circuit primaire`, critIds: primIds, hmt: primEntry?.[1].hmt ?? row.pdcCumResults?.criticalDp ?? null })
+                  }
+                  const secEntries = pumpHMT ? [...pumpHMT.entries()].filter(([, v]) => v.isSecondary) : []
+                  if (secEntries.length > 0) {
+                    secEntries.forEach(([, e], si) => {
+                      circuits.push({
+                        label: secEntries.length > 1 ? `${row.networkLabel} — circuit mélange n°${si + 1}` : `${row.networkLabel} — circuit mélange`,
+                        critIds: e.criticalSegIds, hmt: e.hmt,
+                      })
+                    })
+                  } else if (splitCumDp?.secondaryCriticalSegIds?.size > 0) {
+                    circuits.push({
+                      label: `${row.networkLabel} — circuit mélange`,
+                      critIds: splitCumDp.secondaryCriticalSegIds,
+                      hmt: splitCumDp.secondaryCriticalDp,
+                    })
+                  }
+                  if (circuits.length === 0) return null
+                  return (
+                    <React.Fragment key={`ch-crit-${i}`}>
+                      {circuits.map(({ label, critIds, hmt }) => {
+                        if (critIds.size === 0 && (hmt == null || hmt === 0)) return null
+                        const arr = [...critIds]
+                        const isAct = arr.length > 0 && arr.every(id => selectedIds?.includes(id))
+                        return (
+                          <tr key={label}>
+                            <td colSpan={nPdcCols} style={{ padding: '6px 12px', borderTop: '1px solid #e5e7eb', background: '#f8fafc' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                <span style={{ fontSize: 10, color: '#374151' }}>
+                                  <strong style={{ color: '#0f172a', marginRight: 4 }}>{label}</strong>
+                                  — chemin le plus défavorisé
+                                  {hmt != null && hmt !== 0 && (
+                                    <span style={{ marginLeft: 10, fontFamily: 'ui-monospace, monospace', color: '#2563eb', fontWeight: 600 }}>
+                                      ΔP = {fmtDpCrit(hmt)}
+                                    </span>
+                                  )}
+                                </span>
+                                {arr.length > 0 && (
+                                  <button onClick={() => onCircuitSelect?.(isAct ? [] : arr)} style={{
+                                    fontSize: 9, padding: '2px 9px', borderRadius: 4, cursor: 'pointer',
+                                    background: isAct ? '#dbeafe' : '#e0f2fe',
+                                    border: `1px solid ${isAct ? '#93c5fd' : '#7dd3fc'}`,
+                                    color: isAct ? '#1d4ed8' : '#0369a1', fontWeight: 600, flexShrink: 0 as const,
+                                  }}>
+                                    {isAct ? 'Masquer' : 'Voir le circuit'}
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </React.Fragment>
+                  )
+                }
+                if (row.kind === 'ecs-partition-critical') {
+                  const pCritIds = row.pdcCumResults?.criticalSegIds
+                  const pCritDp  = row.pdcCumResults?.criticalDp
+                  const pLeafId  = row.pdcCumResults?.criticalLeafSegId
+                  const pCritCol = pLeafId ? (segToCol?.get(pLeafId) ?? null) : null
+                  if (!pCritIds || pCritIds.size === 0) return null
+                  const pCritArr = Array.from(pCritIds)
+                  const pIsActive = pCritArr.every(id => selectedIds?.includes(id))
+                  return (
+                    <tr key={`ecs-crit-${i}`}>
+                      <td colSpan={nPdcCols} style={{ padding: '6px 12px', borderTop: '1px solid #e5e7eb', background: '#f8fafc' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <span style={{ fontSize: 10, color: '#374151' }}>
+                            {row.networkLabel && <strong style={{ marginRight: 4, color: '#0f172a' }}>{row.networkLabel}</strong>}{'— circuit le plus défavorisé'}
+                            {pCritCol != null && <strong style={{ marginLeft: 5, color: '#0f172a' }}>{pCritCol}</strong>}
+                            {pCritDp != null && (
+                              <span style={{ marginLeft: 10, fontFamily: 'ui-monospace, monospace', color: '#2563eb', fontWeight: 600 }}>
+                                ΔP cumulé = {fmtDpLabel(pCritDp, unite)}
+                              </span>
+                            )}
+                          </span>
+                          <button onClick={() => onCircuitSelect?.(pIsActive ? [] : pCritArr)} style={{
+                            fontSize: 9, padding: '2px 9px', borderRadius: 4, cursor: 'pointer',
+                            background: pIsActive ? '#dbeafe' : '#e0f2fe',
+                            border: `1px solid ${pIsActive ? '#93c5fd' : '#7dd3fc'}`,
+                            color: pIsActive ? '#1d4ed8' : '#0369a1', fontWeight: 600, flexShrink: 0 as const,
+                          }}>
+                            {pIsActive ? 'Masquer' : 'Voir le circuit'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                }
                 if (row.kind === 'flow-start') return (
                   <tr key="flow-start" className="rt-flow-banner rt-flow-banner-start">
                     <td colSpan={nPdcCols}>▶ {prodLabel} — Départ</td>
@@ -841,23 +1052,52 @@ export default function ResultsTable({
                     <td colSpan={nPdcCols}>{row.name}</td>
                   </tr>
                 )
-                if (row.kind === 'junction') return (
-                  <tr key={`junc-${row.ptId}-${i}`} className="rt-junction-row"
-                      onClick={() => onSelectIds?.([row.ptId])} style={{ cursor: 'pointer' }}>
-                    <td colSpan={nPdcCols} className="rt-junction-td">
-                      <span className="rt-junction-icon">⑂</span>
-                      <span className="rt-junction-title">Nœud</span>
-                      {row.incomingCount != null && (
-                        <span className="rt-junction-count"> · {row.incomingCount} tronçons</span>
-                      )}
-                    </td>
-                  </tr>
-                )
+                if (row.kind === 'junction') return isChaufOrEG
+                  ? (
+                    <tr key={`junc-${row.ptId}-${i}`} className="rt-collecteur-header">
+                      <td colSpan={nPdcCols}></td>
+                    </tr>
+                  ) : (
+                    <tr key={`junc-${row.ptId}-${i}`} className="rt-junction-row"
+                        onClick={() => onSelectIds?.([row.ptId])} style={{ cursor: 'pointer' }}>
+                      <td colSpan={nPdcCols} className="rt-junction-td">
+                        <span className="rt-junction-icon">⑂</span>
+                        <span className="rt-junction-title">Nœud</span>
+                        {row.incomingCount != null && (
+                          <span className="rt-junction-count"> · {row.incomingCount} tronçons</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                if (isChaufOrEG && row.kind === 'melange-header') {
+                  const totalMel = pdcRows.filter(r => r.kind === 'melange-header').length
+                  return (
+                    <tr key={`melange-h-${row.mixId}-${i}`} className="rt-melange-header">
+                      <td colSpan={nPdcCols}>
+                        {totalMel > 1 ? `Circuit mélangé ${row.index}` : 'Circuit mélangé'}
+                      </td>
+                    </tr>
+                  )
+                }
+                if (isChaufOrEG && row.kind === 'melange-end') {
+                  const totalMel = pdcRows.filter(r => r.kind === 'melange-header').length
+                  return (
+                    <tr key={`melange-end-${i}`} className="rt-melange-end">
+                      <td colSpan={nPdcCols} style={{ padding: 0 }}>
+                        <div style={{ borderTop: '1px dashed #cbd5e1', padding: '2px 10px' }}>
+                          {totalMel > 1 ? `fin circuit mélangé ${row.index}` : 'fin circuit mélangé'}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                }
                 if (row.kind !== 'segment') return null
                 const pdcResult    = pdcResults?.get(row.seg.id)
                 const cumDp        = isAlimECSPdc
                   ? (pdcCumAlimResults?.segCumDp?.get(row.seg.id) ?? null)
-                  : (pdcCumResults?.segCumDp?.get(row.seg.id) ?? null)
+                  : isChaufOrEG
+                    ? (activeSplitCumDp?.segCumDp.get(row.seg.id) ?? pdcCumResults?.segCumDp?.get(row.seg.id) ?? null)
+                    : (pdcCumResults?.segCumDp?.get(row.seg.id) ?? null)
                 const pressionAval = isAlimECSPdc
                   ? (pdcCumAlimResults?.segPressionAval?.get(row.seg.id) ?? null)
                   : undefined
@@ -882,26 +1122,128 @@ export default function ResultsTable({
                   ? (toId != null && points.find(p => p.id === toId)?.type === 'groupe')
                   : false
                 const isSelected   = selectedIds?.includes(row.seg.id)
+                const emToId = isChaufOrEG && row.seg.type === 'aller' ? (flowDirections?.get(row.seg.id)?.toId ?? null) : null
+                const emPtPdc = emToId ? points?.find((p: any) => p.id === emToId) : null
+                const showEmPdc = emPtPdc?.type === 'emetteur' || emPtPdc?.type === 'terminalFroid'
+                const allerCumDpForEm = showEmPdc
+                  ? (activeSplitCumDp?.segCumDp.get(row.seg.id) ?? pdcCumResults?.segCumDp?.get(row.seg.id) ?? null)
+                  : null
+                const emCumDp = allerCumDpForEm != null
+                  ? allerCumDpForEm + ((emPtPdc?.dp_emetteur ?? 0) + (emPtPdc?.dp_vanne_th ?? 0))
+                  : null
                 return (
-                  <SegRowPdc key={row.seg.id} row={row}
-                    pdcResult={pdcResult} cumDp={cumDp} postJunction={postJunc} pressionAval={pressionAval}
-                    dpStatic={dpStatic} deltaH={deltaH} coteAmont={coteAmont} coteAval={coteAval} pStatAval={pStatAval}
-                    isTerminalGroupePuisage={isTerminalGP}
-                    selectedIds={selectedIds}
-                    rowRef={isSelected ? selectedRowRef : null}
-                    {...sharedPdc} />
+                  <React.Fragment key={row.seg.id}>
+                    <SegRowPdc row={row}
+                      pdcResult={pdcResult} cumDp={cumDp} postJunction={postJunc} pressionAval={pressionAval}
+                      dpStatic={dpStatic} deltaH={deltaH} coteAmont={coteAmont} coteAval={coteAval} pStatAval={pStatAval}
+                      isTerminalGroupePuisage={isTerminalGP}
+                      selectedIds={selectedIds}
+                      rowRef={isSelected ? selectedRowRef : null}
+                      {...sharedPdc} />
+                    {showEmPdc && (
+                      <tr className="rt-emetteur-row"
+                          onClick={() => onSelectIds?.([emPtPdc!.id])}
+                          style={{ cursor: 'pointer', background: '#f1f5f9' }}>
+                        <td className="rt-cell rt-cell-name" colSpan={nPdcCols - 2}
+                            style={{ paddingLeft: 24 }}>
+                          <span style={{ display: 'inline-block', background: emPtPdc!.type === 'terminalFroid' ? '#1e40af' : '#64748b', color: '#fff', fontSize: 9,
+                            fontWeight: 700, borderRadius: 3, padding: '1px 4px', marginRight: 6 }}>
+                            {emPtPdc!.type === 'terminalFroid' ? 'TF' : 'ÉM'}
+                          </span>
+                          {(() => {
+                            const typeLabel = emPtPdc!.type === 'terminalFroid'
+                              ? TERMINAL_FROID_TYPES.find(t => t.id === emPtPdc!.terminalFroidType)?.label
+                              : EMETTEUR_TYPES.find(e => e.id === emPtPdc!.emetteurType)?.label
+                            return typeLabel
+                              ? <span style={{ color: '#374151', fontWeight: 600, marginRight: 6 }}>{typeLabel}</span>
+                              : null
+                          })()}
+                          <span style={{ color: '#374151' }}>{emPtPdc!.name ?? ''}</span>
+                          {(emPtPdc!.dp_emetteur != null || emPtPdc!.dp_vanne_th != null) && (
+                            <span style={{ fontSize: 10, color: '#6b7280', marginLeft: 10 }}>
+                              {emPtPdc!.dp_emetteur != null && `ΔP émetteur : ${fmtDpLocal(emPtPdc!.dp_emetteur)}`}
+                              {emPtPdc!.dp_emetteur != null && emPtPdc!.dp_vanne_th != null && '  ·  '}
+                              {emPtPdc!.dp_vanne_th != null && `ΔP vanne th. : ${fmtDpLocal(emPtPdc!.dp_vanne_th)}`}
+                              <strong style={{ marginLeft: 8, color: '#374151' }}>
+                                Total : {fmtDpLocal((emPtPdc!.dp_emetteur ?? 0) + (emPtPdc!.dp_vanne_th ?? 0))}
+                              </strong>
+                            </span>
+                          )}
+                        </td>
+                        <td className="rt-cell rt-result" style={{ fontWeight: emCumDp != null ? 600 : undefined }}>
+                          {emCumDp != null ? fmtDpCell(emCumDp) : '—'}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 )
               })}
               {!isAlimECSPdc && (() => {
-                const critIds  = pdcCumResults?.criticalSegIds
-                const critDp   = pdcCumResults?.criticalDp
+                const fmtCrit = (pa: number) => fmtDpLabel(pa, unite)
+                const btnStyle = (active: boolean) => ({
+                  fontSize: 9, padding: '2px 9px', borderRadius: 4, cursor: 'pointer',
+                  background: active ? '#dbeafe' : '#e0f2fe',
+                  border: `1px solid ${active ? '#93c5fd' : '#7dd3fc'}`,
+                  color: active ? '#1d4ed8' : '#0369a1', fontWeight: 600, flexShrink: 0 as const,
+                })
+                if (isChaufOrEG) {
+                  if (activeChaufFlowRowsArr && activeChaufFlowRowsArr.length > 1) return null
+                  const circuits: { label: string; critIds: Set<string>; hmt: number | null }[] = []
+                  const primEntry = activePumpHMT ? [...activePumpHMT.entries()].find(([, v]) => !v.isSecondary) : null
+                  const primIds = activeSplitCumDp?.criticalSegIds ?? new Set<string>()
+                  if (primIds.size > 0 || primEntry != null) {
+                    circuits.push({ label: 'Circuit primaire', critIds: primIds, hmt: primEntry?.[1].hmt ?? null })
+                  }
+                  const secEntries = activePumpHMT ? [...activePumpHMT.entries()].filter(([, v]) => v.isSecondary) : []
+                  if (secEntries.length > 0) {
+                    secEntries.forEach(([, e], i) => {
+                      circuits.push({
+                        label: secEntries.length > 1 ? `Circuit mélange n°${i + 1}` : 'Circuit mélange',
+                        critIds: e.criticalSegIds, hmt: e.hmt,
+                      })
+                    })
+                  } else if (activeSplitCumDp?.secondaryCriticalSegIds?.size > 0) {
+                    circuits.push({
+                      label: 'Circuit mélange',
+                      critIds: activeSplitCumDp.secondaryCriticalSegIds,
+                      hmt: activeSplitCumDp.secondaryCriticalDp,
+                    })
+                  }
+                  if (circuits.length === 0) return null
+                  return circuits.map(({ label, critIds, hmt }) => {
+                    const arr = [...critIds]
+                    if (arr.length === 0 && (hmt == null || hmt === 0)) return null
+                    const active = arr.length > 0 && arr.every(id => selectedIds?.includes(id))
+                    return (
+                      <tr key={label}>
+                        <td colSpan={nPdcCols} style={{ padding: '6px 12px', borderTop: '1px solid #e5e7eb', background: '#f8fafc' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <span style={{ fontSize: 10, color: '#374151' }}>
+                              {label} — chemin le plus défavorisé
+                              {hmt != null && hmt !== 0 && (
+                                <span style={{ marginLeft: 10, fontFamily: 'ui-monospace, monospace', color: '#2563eb', fontWeight: 600 }}>
+                                  ΔP = {fmtCrit(hmt)}
+                                </span>
+                              )}
+                            </span>
+                            {arr.length > 0 && (
+                              <button onClick={() => onCircuitSelect?.(active ? [] : arr)} style={btnStyle(active)}>
+                                {active ? 'Masquer' : 'Voir le circuit'}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                }
+                // Multi-production — récapitulatif global masqué (chaque partition a le sien)
+                if (isBouclage && ecsFlowRowsArr && ecsFlowRowsArr.length > 1) return null
+                if (isChaufOrEG && activeChaufFlowRowsArr && activeChaufFlowRowsArr.length > 1) return null
+                const critIds  = isChaufOrEG ? (activeSplitCumDp?.criticalSegIds ?? pdcCumResults?.criticalSegIds) : pdcCumResults?.criticalSegIds
+                const critDp   = isChaufOrEG ? (activeSplitCumDp?.criticalDp    ?? pdcCumResults?.criticalDp)    : pdcCumResults?.criticalDp
                 const leafId   = pdcCumResults?.criticalLeafSegId
                 const critCol  = leafId ? (segToCol?.get(leafId) ?? null) : null
-                const fmtCrit  = (pa: number) => {
-                  if (unite === 'mmCE') return `${(pa / 9.81).toFixed(0)} mmCE`
-                  if (unite === 'both') return `${Math.round(pa)} Pa / ${(pa / 9.81).toFixed(0)} mmCE`
-                  return `${Math.round(pa)} Pa`
-                }
                 if (!critIds || critIds.size === 0) return null
                 const critArr = Array.from(critIds)
                 const isActive = critArr.every(id => selectedIds?.includes(id))
@@ -910,21 +1252,15 @@ export default function ResultsTable({
                     <td colSpan={nPdcCols} style={{ padding: '6px 12px', borderTop: '1px solid #e5e7eb', background: '#f8fafc' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         <span style={{ fontSize: 10, color: '#374151' }}>
-                          Circuit le plus défavorisé :
-                          <strong style={{ marginLeft: 5, color: '#0f172a' }}>{critCol ?? '—'}</strong>
+                          Circuit le plus défavorisé
+                          {critCol != null && <strong style={{ marginLeft: 5, color: '#0f172a' }}>{critCol}</strong>}
                           {critDp != null && (
                             <span style={{ marginLeft: 10, fontFamily: 'ui-monospace, monospace', color: '#2563eb', fontWeight: 600 }}>
                               ΔP cumulé = {fmtCrit(critDp)}
                             </span>
                           )}
                         </span>
-                        <button
-                          onClick={() => onCircuitSelect?.(isActive ? [] : critArr)}
-                          style={{ fontSize: 9, padding: '2px 9px', borderRadius: 4, cursor: 'pointer',
-                            background: isActive ? '#dbeafe' : '#e0f2fe',
-                            border: `1px solid ${isActive ? '#93c5fd' : '#7dd3fc'}`,
-                            color: isActive ? '#1d4ed8' : '#0369a1', fontWeight: 600,
-                            flexShrink: 0 }}>
+                        <button onClick={() => onCircuitSelect?.(isActive ? [] : critArr)} style={btnStyle(isActive)}>
                           {isActive ? 'Masquer' : 'Voir le circuit'}
                         </button>
                       </div>
@@ -939,21 +1275,46 @@ export default function ResultsTable({
     )
   }
 
-  // ── Chauffage ────────────────────────────────────────────────────────────────
-  if (isChauffage) {
-    const CHAUF_COLS = 10
-    const V_LOW = 0.2, V_WARN = 1.0, V_MAX = 1.5
-    const J_LOW = 100, J_HIGH = 250
+  // ── Chauffage / EG multi-production : N sections empilées ────────────────────
+  if (isChaufOrEG && activeChaufFlowRowsArr && activeChaufFlowRowsArr.length > 1) {
+    const CHAUF_COLS = 11
+    const V_LOW = 0.2, V_MAX = 1.5
+    const J_HIGH = 150
     const velStyle = (v: number | null | undefined) => {
       if (v == null) return {}
-      if (v < V_LOW || v > V_MAX) return { color: '#dc2626', fontWeight: 700 }
-      if (v > V_WARN) return { color: '#f97316', fontWeight: 700 }
+      if (v < V_LOW || v > V_MAX) return { color: '#f97316', fontWeight: 700 }
       return {}
     }
     const jStyle = (j: number | null | undefined) => {
       if (j == null) return {}
-      if (j < J_LOW || j > J_HIGH) return { color: '#dc2626', fontWeight: 700 }
+      if (j > J_HIGH) return { color: '#f97316', fontWeight: 700 }
       return {}
+    }
+    const fmtDpCh = (pa: number) => fmtDpLabel(pa, pdcParams?.uniteAffichage ?? 'Pa')
+    const processEntryRows = (rawRows: any[], entryRoleMap: any) => {
+      const result: any[] = []
+      let lastCR: string | null = null
+      let insideMelange = false
+      let prevKind: string | null = null
+      for (const row of (rawRows ?? [])) {
+        if (row.kind === 'melange-header') insideMelange = true
+        if (row.kind === 'melange-end')    insideMelange = false
+        if (row.kind === 'separation') continue
+        if (row.kind === 'segment') {
+          const r = entryRoleMap?.get(row.seg.id)
+          const isCollecteur = r === 'collecteur-aller' || r === 'collecteur-retour'
+          const afterBanner = prevKind === 'flow-start' || prevKind === 'flow-end' || prevKind === 'col-header' || prevKind === 'junction' || prevKind === 'collecteur-header' || prevKind === 'melange-header' || prevKind === 'melange-end'
+          if (isCollecteur && r !== lastCR && !afterBanner && !insideMelange) {
+            result.push({ kind: 'collecteur-header', role: r })
+          }
+          lastCR = isCollecteur ? r : null
+        } else if (row.kind !== 'segment') {
+          lastCR = null
+        }
+        prevKind = row.kind
+        result.push(row)
+      }
+      return result
     }
     return (
       <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
@@ -961,7 +1322,7 @@ export default function ResultsTable({
           <table className="rt-table">
             <thead>
               <tr className="rt-thead-group">
-                <th colSpan={2} className="rt-thg">Identification</th>
+                <th colSpan={3} className="rt-thg">Identification</th>
                 <th colSpan={4} className="rt-thg">Canalisation</th>
                 <th colSpan={1} className="rt-thg rt-thg-result rt-th-result-first">Thermique</th>
                 <th colSpan={3} className="rt-thg rt-thg-result">Hydraulique</th>
@@ -969,6 +1330,182 @@ export default function ResultsTable({
               <tr className="rt-thead-cols">
                 <th className="rt-th">Tronçon</th>
                 <th className="rt-th">Niveau</th>
+                <th className="rt-th">Colonne</th>
+                <th className="rt-th">Matériau</th>
+                <th className="rt-th">DN</th>
+                <th className="rt-th">dᵢ (mm)</th>
+                <th className="rt-th">L (m)</th>
+                <th className="rt-th rt-th-result rt-th-result-first">Puiss. transportée (kW)</th>
+                <th className="rt-th rt-th-result">Q (L/h)</th>
+                <th className="rt-th rt-th-result">V (m/s)</th>
+                <th className="rt-th rt-th-result">R (Pa/m)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeChaufFlowRowsArr.map((entry, chIdx) => {
+                const networkLabel = `Réseau n°${chIdx + 1}`
+                const entryShared = { ...shared, roleMap: entry.roleMap }
+                const entryDisplayRows = processEntryRows(entry.rows, entry.roleMap)
+                const totalMelange = entryDisplayRows.filter(r => r.kind === 'melange-header').length
+                return (
+                  <React.Fragment key={entry.prodId ?? `ch-${chIdx}`}>
+                    {chIdx > 0 && <tr className="rt-ef-spacer"><td colSpan={CHAUF_COLS} /></tr>}
+                    <tr>
+                      <td colSpan={CHAUF_COLS} style={{
+                        padding: '5px 12px', background: '#f1f5f9',
+                        borderTop: '2px solid #cbd5e1', fontWeight: 600,
+                        fontSize: 11, color: '#374151',
+                      }}>
+                        {networkLabel}
+                      </td>
+                    </tr>
+                    {entryDisplayRows.map((row, i) => {
+                      if (row.kind === 'flow-start') return (
+                        <tr key={`fs-${chIdx}-${i}`} className="rt-flow-banner rt-flow-banner-start">
+                          <td colSpan={CHAUF_COLS}>▶ {isEauGlacee ? 'Production eau glacée' : 'Production chauffage'} — Départ</td>
+                        </tr>
+                      )
+                      if (row.kind === 'flow-end') return (
+                        <tr key={`fe-${chIdx}-${i}`} className="rt-flow-banner rt-flow-banner-end">
+                          <td colSpan={CHAUF_COLS}>◀ {isEauGlacee ? 'Production eau glacée' : 'Production chauffage'} — Retour</td>
+                        </tr>
+                      )
+                      const isMelangeRow = (r: any) => r?.kind === 'melange-header' || r?.kind === 'melange-end'
+                      if (row.kind === 'junction') {
+                        if (isMelangeRow(entryDisplayRows[i - 1]) || isMelangeRow(entryDisplayRows[i + 1])) return null
+                        return (
+                          <tr key={`junc-${row.ptId}-${i}-${chIdx}`} className="rt-collecteur-header">
+                            <td colSpan={CHAUF_COLS}></td>
+                          </tr>
+                        )
+                      }
+                      if (row.kind === 'col-header') return (
+                        <tr key={`col-${row.name}-${i}-${chIdx}`} className="rt-col-sep">
+                          <td colSpan={CHAUF_COLS}>{row.name}</td>
+                        </tr>
+                      )
+                      if (row.kind === 'collecteur-header') {
+                        if (isMelangeRow(entryDisplayRows[i - 1]) || isMelangeRow(entryDisplayRows[i + 1])) return null
+                        return (
+                          <tr key={`coll-h-${row.role}-${i}-${chIdx}`} className="rt-collecteur-header">
+                            <td colSpan={CHAUF_COLS}></td>
+                          </tr>
+                        )
+                      }
+                      if (row.kind === 'melange-header') return (
+                        <tr key={`melange-h-${row.mixId}-${i}-${chIdx}`} className="rt-melange-header">
+                          <td colSpan={CHAUF_COLS}>
+                            {totalMelange > 1 ? `Circuit mélangé ${row.index}` : 'Circuit mélangé'}
+                          </td>
+                        </tr>
+                      )
+                      if (row.kind === 'melange-end') return (
+                        <tr key={`melange-end-${i}-${chIdx}`} className="rt-melange-end">
+                          <td colSpan={CHAUF_COLS} style={{ padding: 0 }}>
+                            <div style={{ borderTop: '1px dashed #cbd5e1', padding: '2px 10px' }}>
+                              {totalMelange > 1 ? `fin circuit mélangé ${row.index}` : 'fin circuit mélangé'}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                      if (row.kind !== 'segment') return null
+                      const { seg, segType } = row
+                      const flow = activeChaufFlows?.get(seg.id)
+                      const mat  = materials?.find((m: any) => m.id === seg.materialId)
+                      const dnDef = mat?.dns?.find((d: any) => d.dn === seg.dn)
+                      const di   = seg.di_override ?? dnDef?.di
+                      const isSelected = selectedIds?.includes(seg.id)
+                      const isAller = segType === 'aller'
+                      const role = entry.roleMap?.get(seg.id)
+                      const badgeText = role === 'collecteur-aller' ? 'CA' : role === 'collecteur-retour' ? 'CR' : isAller ? 'A' : 'R'
+                      const badgeClass = (role === 'collecteur-retour' || !isAller) ? 'rt-badge-r' : 'rt-badge-a'
+                      const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, entry.roleMap, flowDirections)
+                        .replace(/^(?:Collecteur Aller CH|Collecteur Retour CH|Aller CH|Retour CH)\s*–\s*/, '')
+                      const levelName = segLevelName(seg, levels, lineYs)
+                      const pdcResultCh = pdcResults?.get(seg.id)
+                      const J = pdcResultCh?.J ?? null
+                      const velocity = flow?.velocity ?? null
+                      return (
+                        <React.Fragment key={seg.id}>
+                          <tr ref={isSelected ? selectedRowRef : null}
+                              className={`rt-row${isSelected ? ' rt-row-selected' : ''}`}
+                              onClick={() => onSelectIds?.([seg.id])} style={{ cursor: 'pointer' }}>
+                            <td className="rt-cell rt-cell-name" style={{ paddingLeft: 6 }}>
+                              <span className={badgeClass}>{badgeText}</span>
+                              {shortName}
+                            </td>
+                            <td className="rt-cell rt-cell-sm">{levelName}</td>
+                            <td className="rt-cell rt-cell-sm">{extractColonne(shortName, columns) ?? <span className="rt-val-default">—</span>}</td>
+                            <td className="rt-cell">
+                              <span className={seg.materialId == null ? 'rt-val-default' : 'rt-val-override'}>{mat?.name ?? '—'}</span>
+                            </td>
+                            <td className="rt-cell">
+                              <span className={seg.dn == null ? 'rt-val-default' : 'rt-val-override'}>{seg.dn ?? '—'}</span>
+                            </td>
+                            <td className="rt-cell">
+                              <span className={seg.di_override == null ? 'rt-val-default' : 'rt-val-override'}>{di != null ? fmt(di, 1) : '—'}</span>
+                            </td>
+                            <td className="rt-cell">
+                              <span className={seg.length_override == null ? 'rt-val-default' : 'rt-val-override'}>{seg.length_override != null ? fmt(seg.length_override, 2) : '—'}</span>
+                            </td>
+                            <td className="rt-cell rt-result rt-result-first">
+                              {flow?.puissanceAmont != null ? (flow.puissanceAmont / 1000).toFixed(2) : '—'}
+                            </td>
+                            <td className="rt-cell rt-result">
+                              {flow?.flowRate != null ? (flow.flowRate * 1000).toFixed(1) : '—'}
+                            </td>
+                            <td className="rt-cell rt-result" style={velStyle(velocity)}>
+                              {velocity != null ? velocity.toFixed(3) : '—'}
+                            </td>
+                            <td className="rt-cell rt-result" style={jStyle(J)}>
+                              {J != null ? J.toFixed(1) : '—'}
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                      )
+                    })}
+                  </React.Fragment>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Chauffage / Eau glacée ────────────────────────────────────────────────────
+  if (isChaufOrEG) {
+    const CHAUF_COLS = 11
+    // Recommandations chauffage (règle de l'art, non réglementaire)
+    const V_LOW = 0.2, V_MAX = 1.5   // <0,2 : sédimentation ; >1,5 : bruit/érosion
+    const J_HIGH = 150                // >150 Pa/m : au-delà de la plage recommandée
+    const velStyle = (v: number | null | undefined) => {
+      if (v == null) return {}
+      if (v < V_LOW || v > V_MAX) return { color: '#f97316', fontWeight: 700 }
+      return {}
+    }
+    const jStyle = (j: number | null | undefined) => {
+      if (j == null) return {}
+      if (j > J_HIGH) return { color: '#f97316', fontWeight: 700 }
+      return {}
+    }
+    const totalMelange = displayRows.filter(r => r.kind === 'melange-header').length
+    return (
+      <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
+        <div className="rt-table-scroll">
+          <table className="rt-table">
+            <thead>
+              <tr className="rt-thead-group">
+                <th colSpan={3} className="rt-thg">Identification</th>
+                <th colSpan={4} className="rt-thg">Canalisation</th>
+                <th colSpan={1} className="rt-thg rt-thg-result rt-th-result-first">Thermique</th>
+                <th colSpan={3} className="rt-thg rt-thg-result">Hydraulique</th>
+              </tr>
+              <tr className="rt-thead-cols">
+                <th className="rt-th">Tronçon</th>
+                <th className="rt-th">Niveau</th>
+                <th className="rt-th">Colonne</th>
                 <th className="rt-th">Matériau</th>
                 <th className="rt-th">DN</th>
                 <th className="rt-th">dᵢ (mm)</th>
@@ -981,27 +1518,26 @@ export default function ResultsTable({
             </thead>
             <tbody>
               {displayRows.length === 0 && (
-                <tr><td colSpan={CHAUF_COLS} className="rt-empty">Aucun tronçon — tracez des tronçons CH Aller/Retour et placez une Production chauffage</td></tr>
+                <tr><td colSpan={CHAUF_COLS} className="rt-empty">{isEauGlacee ? 'Aucun tronçon — tracez des tronçons EG Aller/Retour et placez une Production eau glacée' : 'Aucun tronçon — tracez des tronçons CH Aller/Retour et placez une Production chauffage'}</td></tr>
               )}
               {displayRows.map((row, i) => {
                 if (row.kind === 'flow-start') return (
                   <tr key="flow-start" className="rt-flow-banner rt-flow-banner-start">
-                    <td colSpan={CHAUF_COLS}>▶ Production chauffage — Départ</td>
+                    <td colSpan={CHAUF_COLS}>▶ {isEauGlacee ? 'Production eau glacée' : 'Production chauffage'} — Départ</td>
                   </tr>
                 )
                 if (row.kind === 'flow-end') return (
                   <tr key="flow-end" className="rt-flow-banner rt-flow-banner-end">
-                    <td colSpan={CHAUF_COLS}>◀ Production chauffage — Retour</td>
+                    <td colSpan={CHAUF_COLS}>◀ {isEauGlacee ? 'Production eau glacée' : 'Production chauffage'} — Retour</td>
                   </tr>
                 )
+                const isMelangeRow = (r: any) => r?.kind === 'melange-header' || r?.kind === 'melange-end'
                 if (row.kind === 'junction') {
-                  const isJuncSel = selectedIds?.includes(row.ptId)
+                  if (isMelangeRow(displayRows[i - 1]) || isMelangeRow(displayRows[i + 1])) return null
                   return (
-                    <JunctionRow key={`junc-${row.ptId}-${i}`} row={row}
-                      thermalResults={null} globalParams={null}
-                      selectedIds={selectedIds} onSelectIds={onSelectIds}
-                      rowRef={isJuncSel ? selectedRowRef : null}
-                      totalCols={CHAUF_COLS} />
+                    <tr key={`junc-${row.ptId}-${i}`} className="rt-collecteur-header">
+                      <td colSpan={CHAUF_COLS}></td>
+                    </tr>
                   )
                 }
                 if (row.kind === 'col-header') return (
@@ -1009,18 +1545,33 @@ export default function ResultsTable({
                     <td colSpan={CHAUF_COLS}>{row.name}</td>
                   </tr>
                 )
-                if (row.kind === 'collecteur-header') return (
-                  <tr key={`coll-h-${row.role}-${i}`} className="rt-collecteur-header">
+                if (row.kind === 'collecteur-header') {
+                  if (isMelangeRow(displayRows[i - 1]) || isMelangeRow(displayRows[i + 1])) return null
+                  return (
+                    <tr key={`coll-h-${row.role}-${i}`} className="rt-collecteur-header">
+                      <td colSpan={CHAUF_COLS}></td>
+                    </tr>
+                  )
+                }
+                if (row.kind === 'melange-header') return (
+                  <tr key={`melange-h-${row.mixId}-${i}`} className="rt-melange-header">
                     <td colSpan={CHAUF_COLS}>
-                      {row.role === 'collecteur-aller'  ? 'Collecteur Aller CH'
-                        : row.role === 'collecteur-retour' ? 'Collecteur Retour CH'
-                        : 'Collecteur'}
+                      {totalMelange > 1 ? `Circuit mélangé ${row.index}` : 'Circuit mélangé'}
+                    </td>
+                  </tr>
+                )
+                if (row.kind === 'melange-end') return (
+                  <tr key={`melange-end-${i}`} className="rt-melange-end">
+                    <td colSpan={CHAUF_COLS} style={{ padding: 0 }}>
+                      <div style={{ borderTop: '1px dashed #cbd5e1', padding: '2px 10px' }}>
+                        {totalMelange > 1 ? `fin circuit mélangé ${row.index}` : 'fin circuit mélangé'}
+                      </div>
                     </td>
                   </tr>
                 )
                 if (row.kind !== 'segment') return null
                 const { seg, segType } = row
-                const flow = chauffageFlows?.get(seg.id)
+                const flow = activeChaufFlows?.get(seg.id)
                 const mat  = materials?.find((m: any) => m.id === seg.materialId)
                 const dnDef = mat?.dns?.find((d: any) => d.dn === seg.dn)
                 const di   = seg.di_override ?? dnDef?.di
@@ -1038,39 +1589,42 @@ export default function ResultsTable({
                 const J = pdcResultCh?.J ?? null
                 const velocity = flow?.velocity ?? null
                 return (
-                  <tr key={seg.id} ref={isSelected ? selectedRowRef : null}
-                      className={`rt-row${isSelected ? ' rt-row-selected' : ''}`}
-                      onClick={() => onSelectIds?.([seg.id])} style={{ cursor: 'pointer' }}>
-                    <td className="rt-cell rt-cell-name" style={{ paddingLeft: 6 }}>
-                      <span className={badgeClass}>{badgeText}</span>
-                      {shortName}
-                    </td>
-                    <td className="rt-cell rt-cell-sm">{levelName}</td>
-                    <td className="rt-cell">
-                      <span className={seg.materialId == null ? 'rt-val-default' : 'rt-val-override'}>{mat?.name ?? '—'}</span>
-                    </td>
-                    <td className="rt-cell">
-                      <span className={seg.dn == null ? 'rt-val-default' : 'rt-val-override'}>{seg.dn ?? '—'}</span>
-                    </td>
-                    <td className="rt-cell">
-                      <span className={seg.di_override == null ? 'rt-val-default' : 'rt-val-override'}>{di != null ? fmt(di, 1) : '—'}</span>
-                    </td>
-                    <td className="rt-cell">
-                      <span className={seg.length_override == null ? 'rt-val-default' : 'rt-val-override'}>{seg.length_override != null ? fmt(seg.length_override, 2) : '—'}</span>
-                    </td>
-                    <td className="rt-cell rt-result rt-result-first">
-                      {flow?.puissanceAmont != null ? (flow.puissanceAmont / 1000).toFixed(2) : '—'}
-                    </td>
-                    <td className="rt-cell rt-result">
-                      {flow?.flowRate != null ? (flow.flowRate * 1000).toFixed(1) : '—'}
-                    </td>
-                    <td className="rt-cell rt-result" style={velStyle(velocity)}>
-                      {velocity != null ? velocity.toFixed(3) : '—'}
-                    </td>
-                    <td className="rt-cell rt-result" style={jStyle(J)}>
-                      {J != null ? J.toFixed(1) : '—'}
-                    </td>
-                  </tr>
+                  <React.Fragment key={seg.id}>
+                    <tr ref={isSelected ? selectedRowRef : null}
+                        className={`rt-row${isSelected ? ' rt-row-selected' : ''}`}
+                        onClick={() => onSelectIds?.([seg.id])} style={{ cursor: 'pointer' }}>
+                      <td className="rt-cell rt-cell-name" style={{ paddingLeft: 6 }}>
+                        <span className={badgeClass}>{badgeText}</span>
+                        {shortName}
+                      </td>
+                      <td className="rt-cell rt-cell-sm">{levelName}</td>
+                      <td className="rt-cell rt-cell-sm">{extractColonne(shortName, columns) ?? <span className="rt-val-default">—</span>}</td>
+                      <td className="rt-cell">
+                        <span className={seg.materialId == null ? 'rt-val-default' : 'rt-val-override'}>{mat?.name ?? '—'}</span>
+                      </td>
+                      <td className="rt-cell">
+                        <span className={seg.dn == null ? 'rt-val-default' : 'rt-val-override'}>{seg.dn ?? '—'}</span>
+                      </td>
+                      <td className="rt-cell">
+                        <span className={seg.di_override == null ? 'rt-val-default' : 'rt-val-override'}>{di != null ? fmt(di, 1) : '—'}</span>
+                      </td>
+                      <td className="rt-cell">
+                        <span className={seg.length_override == null ? 'rt-val-default' : 'rt-val-override'}>{seg.length_override != null ? fmt(seg.length_override, 2) : '—'}</span>
+                      </td>
+                      <td className="rt-cell rt-result rt-result-first">
+                        {flow?.puissanceAmont != null ? (flow.puissanceAmont / 1000).toFixed(2) : '—'}
+                      </td>
+                      <td className="rt-cell rt-result">
+                        {flow?.flowRate != null ? (flow.flowRate * 1000).toFixed(1) : '—'}
+                      </td>
+                      <td className="rt-cell rt-result" style={velStyle(velocity)}>
+                        {velocity != null ? velocity.toFixed(3) : '—'}
+                      </td>
+                      <td className="rt-cell rt-result" style={jStyle(J)}>
+                        {J != null ? J.toFixed(1) : '—'}
+                      </td>
+                    </tr>
+                  </React.Fragment>
                 )
               })}
             </tbody>
@@ -1152,6 +1706,200 @@ export default function ResultsTable({
                 )
               })}
             </tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }
+
+  // ── ECS alimentation multi-production : N sections empilées ─────────────
+  if (isAlimECS && ecsFlowRowsArr && ecsFlowRowsArr.length > 1) {
+    return (
+      <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
+        <div className="rt-table-scroll">
+          <table className="rt-table">
+            <thead>
+              <tr className="rt-thead-group">
+                <th colSpan={5} className="rt-thg">Identification</th>
+                <th colSpan={3} className="rt-thg">Canalisation</th>
+                <th colSpan={6} className="rt-thg rt-thg-result rt-th-result-first">Résultats</th>
+              </tr>
+              <tr className="rt-thead-cols">
+                <th className="rt-th">Tronçon</th>
+                <th className="rt-th">Niveau</th>
+                <th className="rt-th">Colonne</th>
+                <th className="rt-th">N appareils en aval</th>
+                <th className="rt-th">Méthode</th>
+                <th className="rt-th">Matériau</th>
+                <th className="rt-th">DN</th>
+                <th className="rt-th">dᵢ (mm)</th>
+                <th className="rt-th rt-th-result rt-th-result-first">Coeff. X</th>
+                <th className="rt-th rt-th-result">Débit de base (l/s)</th>
+                <th className="rt-th rt-th-result">Coeff. de simult. y</th>
+                <th className="rt-th rt-th-result">Débit probable (l/s)</th>
+                <th className="rt-th rt-th-result">Vitesse (m/s)</th>
+                <th className="rt-th rt-th-result">dᵢ min. requis (mm)</th>
+              </tr>
+            </thead>
+            {ecsFlowRowsArr.map((entry, ecsIdx) => {
+              const networkLabel = `Réseau n°${ecsIdx + 1}`
+              const entryDisplayRows = entry.rows.filter((r: any) =>
+                r.kind !== 'separation' && r.kind !== 'flow-start' && r.kind !== 'flow-end'
+              )
+              const entrySharedAlim = { ...sharedAlim, roleMap: entry.roleMap }
+              return (
+                <React.Fragment key={entry.prodId ?? `prod-${ecsIdx}`}>
+                  {ecsIdx > 0 && (
+                    <tbody><tr className="rt-ef-spacer"><td colSpan={ALIM_COLS} /></tr></tbody>
+                  )}
+                  <tbody>
+                    <tr>
+                      <td colSpan={ALIM_COLS} style={{
+                        padding: '5px 12px', background: '#f1f5f9',
+                        borderTop: '2px solid #cbd5e1', borderBottom: '1px solid #e2e8f0',
+                        fontWeight: 600, fontSize: 11, color: '#374151',
+                      }}>
+                        {networkLabel}
+                      </td>
+                    </tr>
+                    <tr className="rt-flow-banner rt-flow-banner-start">
+                      <td colSpan={ALIM_COLS}>▶ Production ECS — Départ</td>
+                    </tr>
+                    {entryDisplayRows.length === 0 && (
+                      <tr><td colSpan={ALIM_COLS} className="rt-empty">Aucun tronçon dans ce réseau</td></tr>
+                    )}
+                    {entryDisplayRows.map((row: any, i: number) => {
+                      if (row.kind === 'collecteur-header') return (
+                        <tr key={`coll-h-${i}`} className="rt-collecteur-header"><td colSpan={ALIM_COLS} /></tr>
+                      )
+                      if (row.kind === 'col-header') return (
+                        <tr key={`col-${row.name}-${i}`} className="rt-col-sep">
+                          <td colSpan={ALIM_COLS}>{row.name}</td>
+                        </tr>
+                      )
+                      if (row.kind !== 'segment') return null
+                      const isSegSelected = selectedIds?.includes(row.seg.id)
+                      return (
+                        <SegRowAlim key={row.seg.id} row={row} selectedIds={selectedIds}
+                          rowRef={isSegSelected ? selectedRowRef : null} {...entrySharedAlim} />
+                      )
+                    })}
+                  </tbody>
+                </React.Fragment>
+              )
+            })}
+          </table>
+        </div>
+      </div>
+    )
+  }
+
+  // ── ECS bouclage multi-production : N sections empilées ───────────────────
+  if (isBouclage && ecsFlowRowsArr && ecsFlowRowsArr.length > 1) {
+    const processEntryRows = (rawRows: any[], entryRoleMap: any) => {
+      const result: any[] = []
+      let lastCollecteurRole: string | null = null
+      let prevKind: string | null = null
+      let insideMelange = false
+      for (const row of (rawRows ?? [])) {
+        if (row.kind === 'melange-header') insideMelange = true
+        if (row.kind === 'melange-end')    insideMelange = false
+        if (row.kind === 'separation') continue
+        if (row.kind === 'segment') {
+          const r = entryRoleMap?.get(row.seg.id)
+          const isCollecteur = r === 'collecteur-aller' || r === 'collecteur-retour'
+          const afterBanner = prevKind === 'flow-start' || prevKind === 'flow-end' || prevKind === 'col-header' || prevKind === 'junction' || prevKind === 'collecteur-header' || prevKind === 'melange-header' || prevKind === 'melange-end'
+          if (isCollecteur && r !== lastCollecteurRole && !afterBanner && !insideMelange) {
+            result.push({ kind: 'collecteur-header', role: r })
+          }
+          lastCollecteurRole = isCollecteur ? r : null
+        } else {
+          lastCollecteurRole = null
+        }
+        prevKind = row.kind
+        result.push(row)
+      }
+      return result
+    }
+
+    return (
+      <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
+        <div className="rt-table-scroll">
+          <table className="rt-table">
+            <thead>
+              <tr className="rt-thead-group">
+                <th colSpan={3} className="rt-thg">Identification</th>
+                <th colSpan={6 + encrassementMainCols} className="rt-thg">Canalisation</th>
+                <th colSpan={3} className="rt-thg">Isolation</th>
+                <th colSpan={2} className="rt-thg">Thermique</th>
+                <th colSpan={2} className="rt-thg">Hydraulique</th>
+                <th colSpan={5} className="rt-thg rt-thg-result rt-th-result-first">Résultats</th>
+              </tr>
+              <tr className="rt-thead-cols">
+                <th className="rt-th">Tronçon</th><th className="rt-th">Niveau</th><th className="rt-th">Colonne</th>
+                <th className="rt-th">Matériau</th><th className="rt-th">DN</th><th className="rt-th">dᵢ (mm)</th>
+                <th className="rt-th">dₑ (mm)</th>
+                {hasEncrassementMain && <><th className="rt-th">ép. tartre (mm)</th><th className="rt-th">dᵢ tartre (mm)</th></>}
+                <th className="rt-th">λ_tube (W/m·K)</th><th className="rt-th">L (m)</th>
+                <th className="rt-th">Isolant</th><th className="rt-th">ép. (mm)</th><th className="rt-th">λ_isol (W/m·K)</th>
+                <th className="rt-th">T° amb (°C)</th><th className="rt-th">T amont (°C)</th>
+                <th className="rt-th">Débit (m³/h)</th><th className="rt-th">Vitesse (m/s)</th>
+                <th className="rt-th rt-th-result rt-th-result-first">Ui (W/m·K)</th>
+                <th className="rt-th rt-th-result">Pertes th. (W)</th><th className="rt-th rt-th-result">T aval (°C)</th>
+                <th className="rt-th rt-th-result">ΔT tronçon (°C)</th><th className="rt-th rt-th-result">ΔT/Dép. (°C)</th>
+              </tr>
+            </thead>
+            {ecsFlowRowsArr.map((entry, ecsIdx) => {
+              const entryDisplayRows = processEntryRows(entry.rows, entry.roleMap)
+              const entryShared = { ...shared, roleMap: entry.roleMap }
+              const networkLabel = `Réseau n°${ecsIdx + 1}`
+              return (
+                <React.Fragment key={entry.prodId ?? `prod-${ecsIdx}`}>
+                  {ecsIdx > 0 && (
+                    <tbody><tr className="rt-ef-spacer"><td colSpan={nCols} /></tr></tbody>
+                  )}
+                  <tbody>
+                    <tr>
+                      <td colSpan={nCols} style={{
+                        padding: '5px 12px', background: '#f1f5f9',
+                        borderTop: '2px solid #cbd5e1', borderBottom: '1px solid #e2e8f0',
+                        fontWeight: 600, fontSize: 11, color: '#374151',
+                      }}>
+                        {networkLabel}
+                      </td>
+                    </tr>
+                    {entryDisplayRows.length === 0 && (
+                      <tr><td colSpan={nCols} className="rt-empty">Aucun tronçon dans ce réseau</td></tr>
+                    )}
+                    {entryDisplayRows.map((row, i) => {
+                      if (row.kind === 'flow-start') return (
+                        <tr key="flow-start" className="rt-flow-banner rt-flow-banner-start">
+                          <td colSpan={nCols}>▶ Production ECS — Départ</td>
+                        </tr>
+                      )
+                      if (row.kind === 'flow-end') return (
+                        <tr key="flow-end" className="rt-flow-banner rt-flow-banner-end">
+                          <td colSpan={nCols}>◀ Production ECS — Retour</td>
+                        </tr>
+                      )
+                      if (row.kind === 'collecteur-header') return (
+                        <tr key={`coll-h-${row.role}-${i}`} className="rt-collecteur-header"><td colSpan={nCols} /></tr>
+                      )
+                      if (row.kind === 'col-header') return (
+                        <tr key={`col-${row.name}-${i}`} className="rt-col-sep"><td colSpan={nCols}>{row.name}</td></tr>
+                      )
+                      if (row.kind !== 'segment') return null
+                      const isSegSelected = selectedIds?.includes(row.seg.id)
+                      return (
+                        <SegRow key={row.seg.id} row={row} selectedIds={selectedIds}
+                          rowRef={isSegSelected ? selectedRowRef : null} {...entryShared}
+                          hasEncrassement={hasEncrassementMain} />
+                      )
+                    })}
+                  </tbody>
+                </React.Fragment>
+              )
+            })}
           </table>
         </div>
       </div>

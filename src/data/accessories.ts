@@ -20,6 +20,10 @@ export const ACCESSORY_TYPES: AccessoryType[] = [
   { id: 'reducteur_pression', label: 'Réducteur de pression' },
   { id: 'compteur_eau',       label: 'Compteur d\'eau' },
   { id: 'ballon_anti_belier', label: 'Ballon anti-bélier' },
+  // ── Chauffage (distribution) ─────────────────────────────────────────
+  { id: 'soupape_securite',  label: 'Soupape de sécurité' },
+  { id: 'pot_boues',         label: 'Pot à boues' },
+  { id: 'compteur_energie',  label: 'Compteur d\'énergie thermique' },
   // ── Interne (placé via bouton dédié, pas dans la palette) ───────────
   { id: 'pompe',              label: 'Pompe / circulateur' },
 ]

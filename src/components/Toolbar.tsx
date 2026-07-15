@@ -1,14 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { ACCESSORY_TYPES } from '../data/accessories'
 import { AccessorySymbol } from './AccessorySymbol'
-import type { CalcMode } from '../types'
+import type { CalcMode, DisplayPrefs } from '../types'
 import { getModeFlags } from '../utils/calcModeFlags'
 import { EMETTEUR_TYPES } from '../data/emetteurs'
+import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
+import { DEFAULT_DISPLAY_PREFS } from '../utils/projectBuilder'
 
 const ACC_IDS_BY_CALCID: Partial<Record<CalcMode, string[]>> = {
-  'alimentation-ecs': ['vanne_arret', 'clapet_anti_retour', 'filtre_y', 'manometre', 'thermometre', 'vase_expansion', 'purgeur_air', 'robinet_vidange'],
-  'bouclage-ecs':     ['vanne_arret', 'clapet_anti_retour', 'filtre_y', 'manometre', 'thermometre', 'vase_expansion', 'purgeur_air', 'robinet_vidange'],
-  'alimentation-ef':  ['vanne_arret', 'clapet_anti_retour', 'filtre_y', 'manometre', 'disconnecteur', 'reducteur_pression', 'compteur_eau', 'ballon_anti_belier', 'robinet_vidange'],
+  'alimentation-ecs':      ['vanne_arret', 'clapet_anti_retour', 'filtre_y', 'manometre', 'thermometre', 'vase_expansion', 'purgeur_air', 'robinet_vidange'],
+  'bouclage-ecs':          ['vanne_arret', 'clapet_anti_retour', 'filtre_y', 'manometre', 'thermometre', 'vase_expansion', 'purgeur_air', 'robinet_vidange'],
+  'alimentation-ef':       ['vanne_arret', 'disconnecteur', 'reducteur_pression', 'filtre_y', 'compteur_eau', 'clapet_anti_retour', 'manometre', 'ballon_anti_belier', 'robinet_vidange'],
+  'distribution-chauffage':['vanne_arret', 'clapet_anti_retour', 'soupape_securite', 'pot_boues', 'filtre_y', 'manometre', 'thermometre', 'compteur_energie', 'vase_expansion', 'purgeur_air', 'robinet_vidange'],
 }
 
 // Cursor SVG icon for "select" mode
@@ -73,20 +76,24 @@ function PumpSymbol({ rotation = 0, size = 14, color = '#000', bg = '#fff' }) {
 }
 
 const DISPLAY_OPTIONS = [
-  { key: 'nomTroncon',       label: 'Nom du tronçon',          calcIds: null },
-  { key: 'material',         label: 'Matériau',                calcIds: null },
-  { key: 'dn',               label: 'DN',                      calcIds: null },
-  { key: 'length',           label: 'Longueur',                calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
-  { key: 'insulation',       label: 'Isolant & épaisseur',     calcIds: ['bouclage-ecs'] },
-  { key: 'debit',            label: 'Débit',                   calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
-  { key: 'vitesse',          label: 'Vitesse',                 calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
-  { key: 'temperatureNoeud', label: 'T° nœuds',               calcIds: ['bouclage-ecs'] },
-  { key: 'deltaT',           label: 'ΔT tronçon',             calcIds: ['bouclage-ecs'] },
-  { key: 'dpNoeud',          label: 'ΔP depuis prod. ECS',    calcIds: ['bouclage-ecs'] },
-  { key: 'dpTroncon',        label: 'ΔP tronçon',             calcIds: ['bouclage-ecs'] },
-  { key: 'pressionDispo',    label: 'Pression disponible',    calcIds: ['alimentation-ecs', 'alimentation-ef'] },
-  { key: 'pressionStat',     label: 'Pression statique',      calcIds: ['alimentation-ecs', 'alimentation-ef'] },
-  { key: 'equipment',        label: 'Équipements (groupes PP)', calcIds: ['alimentation-ecs', 'alimentation-ef', 'bouclage-ecs'] },
+  { key: 'nomTroncon',        label: 'Nom du tronçon',           calcIds: null },
+  { key: 'material',          label: 'Matériau',                 calcIds: null },
+  { key: 'dn',                label: 'DN',                       calcIds: null },
+  { key: 'length',            label: 'Longueur',                 calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage'] },
+  { key: 'insulation',        label: 'Isolant & épaisseur',      calcIds: ['bouclage-ecs'] },
+  { key: 'debit',             label: 'Débit',                    calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage'] },
+  { key: 'vitesse',           label: 'Vitesse',                  calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage'] },
+  { key: 'temperatureNoeud',  label: 'T° nœuds',                calcIds: ['bouclage-ecs'] },
+  { key: 'deltaT',            label: 'ΔT tronçon',              calcIds: ['bouclage-ecs'] },
+  { key: 'dpTroncon',         label: 'ΔP tronçon',              calcIds: ['bouclage-ecs', 'distribution-chauffage', 'distribution-eauglacee'] },
+  { key: 'dpNoeud',           label: 'ΔP cumulée',              calcIds: ['bouclage-ecs', 'distribution-chauffage', 'distribution-eauglacee'] },
+  { key: 'rLinear',           label: 'R (Pa/m)',                 calcIds: ['distribution-chauffage', 'distribution-eauglacee'] },
+  { key: 'puissanceTroncon',  label: 'Puissances transportées',  calcIds: ['distribution-chauffage', 'distribution-eauglacee'] },
+  { key: 'puissanceEmetteur', label: 'Puissances terminal',      calcIds: ['distribution-chauffage', 'distribution-eauglacee'] },
+  { key: 'dpEmetteur',        label: 'ΔP terminal',             calcIds: ['distribution-chauffage', 'distribution-eauglacee'] },
+  { key: 'pressionDispo',     label: 'Pression disponible',     calcIds: ['alimentation-ecs', 'alimentation-ef'] },
+  { key: 'pressionStat',      label: 'Pression statique',       calcIds: ['alimentation-ecs', 'alimentation-ef'] },
+  { key: 'equipment',         label: 'Équipements (groupes PP)', calcIds: ['alimentation-ecs', 'alimentation-ef', 'bouclage-ecs'] },
 ]
 
 export default function Toolbar({
@@ -97,22 +104,44 @@ export default function Toolbar({
   placingEquipment, onCancelPlacingEquipment,
   onAddProductionECS, onAddPump, hasProductionECS,
   onAddArriveeEF,
-  onAddProductionChauffage, hasProductionChauffage,
+  onAddProductionChauffage, hasProductionChauffage, onAddPumpChauffage,
   onAddEmetteur,
+  onAddProductionEauGlacee, hasProductionEauGlacee, onAddTerminalFroid,
   canvasDisplay, onCanvasDisplayToggle,
   activeFluidId, activeCalcId,
   pdcParams,
+  displayPrefs,
   placingAccessoryType, onPlacingAccessoryTypeChange,
+}: {
+  drawMode: string; setDrawMode: any; pipeType: string; setPipeType: any
+  panelOpen: boolean; onTogglePanel: any
+  errorCount: number; onShowErrors: any
+  placingEquipment: any; onCancelPlacingEquipment: any
+  onAddProductionECS: any; onAddPump: any; hasProductionECS: boolean
+  onAddArriveeEF: any
+  onAddProductionChauffage: any; hasProductionChauffage: boolean; onAddPumpChauffage: any
+  onAddEmetteur: any
+  onAddProductionEauGlacee: any; hasProductionEauGlacee: boolean; onAddTerminalFroid: any
+  canvasDisplay: any; onCanvasDisplayToggle: any
+  activeFluidId: string | null; activeCalcId: CalcMode | null
+  pdcParams: any
+  displayPrefs?: DisplayPrefs
+  placingAccessoryType: string | null; onPlacingAccessoryTypeChange: any
 }) {
   const [displayOpen, setDisplayOpen] = useState(false)
   const displayRef = useRef(null)
   const [accOpen, setAccOpen] = useState(false)
   const [emetteurOpen, setEmetteurOpen] = useState(false)
   const emetteurRef = useRef(null)
-  const [emetteurParams, setEmetteurParams] = useState<Record<string, { deltaT: number; puissance: number | null }>>(() =>
-    Object.fromEntries(EMETTEUR_TYPES.map(em => [em.id, { deltaT: em.deltaTDefault, puissance: null }]))
+  const [emetteurParams, setEmetteurParams] = useState<Record<string, { T_entree: number | null; T_sortie: number | null; puissance: number | null }>>(() =>
+    Object.fromEntries(EMETTEUR_TYPES.map(em => [em.id, { T_entree: em.T_entreeDefault, T_sortie: em.T_sortieDefault, puissance: null }]))
   )
-  const { isAlimEF, isChauffage } = getModeFlags(activeCalcId)
+  const [terminalFroidOpen, setTerminalFroidOpen] = useState(false)
+  const terminalFroidRef = useRef(null)
+  const [terminalFroidParams, setTerminalFroidParams] = useState<Record<string, { T_entree: number | null; T_sortie: number | null; puissance: number | null }>>(() =>
+    Object.fromEntries(TERMINAL_FROID_TYPES.map(tf => [tf.id, { T_entree: tf.T_entreeDefault, T_sortie: tf.T_sortieDefault, puissance: null }]))
+  )
+  const { isAlimEF, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
   const [accPos, setAccPos] = useState({ top: 0, left: 0 })
   const accRef = useRef(null)
 
@@ -129,6 +158,13 @@ export default function Toolbar({
     document.addEventListener('mousedown', handle)
     return () => document.removeEventListener('mousedown', handle)
   }, [emetteurOpen])
+
+  useEffect(() => {
+    if (!terminalFroidOpen) return
+    const handle = (e) => { if (!terminalFroidRef.current?.contains(e.target)) setTerminalFroidOpen(false) }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [terminalFroidOpen])
 
   const cancelVanne = () => {
     if (drawMode === 'draw' && pipeType === 'vanne') setDrawMode('select')
@@ -235,44 +271,82 @@ export default function Toolbar({
       {/* Draw tools */}
       <div className="toolbar-group">
         <span className="toolbar-label">Tracé :</span>
-        {isAlimEF ? (
-          <button
-            className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller-ef' : ''}`}
-            onClick={() => activateDraw('aller')}
+        {isAlimEF ? (() => {
+          const c = (displayPrefs ?? DEFAULT_DISPLAY_PREFS).ef.colorAller
+          const sw = Math.max(2, (displayPrefs ?? DEFAULT_DISPLAY_PREFS).ef.strokeWidth)
+          return (
+            <button
+              className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller-ef' : ''}`}
+              onClick={() => activateDraw('aller')}
             >
-            <span className="pipe-prev-aller-ef" /> Aller EF
-          </button>
-        ) : isChauffage ? (
-          <>
-            <button
-              className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller' : ''}`}
-              onClick={() => activateDraw('aller')}
-              >
-              <span className="pipe-prev-aller" /> Aller CH
+              <span style={{ display: 'inline-block', width: 22, height: sw, background: c, borderRadius: 1 }} />
+              Aller EF
             </button>
-            <button
-              className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour' : ''}`}
-              onClick={() => activateDraw('retour')}
+          )
+        })() : isChauffage ? (() => {
+          const p = (displayPrefs ?? DEFAULT_DISPLAY_PREFS).chauffage
+          const sw = Math.max(2, p.strokeWidth)
+          return (
+            <>
+              <button
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller' : ''}`}
+                onClick={() => activateDraw('aller')}
               >
-              <span className="pipe-prev-retour" /> Retour CH
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller' : ''}`}
-              onClick={() => activateDraw('aller')}
+                <span style={{ display: 'inline-block', width: 22, height: sw, background: p.colorAller, borderRadius: 1 }} />
+                Aller CH
+              </button>
+              <button
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour' : ''}`}
+                onClick={() => activateDraw('retour')}
               >
-              <span className="pipe-prev-aller" /> Aller ECS
-            </button>
-            <button
-              className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour' : ''}`}
-              onClick={() => activateDraw('retour')}
+                <span style={{ display: 'inline-block', width: 22, height: 0, borderTop: `${sw}px dashed ${p.colorRetour}` }} />
+                Retour CH
+              </button>
+            </>
+          )
+        })() : isEauGlacee ? (() => {
+          const p = (displayPrefs ?? DEFAULT_DISPLAY_PREFS).eauglacee
+          const sw = Math.max(2, p.strokeWidth)
+          return (
+            <>
+              <button
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller' : ''}`}
+                onClick={() => activateDraw('aller')}
               >
-              <span className="pipe-prev-retour" /> Retour ECS
-            </button>
-          </>
-        )}
+                <span style={{ display: 'inline-block', width: 22, height: sw, background: p.colorAller, borderRadius: 1 }} />
+                Aller EG
+              </button>
+              <button
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour' : ''}`}
+                onClick={() => activateDraw('retour')}
+              >
+                <span style={{ display: 'inline-block', width: 22, height: 0, borderTop: `${sw}px dashed ${p.colorRetour}` }} />
+                Retour EG
+              </button>
+            </>
+          )
+        })() : (() => {
+          const p = (displayPrefs ?? DEFAULT_DISPLAY_PREFS).ecs
+          const sw = Math.max(2, p.strokeWidth)
+          return (
+            <>
+              <button
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller' : ''}`}
+                onClick={() => activateDraw('aller')}
+              >
+                <span style={{ display: 'inline-block', width: 22, height: sw, background: p.colorAller, borderRadius: 1 }} />
+                Aller ECS
+              </button>
+              <button
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour' : ''}`}
+                onClick={() => activateDraw('retour')}
+              >
+                <span style={{ display: 'inline-block', width: 22, height: 0, borderTop: `${sw}px dashed ${p.colorRetour}` }} />
+                Retour ECS
+              </button>
+            </>
+          )
+        })()}
         <button
           className={`tb-btn ${drawMode === 'draw' && pipeType === 'point' ? 'active' : ''}`}
           onClick={() => activateDraw('point')}
@@ -324,10 +398,11 @@ export default function Toolbar({
               </button>
               {emetteurOpen && (
                 <div className="tb-display-popover" style={{ padding: '6px 8px 8px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'max-content 44px 50px', columnGap: 6, rowGap: 1, alignItems: 'center' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'max-content 44px 44px 50px', columnGap: 6, rowGap: 1, alignItems: 'center' }}>
                     {/* En-tête */}
                     <span />
-                    <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 2 }}>ΔT K</span>
+                    <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 2 }}>T entrée</span>
+                    <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 2 }}>T sortie</span>
                     <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 2 }}>P W</span>
                     {/* Séparateur */}
                     <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #f1f5f9', margin: '2px 0 3px' }} />
@@ -336,17 +411,30 @@ export default function Toolbar({
                       const p = emetteurParams[em.id]
                       const setP = (patch: Partial<typeof p>) =>
                         setEmetteurParams(prev => ({ ...prev, [em.id]: { ...prev[em.id], ...patch } }))
-                      const doPlace = () => { setEmetteurOpen(false); onAddEmetteur?.(em.id, p.deltaT, p.puissance) }
+                      const T_e = p.T_entree ?? em.T_entreeDefault
+                      const T_s = p.T_sortie ?? em.T_sortieDefault
+                      const doPlace = () => { setEmetteurOpen(false); onAddEmetteur?.(em.id, T_e, T_s, p.puissance) }
                       const onKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') doPlace() }
+                      const commitT = (field: 'T_entree' | 'T_sortie', raw: string, def: number) => {
+                        const v = parseFloat(raw)
+                        setP({ [field]: (isNaN(v) || v < 1) ? def : Math.min(150, Math.round(v)) } as any)
+                      }
                       return (
                         <React.Fragment key={em.id}>
                           <button onClick={doPlace} className="tb-display-item"
                             style={{ padding: '4px 8px 4px 4px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontSize: 11, color: '#1e293b', borderRadius: 4, whiteSpace: 'nowrap' }}>
                             {em.label}
                           </button>
-                          <input type="number" min={1} max={60} step={1}
-                            value={p.deltaT}
-                            onChange={e => setP({ deltaT: Math.max(1, Number(e.target.value)) })}
+                          <input type="number" min={1} max={150} step={1}
+                            value={p.T_entree ?? ''}
+                            onChange={e => setP({ T_entree: e.target.value === '' ? null : Number(e.target.value) })}
+                            onBlur={e => commitT('T_entree', e.target.value, em.T_entreeDefault)}
+                            onKeyDown={onKey} onClick={e => e.stopPropagation()}
+                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #e2e8f0', borderRadius: 4, fontSize: 11, textAlign: 'right', fontWeight: 600, color: '#1e293b', background: '#f8fafc' }} />
+                          <input type="number" min={1} max={150} step={1}
+                            value={p.T_sortie ?? ''}
+                            onChange={e => setP({ T_sortie: e.target.value === '' ? null : Number(e.target.value) })}
+                            onBlur={e => commitT('T_sortie', e.target.value, em.T_sortieDefault)}
                             onKeyDown={onKey} onClick={e => e.stopPropagation()}
                             style={{ width: '100%', padding: '3px 4px', border: '1px solid #e2e8f0', borderRadius: 4, fontSize: 11, textAlign: 'right', fontWeight: 600, color: '#1e293b', background: '#f8fafc' }} />
                           <input type="number" min={1} step={100}
@@ -362,11 +450,126 @@ export default function Toolbar({
                 </div>
               )}
             </div>
+            <button
+              className={`tb-btn ${placingEquipment?.type === 'pump' ? 'active' : ''}`}
+              onClick={() => { closeAcc(); cancelVanne(); onAddPumpChauffage?.() }}
+            >
+              <PumpSymbol
+                rotation={180}
+                color={placingEquipment?.type === 'pump' ? '#1d4ed8' : '#000'}
+                bg={placingEquipment?.type === 'pump' ? '#dbeafe' : '#fff'}
+              />
+              Pompe
+            </button>
+            <button
+              className={`tb-btn ${drawMode === 'draw' && pipeType === 'vanne' ? 'active' : ''}`}
+              onClick={() => activateDraw('vanne')}
+            >
+              <VanneIcon active={drawMode === 'draw' && pipeType === 'vanne'} />
+              Vanne équilib.
+            </button>
+          </>
+        )}
+
+        {/* Équipements Eau Glacée */}
+        {isEauGlacee && (
+          <>
+            <button
+              className={`tb-btn ${placingEquipment?.type === 'productionEauGlacee' ? 'active' : ''}`}
+              onClick={() => { closeAcc(); cancelVanne(); onAddProductionEauGlacee?.() }}
+              disabled={hasProductionEauGlacee}
+            >
+              Prod. EG
+            </button>
+            {/* Terminaux froids dropdown */}
+            <div ref={terminalFroidRef} style={{ position: 'relative' }}>
+              <button
+                className={`tb-btn ${terminalFroidOpen || placingEquipment?.type === 'terminalFroid' ? 'active' : ''}`}
+                onClick={() => { closeAcc(); cancelVanne(); setTerminalFroidOpen(o => !o) }}
+                style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+              >
+                <svg width={18} height={12} viewBox="0 0 18 12" style={{ display: 'block', flexShrink: 0 }}>
+                  <rect x={0.6} y={0.6} width={16.8} height={10.8} fill="none" stroke="#1d4ed8" strokeWidth={1.2} rx={1} strokeDasharray="2,1.5" />
+                  {[5.5, 9, 12.5].map((x, i) => (
+                    <line key={i} x1={x} y1={2} x2={x} y2={10} stroke="#1d4ed8" strokeWidth={0.9} />
+                  ))}
+                </svg>
+                Terminal froid {terminalFroidOpen ? '▲' : '▾'}
+              </button>
+              {terminalFroidOpen && (
+                <div className="tb-display-popover" style={{ padding: '6px 8px 8px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'max-content 44px 44px 50px', columnGap: 6, rowGap: 1, alignItems: 'center' }}>
+                    <span />
+                    <span style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 2 }}>T entrée</span>
+                    <span style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 2 }}>T sortie</span>
+                    <span style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 2 }}>P W</span>
+                    <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #f1f5f9', margin: '2px 0 3px' }} />
+                    {TERMINAL_FROID_TYPES.map(tf => {
+                      const p = terminalFroidParams[tf.id]
+                      const setP = (patch: Partial<typeof p>) =>
+                        setTerminalFroidParams(prev => ({ ...prev, [tf.id]: { ...prev[tf.id], ...patch } }))
+                      const T_e = p.T_entree ?? tf.T_entreeDefault
+                      const T_s = p.T_sortie ?? tf.T_sortieDefault
+                      const doPlace = () => { setTerminalFroidOpen(false); onAddTerminalFroid?.(tf.id, T_e, T_s, p.puissance) }
+                      const onKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') doPlace() }
+                      const commitT = (field: 'T_entree' | 'T_sortie', raw: string, def: number) => {
+                        const v = parseFloat(raw)
+                        setP({ [field]: (isNaN(v) || v < 0) ? def : Math.min(30, Math.round(v)) } as any)
+                      }
+                      return (
+                        <React.Fragment key={tf.id}>
+                          <button onClick={doPlace} className="tb-display-item"
+                            style={{ padding: '4px 8px 4px 4px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontSize: 11, color: '#1e3a8a', borderRadius: 4, whiteSpace: 'nowrap' }}>
+                            {tf.label}
+                          </button>
+                          <input type="number" min={0} max={30} step={1}
+                            value={p.T_entree ?? ''}
+                            onChange={e => setP({ T_entree: e.target.value === '' ? null : Number(e.target.value) })}
+                            onBlur={e => commitT('T_entree', e.target.value, tf.T_entreeDefault)}
+                            onKeyDown={onKey} onClick={e => e.stopPropagation()}
+                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #bfdbfe', borderRadius: 4, fontSize: 11, textAlign: 'right', fontWeight: 600, color: '#1e3a8a', background: '#eff6ff' }} />
+                          <input type="number" min={0} max={30} step={1}
+                            value={p.T_sortie ?? ''}
+                            onChange={e => setP({ T_sortie: e.target.value === '' ? null : Number(e.target.value) })}
+                            onBlur={e => commitT('T_sortie', e.target.value, tf.T_sortieDefault)}
+                            onKeyDown={onKey} onClick={e => e.stopPropagation()}
+                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #bfdbfe', borderRadius: 4, fontSize: 11, textAlign: 'right', fontWeight: 600, color: '#1e3a8a', background: '#eff6ff' }} />
+                          <input type="number" min={1} step={100}
+                            value={p.puissance ?? ''}
+                            placeholder="—"
+                            onChange={e => setP({ puissance: e.target.value === '' ? null : Math.max(1, Number(e.target.value)) })}
+                            onKeyDown={onKey} onClick={e => e.stopPropagation()}
+                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #bfdbfe', borderRadius: 4, fontSize: 11, textAlign: 'right', background: '#eff6ff', color: p.puissance != null ? '#1e3a8a' : '#9ca3af' }} />
+                        </React.Fragment>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+            <button
+              className={`tb-btn ${placingEquipment?.type === 'pump' ? 'active' : ''}`}
+              onClick={() => { closeAcc(); cancelVanne(); onAddPumpChauffage?.() }}
+            >
+              <PumpSymbol
+                rotation={180}
+                color={placingEquipment?.type === 'pump' ? '#1d4ed8' : '#1e40af'}
+                bg={placingEquipment?.type === 'pump' ? '#dbeafe' : '#fff'}
+              />
+              Pompe
+            </button>
+            <button
+              className={`tb-btn ${drawMode === 'draw' && pipeType === 'vanne' ? 'active' : ''}`}
+              onClick={() => activateDraw('vanne')}
+            >
+              <VanneIcon active={drawMode === 'draw' && pipeType === 'vanne'} />
+              Vanne équilib.
+            </button>
           </>
         )}
 
         {/* Équipements ECS — hors alimentation-ef et hors chauffage */}
-        {!isAlimEF && !isChauffage && (
+        {!isAlimEF && !isChauffage && !isEauGlacee && (
           <>
             <button
               className={`tb-btn ${placingEquipment?.type === 'productionECS' ? 'active' : ''}`}

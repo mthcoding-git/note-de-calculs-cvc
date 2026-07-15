@@ -2,6 +2,8 @@ import type { PdcParams, PdcParamsAlimECS, PdcParamsAlimEF } from './utils/pdcCa
 export type { PdcParams, PdcParamsAlimECS, PdcParamsAlimEF }
 import type { EmetteurType } from './data/emetteurs'
 export type { EmetteurType }
+import type { TerminalFroidType } from './data/terminauxFroids'
+export type { TerminalFroidType }
 
 // ── Types centraux ──────────────────────────────────────────────────────────
 
@@ -37,9 +39,9 @@ export interface Insulation {
 }
 
 export type SegmentType = 'aller' | 'retour'
-export type PointType = 'productionECS' | 'arriveeEF' | 'groupe' | 'pump' | 'node' | 'productionChauffage' | 'emetteur'
+export type PointType = 'productionECS' | 'arriveeEF' | 'groupe' | 'pump' | 'node' | 'productionChauffage' | 'emetteur' | 'productionEauGlacee' | 'terminalFroid'
 
-export type FluidId = 'ecs' | 'ef' | 'chauffage'
+export type FluidId = 'ecs' | 'ef' | 'chauffage' | 'eauglacee'
 
 export type CalcMode =
   | 'bouclage-ecs'
@@ -47,6 +49,7 @@ export type CalcMode =
   | 'alimentation-ef'
   | 'distribution-chauffage'
   | 'pdc-chauffage'
+  | 'distribution-eauglacee'
 
 export interface Segment {
   id: string
@@ -68,6 +71,7 @@ export interface Segment {
   t_amb_override?: number | null
   isLocked?: boolean
   encrassementEpaisseur?: number | null
+  T_ch_override?: number | null  // température override tronçon chauffage (°C)
 }
 
 export interface NodeSize {
@@ -86,8 +90,15 @@ export interface Point {
   cote_override?: number | null
   // Champs émetteur chauffage
   emetteurType?: EmetteurType
-  puissance?: number       // W
-  deltaT_emetteur?: number // ΔT eau aller/retour (°C), override du deltaT_reseau global
+  // Champs terminal froid eau glacée
+  terminalFroidType?: TerminalFroidType
+  // Champs communs émetteur / terminal froid
+  puissance?: number            // W
+  T_entree_emetteur?: number    // T° entrée émetteur / terminal (°C)
+  T_sortie_emetteur?: number    // T° sortie émetteur / terminal (°C)
+  deltaT_emetteur?: number      // obsolète — conservé pour rétrocompat projets anciens
+  dp_emetteur?: number          // ΔP émetteur / terminal (Pa)
+  dp_vanne_th?: number          // ΔP vanne thermostatique (Pa)
 }
 
 export interface Level {
@@ -192,9 +203,56 @@ export interface LocalEF {
   height: number
 }
 
+export interface LocalECS {
+  id: string
+  enabled: boolean
+  levelId: string
+  x1: number
+  x2: number
+  height: number
+}
+
+export interface LocalChauffage {
+  id: string
+  enabled: boolean
+  levelId: string
+  x1: number
+  x2: number
+  height: number
+}
+
 export interface ChauffageParams {
   T_depart: number      // Température de départ (°C)
   deltaT_reseau: number // ΔT par défaut des émetteurs (K) — peut être overridé par émetteur
+}
+
+export interface EauGlaceeParams {
+  T_depart: number      // Température de départ eau glacée (°C)
+  deltaT_reseau: number // ΔT par défaut des terminaux (K) — peut être overridé par terminal
+}
+
+export interface LocalEauGlacee {
+  id: string
+  enabled: boolean
+  levelId: string
+  x1: number
+  x2: number
+  height: number
+}
+
+export interface NetworkDisplayPrefs {
+  unitDebit: 'L/h' | 'm3/h'
+  unitDp: 'Pa' | 'mmCE' | 'both'
+  colorAller: string
+  colorRetour: string
+  strokeWidth: number
+}
+
+export interface DisplayPrefs {
+  ecs: NetworkDisplayPrefs
+  ef: NetworkDisplayPrefs
+  chauffage: NetworkDisplayPrefs & { unitPuissance: 'W' | 'kW' }
+  eauglacee: NetworkDisplayPrefs & { unitPuissance: 'W' | 'kW' }
 }
 
 // ── Types variantes ─────────────────────────────────────────────────────────
@@ -204,6 +262,8 @@ export interface ProjectData {
   points:                Point[]
   materialsECS:          Material[]
   materialsEF:           Material[]
+  materialsChauffage:    Material[]
+  materialsEauGlacee?:   Material[]
   insulations:           Insulation[]
   levels:                Level[]
   lineYs:                number[]
@@ -214,12 +274,19 @@ export interface ProjectData {
   alimentationParamsECS: AlimentationParams
   alimentationParamsEF:  AlimentationParams | null
   pdcParamsBouclageECS:  PdcParams
+  pdcParamsChauffage?:   PdcParams
+  pdcParamsEauGlacee?:   PdcParams
   pdcParamsAlimECS:      PdcParamsAlimECS
   pdcParamsAlimEF:       PdcParamsAlimEF | null
   valves:                Valve[]
   accessories:           Accessory[]
   locauxEF:              LocalEF[]
+  locauxECS:             LocalECS[]
+  locauxChauffage:       LocalChauffage[]
+  locauxEauGlacee?:      LocalEauGlacee[]
   chauffageParams:       ChauffageParams
+  eauGlaceeParams?:      EauGlaceeParams
+  displayPrefs?:         DisplayPrefs
 }
 
 export interface Variant {

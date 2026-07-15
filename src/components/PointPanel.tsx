@@ -1,11 +1,12 @@
-import { useState, useRef } from 'react'
+import React, { useState, useRef } from 'react'
 import type { CalcMode } from '../types'
-import { sf } from '../utils/fmt'
+import { sf, fmtDpLabel } from '../utils/fmt'
 import { getNodeCote, getNodeDefaultCote } from '../utils/coteCalc'
 import { NumInput } from './NumInput'
 import { tAvalStyle, Field, SectionLabel, SegNameField, CoteSection, TempBadge, computeGroupePath, MAX_ANTENNE_LEN_M, MAX_ANTENNE_VOL_L } from './rpShared'
 import { getModeFlags } from '../utils/calcModeFlags'
 import { EMETTEUR_TYPES } from '../data/emetteurs'
+import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
 
 const DIR_BTNS = [
   { label: '←', rot: 180, title: 'Vers la gauche' },
@@ -27,15 +28,26 @@ interface PointPanelProps {
   groupDisplayNames?: any; allSegs?: any[]; flowDirections?: any
   materials?: any[]; roleMap?: any; columns?: any[]; columnXs?: number[]
   thermalResults?: any; chauffageFlows?: any; chauffageParams?: any; onChauffageParamsChange?: any; chauffageThermal?: any
+  eauGlaceeFlows?: any; eauGlaceeParams?: any; onEauGlaceeParamsChange?: any; eauGlaceeThermal?: any
+  eauGlaceePumpHMT?: Map<string, { hmt: number | null; criticalSegIds: Set<string>; isSecondary: boolean }>
+  eauGlaceeSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
+  networkFlows?: any
+  mixingNodes?: Set<string>
+  chauffagePumpHMT?: Map<string, { hmt: number | null; criticalSegIds: Set<string>; isSecondary: boolean }>
+  chauffageSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
+  onShowCriticalPath?: (segIds: string[]) => void
+  pumpCriticalMap?: Map<string, { critDp: number | null; criticalSegIds: Set<string> }> | null
 }
 
-export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null }: PointPanelProps) {
+export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null, eauGlaceeFlows = null, eauGlaceeParams = null, onEauGlaceeParamsChange = null, eauGlaceeThermal = null, eauGlaceePumpHMT = null, eauGlaceeSplitCumDp = null, networkFlows = null, mixingNodes = null, chauffagePumpHMT = null, chauffageSplitCumDp = null, onShowCriticalPath = null, pumpCriticalMap = null }: PointPanelProps) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
   const T_depart = globalParams?.T_depart ?? null
   const [showDims, setShowDims] = useState(false)
+  const [showDimsCH, setShowDimsCH] = useState(false)
+  const [showDimsEF, setShowDimsEF] = useState(false)
   const deltaTByType = useRef<Record<string, number | null>>({})
 
-  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, hasPdc, isChauffage } = getModeFlags(activeCalcId)
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, hasPdc, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
 
   const coteDef = getNodeDefaultCote(pt, levels, lineYs)
   const coteJsx = isAlimMode ? (
@@ -53,7 +65,11 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
     const incoming       = pdcCumResults.nodeIncoming.get(pt.id) ?? []
     const isJunction     = incoming.length > 1
     const isPostJunction = pdcCumResults.nodePostJunction.get(pt.id) ?? false
-    const cumDp          = pdcCumResults.nodeCumDp.get(pt.id)
+    const nodeDp         = pdcCumResults.nodeCumDp.get(pt.id)
+    const emDp           = (isChauffage && pt.type === 'emetteur') || (isEauGlacee && pt.type === 'terminalFroid')
+      ? ((pt.dp_emetteur ?? 0) + (pt.dp_vanne_th ?? 0))
+      : 0
+    const cumDp          = nodeDp != null ? nodeDp + emDp : undefined
     if (cumDp == null && incoming.length === 0) return null
 
     const unite = pdcParams?.uniteAffichage ?? 'Pa'
@@ -68,7 +84,9 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
 
     const title = (
       <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
-        letterSpacing: '0.06em', marginBottom: 6 }}>ΔP depuis production ECS</div>
+        letterSpacing: '0.06em', marginBottom: 6 }}>
+        {isChauffage ? 'ΔP cumulé' : 'ΔP depuis production ECS'}
+      </div>
     )
 
     const wrap = (children: React.ReactNode) => (
@@ -96,18 +114,27 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
   }
 
   if (pt.type === 'pump') {
-    const pumpFlowRateLh = inSegs.length > 0
-      ? Math.round(inSegs.reduce((s, seg) => s + (seg.flowRate ?? 0), 0) * 1000)
+    const sumFlowM3h = inSegs.length > 0
+      ? inSegs.reduce((s, seg) => s + (seg.flowRate ?? 0), 0)
       : null
-    const critDp = pdcCumResults?.criticalDp ?? null
+    const unitDebit = (pdcParams as any)?.unitDebit ?? 'L/h'
+    const pumpFlowDisplay = sumFlowM3h != null && sumFlowM3h > 0
+      ? unitDebit === 'L/h'
+        ? { value: Math.round(sumFlowM3h * 1000), unit: 'L/h' }
+        : { value: Number(sumFlowM3h.toFixed(3)), unit: 'm³/h' }
+      : null
+    const pumpHMTEntry = isChauffage && chauffagePumpHMT != null ? chauffagePumpHMT.get(pt.id) : null
+    const pumpPartitionEntry = !isChauffage ? pumpCriticalMap?.get(pt.id) : null
+    const critDp = pumpHMTEntry?.hmt ?? pumpPartitionEntry?.critDp ?? pdcCumResults?.criticalDp ?? null
     const hmtMce = critDp != null ? critDp / 9810 : null
+
+    const criticalSegIds: Set<string> | null = isChauffage
+      ? (pumpHMTEntry?.isSecondary
+          ? (pumpHMTEntry.criticalSegIds)
+          : (chauffageSplitCumDp?.criticalSegIds ?? null))
+      : (pumpPartitionEntry?.criticalSegIds ?? pumpHMTEntry?.criticalSegIds ?? pdcCumResults?.criticalSegIds ?? null)
     const unite  = pdcParams?.uniteAffichage ?? 'Pa'
-    const fmtDp  = (pa: number) => {
-      const mmce = `${(pa / 9.81).toFixed(0)} mmCE`
-      if (unite === 'mmCE') return mmce
-      if (unite === 'both') return `${Math.round(pa)} Pa / ${mmce}`
-      return `${Math.round(pa)} Pa`
-    }
+    const fmtDp  = (pa: number) => fmtDpLabel(pa, unite)
     const statRow = (label: string, value: React.ReactNode) => (
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
         marginBottom: 5 }}>
@@ -116,18 +143,19 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           fontFamily: 'ui-monospace, monospace' }}>{value}</span>
       </div>
     )
-    const showDebit = pumpFlowRateLh != null && pumpFlowRateLh > 0
+    const showDebit = pumpFlowDisplay != null
     const showPdc   = critDp != null
     const showTemp  = !isAlimECS && nodeTemp != null
     return (
       <div className="rp-section">
         <h3 className="rp-title">Pompe</h3>
         {(() => {
+          const prefix = isChauffage ? 'Pompe chauffage' : 'Pompe bouclage ECS'
           const pumpsSorted = points.filter((p: any) => p.type === 'pump')
           const pumpIdx = pumpsSorted.findIndex((p: any) => p.id === pt.id)
           const autoName = pumpsSorted.length <= 1
-            ? 'Pompe bouclage ECS'
-            : `Pompe bouclage ECS n°${pumpIdx + 1}`
+            ? prefix
+            : `${prefix} n°${pumpIdx + 1}`
           const isDefaultName = !pt.name || pt.name === autoName
           return (
             <SegNameField
@@ -138,7 +166,6 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             />
           )
         })()}
-        <hr className="rp-divider" />
         {coteJsx}
 
         {/* Résultats : débit, ΔP, HMT, température */}
@@ -147,13 +174,27 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             <SectionLabel>Résultats pompe</SectionLabel>
             {showDebit &&
               statRow('Débit de circulation',
-                <>{pumpFlowRateLh} <span style={{ fontSize: 10, fontWeight: 400 }}>L/h</span></>)
+                <>{pumpFlowDisplay!.value} <span style={{ fontSize: 10, fontWeight: 400 }}>{pumpFlowDisplay!.unit}</span></>)
             }
             {showPdc && (<>
               {statRow('ΔP circuit défavorisé', fmtDp(critDp!))}
               {hmtMce != null &&
                 statRow('HMT', <>{hmtMce.toFixed(2)} <span style={{ fontSize: 10, fontWeight: 400 }}>mCE</span></>)
               }
+              {criticalSegIds != null && criticalSegIds.size > 0 && onShowCriticalPath != null && (
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    onClick={() => onShowCriticalPath([...criticalSegIds])}
+                    style={{
+                      width: '100%', padding: '4px 9px', fontSize: 10, fontWeight: 600,
+                      border: '1px solid #93c5fd', borderRadius: 4, cursor: 'pointer',
+                      background: '#e0f2fe', color: '#0369a1',
+                    }}
+                  >
+                    Voir le circuit
+                  </button>
+                </div>
+              )}
             </>)}
             {showTemp && <TempBadge temp={nodeTemp} T_depart={T_depart} />}
           </div>
@@ -165,7 +206,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             onClick={() => setShowDims(v => !v)}
             style={{ fontSize: 10, color: '#9ca3af', background: 'none', border: 'none',
               cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 3 }}>
-            <span>{showDims ? '▲' : '▼'}</span> Caractéristiques
+            <span>{showDims ? '▼' : '▶'}</span> Caractéristiques
           </button>
           {showDims && (<>
             <Field label="Rayon" unit="px">
@@ -407,6 +448,26 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           onChange={v => set('name', v || null)}
         />
         {coteJsx}
+        <div style={{ marginTop: 8, borderTop: '1px solid #f3f4f6', paddingTop: 6 }}>
+          <button
+            onClick={() => setShowDimsEF(v => !v)}
+            style={{ fontSize: 10, color: '#9ca3af', background: 'none', border: 'none',
+              cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span>{showDimsEF ? '▼' : '▶'}</span> Dimensions
+          </button>
+          {showDimsEF && (<>
+            <Field label="Largeur" unit="px">
+              <NumInput min={10} max={200} step={1}
+                value={pt.size?.w ?? 44}
+                onChange={v => set('size', { w: v ?? 44, h: pt.size?.h ?? 28 })} />
+            </Field>
+            <Field label="Hauteur" unit="px">
+              <NumInput min={10} max={200} step={1}
+                value={pt.size?.h ?? 28}
+                onChange={v => set('size', { w: pt.size?.w ?? 44, h: v ?? 28 })} />
+            </Field>
+          </>)}
+        </div>
         {showEFPressure && (() => {
           const pDyn  = pressionSourceAlimEF!
           const pStat = pressionSourceAlimEFStatic ?? pDyn
@@ -464,17 +525,116 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
     )
   }
 
+  if (mixingNodes?.has(pt.id)) {
+    const primAllerSegs = (allSegs as any[]).filter((s: any) =>
+      s.type === 'aller' && flowDirections?.get(s.id)?.toId === pt.id
+    )
+    const secAllerSegs = (allSegs as any[]).filter((s: any) =>
+      s.type === 'aller' && flowDirections?.get(s.id)?.fromId === pt.id
+    )
+    const retourArrivingSegs = (allSegs as any[]).filter((s: any) =>
+      s.type === 'retour' && flowDirections?.get(s.id)?.toId === pt.id
+    )
+    const bypassSegs = retourArrivingSegs.filter((s: any) => {
+      const fromId = flowDirections?.get(s.id)?.fromId
+      if (!fromId) return false
+      return (allSegs as any[]).filter((r: any) =>
+        r.type === 'retour' && (r.startPointId === fromId || r.endPointId === fromId)
+      ).length >= 3
+    })
+    const secRetourSegs = retourArrivingSegs.filter((s: any) =>
+      !bypassSegs.some((b: any) => b.id === s.id)
+    )
+
+    const T_prim: number | null = chauffageParams?.T_depart ?? null
+    const T_dep_sec = secAllerSegs.reduce((max: number, s: any) => {
+      const T = chauffageThermal?.segResults?.get(s.id)?.T_from ?? null
+      return (T != null && T > max) ? T : max
+    }, -Infinity)
+    // T retour secondaire = T_from du bypass (fromId = nœud séparation)
+    let T_ret_sec: number | null = null
+    for (const s of bypassSegs) {
+      const T = chauffageThermal?.segResults?.get(s.id)?.T_from ?? null
+      if (T != null) { T_ret_sec = T; break }
+    }
+
+    const Q_sec_lh    = secAllerSegs.reduce((sum: number, s: any) =>
+      sum + (chauffageFlows?.get(s.id)?.flowRate ?? 0), 0) * 1000
+    const Q_prim_lh   = primAllerSegs.reduce((sum: number, s: any) =>
+      sum + (chauffageFlows?.get(s.id)?.flowRate ?? 0), 0) * 1000
+    const Q_bypass_lh = bypassSegs.reduce((sum: number, s: any) =>
+      sum + (chauffageFlows?.get(s.id)?.flowRate ?? 0), 0) * 1000
+    const pctPrim    = Q_sec_lh > 0 ? (Q_prim_lh   / Q_sec_lh) * 100 : null
+    const pctBypass  = Q_sec_lh > 0 ? (Q_bypass_lh  / Q_sec_lh) * 100 : null
+
+    const unit = (u: string) => <span style={{ fontSize: 8, fontWeight: 400 }}>{u}</span>
+    const pct  = (v: number)  => <span style={{ fontSize: 9, color: '#6b7280', marginLeft: 3 }}>({v.toFixed(0)}&nbsp;%)</span>
+    const statRow = (label: string, value: React.ReactNode) => (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+        <span style={{ fontSize: 11, color: '#6b7280' }}>{label}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', fontFamily: 'ui-monospace, monospace' }}>{value}</span>
+      </div>
+    )
+    const valCell = (children: React.ReactNode) => (
+      <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 700, fontSize: 11, color: '#0f172a', textAlign: 'right' as const, whiteSpace: 'nowrap' as const }}>
+        {children}
+      </span>
+    )
+    const rows: { label: string; T: React.ReactNode | null; Q: React.ReactNode | null; badge: React.ReactNode | null }[] = [
+      {
+        label: 'Secondaire départ',
+        T: T_dep_sec > -Infinity ? valCell(<>{T_dep_sec.toFixed(1)} {unit('°C')}</>) : null,
+        Q: Q_sec_lh > 0          ? valCell(<>{Q_sec_lh.toFixed(1)} {unit('L/h')}</>)  : null,
+        badge: null,
+      },
+      {
+        label: 'Primaire départ',
+        T: T_prim != null ? valCell(<>{T_prim.toFixed(1)} {unit('°C')}</>) : null,
+        Q: Q_prim_lh > 0  ? valCell(<>{Q_prim_lh.toFixed(1)} {unit('L/h')}</>) : null,
+        badge: pctPrim != null ? pct(pctPrim) : null,
+      },
+      {
+        label: 'Secondaire retour',
+        T: T_ret_sec != null ? valCell(<>{T_ret_sec.toFixed(1)} {unit('°C')}</>) : null,
+        Q: Q_bypass_lh > 0   ? valCell(<>{Q_bypass_lh.toFixed(1)} {unit('L/h')}</>) : null,
+        badge: pctBypass != null ? pct(pctBypass) : null,
+      },
+    ]
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title">Vanne de mélange</h3>
+        {coteJsx}
+        <hr className="rp-divider" />
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto auto auto', gap: '3px 5px', alignItems: 'baseline' }}>
+          <div />
+          <span style={{ fontSize: 9, color: '#94a3b8', fontWeight: 600, textAlign: 'right' }}>T°</span>
+          <span style={{ fontSize: 9, color: '#94a3b8', fontWeight: 600, textAlign: 'right' }}>Débit</span>
+          <div />
+          {rows.map(({ label, T, Q, badge }) => (
+            <React.Fragment key={label}>
+              <span style={{ fontSize: 10, color: '#6b7280', whiteSpace: 'nowrap', paddingRight: 4 }}>{label}</span>
+              <div style={{ textAlign: 'right' }}>{T ?? <span style={{ color: '#cbd5e1' }}>—</span>}</div>
+              <div style={{ textAlign: 'right' }}>{Q ?? <span style={{ color: '#cbd5e1' }}>—</span>}</div>
+              <div>{badge}</div>
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   if (pt.type === 'productionChauffage') {
-    const tDepart = chauffageParams?.T_depart   ?? 70
-    const deltaT  = chauffageParams?.deltaT_reseau ?? 20
+    const tDepart = chauffageParams?.T_depart ?? 70
     const tRetourCalc: number | null = chauffageThermal?.nodeRetourT?.get(pt.id) ?? null
-    const tRetour = tRetourCalc ?? (tDepart - deltaT)
+    const tRetour = tRetourCalc ?? null
     const emetteurs = points.filter((p: any) => p.type === 'emetteur')
     const totalPuissance = emetteurs.reduce((s: number, e: any) => s + (e.puissance ?? 0), 0)
-    const RHO_CP = 1163
-    const totalQ = totalPuissance > 0 && deltaT > 0
-      ? totalPuissance / (RHO_CP * deltaT)
-      : null
+    const allerFromProd = allSegs.filter((s: any) =>
+      s.type === 'aller' && flowDirections?.get(s.id)?.fromId === pt.id
+    )
+    const totalQ_m3h = allerFromProd.reduce((sum: number, s: any) =>
+      sum + (chauffageFlows?.get(s.id)?.flowRate ?? 0), 0)
+    const totalQ = totalQ_m3h > 0 ? totalQ_m3h : null
     const statRow = (label: string, value: React.ReactNode) => (
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
         <span style={{ fontSize: 11, color: '#6b7280' }}>{label}</span>
@@ -486,12 +646,9 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
     return (
       <div className="rp-section">
         <h3 className="rp-title">Production Chauffage</h3>
-        <SectionLabel>Paramètres réseau</SectionLabel>
+        <SectionLabel>Paramètres</SectionLabel>
         <Field label="T° départ" unit="°C">
           <NumInput value={tDepart} min={20} max={120} step={1} onChange={v => setCP('T_depart', v)} />
-        </Field>
-        <Field label="ΔT aller/retour" unit="°C">
-          <NumInput value={deltaT} min={1} max={50} step={1} onChange={v => setCP('deltaT_reseau', v)} />
         </Field>
         <div style={{ display: 'flex', gap: 8, marginTop: 8, marginBottom: 10 }}>
           <div style={{ flex: 1, padding: '6px 10px', background: '#fef2f2',
@@ -520,11 +677,155 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
         {statRow('Nb émetteurs', emetteurs.length)}
         {statRow('Puissance totale',
           <>{(totalPuissance / 1000).toFixed(1)} <span style={{ fontSize: 10, fontWeight: 400 }}>kW</span></>)}
-        {totalQ != null && statRow('Débit total',
-          <>{(totalQ * 1000).toFixed(1)} <span style={{ fontSize: 10, fontWeight: 400 }}>L/h</span></>)}
-        <p className="lp-hint" style={{ marginTop: 6 }}>
-          Le ΔT global peut être overridé par émetteur dans le panneau de droite.
-        </p>
+        {totalQ != null && (() => {
+          const unitDebit = (pdcParams as any)?.unitDebit ?? 'L/h'
+          const qVal = unitDebit === 'L/h' ? (totalQ * 1000).toFixed(1) : totalQ.toFixed(3)
+          return statRow('Débit total', <>{qVal} <span style={{ fontSize: 10, fontWeight: 400 }}>{unitDebit}</span></>)
+        })()}
+        {pdcCumResults != null && (() => {
+          const retSegs = allSegs.filter((s: any) =>
+            (s.type === 'retour-ch' || s.type === 'retour') &&
+            flowDirections?.get(s.id)?.toId === pt.id
+          )
+          const retDps = retSegs
+            .map((s: any) => pdcCumResults.segCumDp?.get(s.id))
+            .filter((v): v is number => v != null)
+          if (retDps.length === 0) return null
+          const maxDp = Math.max(...retDps)
+          const u = pdcParams?.uniteAffichage ?? 'Pa'
+          const fmtDp = (pa: number) => fmtDpLabel(pa, u)
+          return (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 5 }}>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>ΔP retour (circuit le plus défavorisé)</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', fontFamily: 'ui-monospace, monospace', flexShrink: 0, marginLeft: 4 }}>{fmtDp(maxDp)}</span>
+            </div>
+          )
+        })()}
+        <div style={{ marginTop: 8, borderTop: '1px solid #f3f4f6', paddingTop: 6 }}>
+          <button
+            onClick={() => setShowDimsCH(v => !v)}
+            style={{ fontSize: 10, color: '#9ca3af', background: 'none', border: 'none',
+              cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span>{showDimsCH ? '▼' : '▶'}</span> Dimensions
+          </button>
+          {showDimsCH && (<>
+            <Field label="Largeur" unit="px">
+              <NumInput min={10} max={200} step={1}
+                value={pt.size?.w ?? 44}
+                onChange={v => set('size', { w: v ?? 44, h: pt.size?.h ?? 28 })} />
+            </Field>
+            <Field label="Hauteur" unit="px">
+              <NumInput min={10} max={200} step={1}
+                value={pt.size?.h ?? 28}
+                onChange={v => set('size', { w: pt.size?.w ?? 44, h: v ?? 28 })} />
+            </Field>
+          </>)}
+        </div>
+      </div>
+    )
+  }
+
+  if (pt.type === 'productionEauGlacee') {
+    const tAller = eauGlaceeParams?.T_depart ?? 7
+    const deltaT = eauGlaceeParams?.deltaT_reseau ?? 5
+    const tRetourCalc: number | null = eauGlaceeThermal?.nodeRetourT?.get(pt.id) ?? null
+    const tRetour = tRetourCalc != null ? tRetourCalc : tAller + deltaT
+    const terminaux = points.filter((p: any) => p.type === 'terminalFroid')
+    const totalPuissance = terminaux.reduce((s: number, e: any) => s + (e.puissance ?? 0), 0)
+    const allerFromProd = allSegs.filter((s: any) =>
+      s.type === 'aller' && flowDirections?.get(s.id)?.fromId === pt.id
+    )
+    const totalQ_m3h = allerFromProd.reduce((sum: number, s: any) =>
+      sum + (eauGlaceeFlows?.get(s.id)?.flowRate ?? 0), 0)
+    const totalQ = totalQ_m3h > 0 ? totalQ_m3h : null
+    const statRow = (label: string, value: React.ReactNode) => (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+        <span style={{ fontSize: 11, color: '#6b7280' }}>{label}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', fontFamily: 'ui-monospace, monospace' }}>{value}</span>
+      </div>
+    )
+    const setEG = (key: string, val: number) =>
+      onEauGlaceeParamsChange?.({ ...eauGlaceeParams, [key]: val })
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title" style={{ color: '#1e40af' }}>Production Eau glacée</h3>
+        <SectionLabel>Paramètres</SectionLabel>
+        <Field label="T° aller" unit="°C">
+          <NumInput value={tAller} min={0} max={25} step={1} onChange={v => setEG('T_depart', v)} />
+        </Field>
+        <Field label="ΔT réseau" unit="K">
+          <NumInput value={deltaT} min={1} max={20} step={1} onChange={v => setEG('deltaT_reseau', v)} />
+        </Field>
+        <div style={{ display: 'flex', gap: 8, marginTop: 8, marginBottom: 10 }}>
+          <div style={{ flex: 1, padding: '6px 10px', background: '#eff6ff',
+            border: '1px solid #93c5fd', borderRadius: 6 }}>
+            <div style={{ fontSize: 9, color: '#1d4ed8', fontWeight: 700, marginBottom: 2,
+              textTransform: 'uppercase', letterSpacing: '0.05em' }}>T aller</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+              <span style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>{tAller}</span>
+              <span style={{ fontSize: 10, color: '#9ca3af' }}>°C</span>
+            </div>
+          </div>
+          <div style={{ flex: 1, padding: '6px 10px', background: '#dbeafe',
+            border: '1px solid #60a5fa', borderRadius: 6 }}>
+            <div style={{ fontSize: 9, color: '#1e40af', fontWeight: 700, marginBottom: 2,
+              textTransform: 'uppercase', letterSpacing: '0.05em' }}>T retour</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+              <span style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>
+                {tRetourCalc != null ? sf(tRetourCalc, 2) : tRetour.toFixed(1)}
+              </span>
+              <span style={{ fontSize: 10, color: '#9ca3af' }}>°C</span>
+            </div>
+          </div>
+        </div>
+        <hr className="rp-divider" />
+        <SectionLabel>Réseau</SectionLabel>
+        {statRow('Nb terminaux froids', terminaux.length)}
+        {statRow('Puissance totale',
+          <>{(totalPuissance / 1000).toFixed(1)} <span style={{ fontSize: 10, fontWeight: 400 }}>kW</span></>)}
+        {totalQ != null && (() => {
+          const unitDebit = (pdcParams as any)?.unitDebit ?? 'L/h'
+          const qVal = unitDebit === 'L/h' ? (totalQ * 1000).toFixed(1) : totalQ.toFixed(3)
+          return statRow('Débit total', <>{qVal} <span style={{ fontSize: 10, fontWeight: 400 }}>{unitDebit}</span></>)
+        })()}
+        {pdcCumResults != null && (() => {
+          const retSegs = allSegs.filter((s: any) =>
+            (s.type === 'retour-ch' || s.type === 'retour') &&
+            flowDirections?.get(s.id)?.toId === pt.id
+          )
+          const retDps = retSegs
+            .map((s: any) => pdcCumResults.segCumDp?.get(s.id))
+            .filter((v): v is number => v != null)
+          if (retDps.length === 0) return null
+          const maxDp = Math.max(...retDps)
+          const u = pdcParams?.uniteAffichage ?? 'Pa'
+          return (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 5 }}>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>ΔP retour (circuit le plus défavorisé)</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', fontFamily: 'ui-monospace, monospace', flexShrink: 0, marginLeft: 4 }}>{fmtDpLabel(maxDp, u)}</span>
+            </div>
+          )
+        })()}
+        <div style={{ marginTop: 8, borderTop: '1px solid #f3f4f6', paddingTop: 6 }}>
+          <button
+            onClick={() => setShowDimsCH(v => !v)}
+            style={{ fontSize: 10, color: '#9ca3af', background: 'none', border: 'none',
+              cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span>{showDimsCH ? '▼' : '▶'}</span> Dimensions
+          </button>
+          {showDimsCH && (<>
+            <Field label="Largeur" unit="px">
+              <NumInput min={10} max={200} step={1}
+                value={pt.size?.w ?? 44}
+                onChange={v => set('size', { w: v ?? 44, h: pt.size?.h ?? 28 })} />
+            </Field>
+            <Field label="Hauteur" unit="px">
+              <NumInput min={10} max={200} step={1}
+                value={pt.size?.h ?? 28}
+                onChange={v => set('size', { w: pt.size?.w ?? 44, h: v ?? 28 })} />
+            </Field>
+          </>)}
+        </div>
       </div>
     )
   }
@@ -533,20 +834,22 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
     const emetteurDef  = EMETTEUR_TYPES.find(e => e.id === pt.emetteurType)
     const label        = emetteurDef?.label ?? pt.emetteurType ?? 'Émetteur'
     const puissanceW   = pt.puissance ?? null
-    const globalDeltaT = chauffageParams?.deltaT_reseau ?? 20
-    const deltaTEff    = pt.deltaT_emetteur ?? globalDeltaT
+    const T_prod       = chauffageParams?.T_depart ?? 70
+    const T_entree     = pt.T_entree_emetteur ?? emetteurDef?.T_entreeDefault ?? T_prod
+    const T_sortie     = pt.T_sortie_emetteur ?? emetteurDef?.T_sortieDefault ?? (T_prod - 20)
     const RHO_CP       = 1163
-    const flowRateLh   = puissanceW != null && deltaTEff > 0
-      ? (puissanceW / (RHO_CP * deltaTEff)) * 1000
+    const dT           = T_entree - T_sortie
+    const flowRateLh   = puissanceW != null && dT > 0
+      ? (puissanceW / (RHO_CP * dT)) * 1000
       : null
 
     const handleTypeChange = (newTypeId: string) => {
-      const prevTypeId = pt.emetteurType ?? ''
-      deltaTByType.current[`${pt.id}_${prevTypeId}`] = pt.deltaT_emetteur ?? null
-      const saved   = deltaTByType.current[`${pt.id}_${newTypeId}`]
-      const newDef  = EMETTEUR_TYPES.find(e => e.id === newTypeId)
-      const newDt   = (saved != null) ? saved : (newDef?.deltaTDefault ?? globalDeltaT)
-      onUpdate(pt.id, 'point', { emetteurType: newTypeId, deltaT_emetteur: newDt })
+      const newDef = EMETTEUR_TYPES.find(e => e.id === newTypeId)
+      onUpdate(pt.id, 'point', {
+        emetteurType: newTypeId,
+        T_entree_emetteur: newDef?.T_entreeDefault ?? T_prod,
+        T_sortie_emetteur: newDef?.T_sortieDefault ?? (T_prod - 20),
+      })
     }
 
     const statRow = (lbl: string, value: React.ReactNode) => (
@@ -580,18 +883,141 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             onChange={v => set('puissance', v)} />
         </Field>
 
-        <Field label="ΔT émetteur" unit="K">
-          <NumInput min={1} max={60} step={1}
-            value={pt.deltaT_emetteur ?? globalDeltaT}
-            onChange={v => set('deltaT_emetteur', v ?? globalDeltaT)} />
+        <Field label="T entrée" unit="°C">
+          <NumInput min={0} max={120} step={1}
+            value={T_entree}
+            onChange={v => set('T_entree_emetteur', v ?? emetteurDef?.T_entreeDefault ?? T_prod)} />
+        </Field>
+
+        <Field label="T sortie" unit="°C">
+          <NumInput min={0} max={120} step={1}
+            value={T_sortie}
+            onChange={v => set('T_sortie_emetteur', v ?? emetteurDef?.T_sortieDefault ?? (T_prod - 20))} />
+        </Field>
+
+        <hr className="rp-divider" />
+
+        <Field label="ΔP émetteur" unit="Pa">
+          <NumInput min={0} step={10} allowEmpty
+            value={pt.dp_emetteur ?? null}
+            placeholder="—"
+            onChange={v => set('dp_emetteur', v)} />
+        </Field>
+
+        <Field label="ΔP vanne th." unit="Pa">
+          <NumInput min={0} step={10} allowEmpty
+            value={pt.dp_vanne_th ?? null}
+            placeholder="—"
+            onChange={v => set('dp_vanne_th', v)} />
         </Field>
 
         {flowRateLh != null && (
           <>
             <hr className="rp-divider" />
             <SectionLabel>Résultats</SectionLabel>
+            {statRow('ΔT émetteur', <>{dT.toFixed(0)} <span style={{ fontSize: 10, fontWeight: 400 }}>K</span></>)}
             <div style={{ padding: '8px 12px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 6 }}>
-              <div style={{ fontSize: 9, color: '#0284c7', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Débit</div>
+              <div style={{ fontSize: 9, color: '#0284c7', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Débit émetteur</div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                <span style={{ fontSize: 20, fontWeight: 800, color: '#0f172a', fontFamily: 'ui-monospace, monospace' }}>{flowRateLh.toFixed(1)}</span>
+                <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>L/h</span>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  if (pt.type === 'terminalFroid') {
+    const tfDef       = TERMINAL_FROID_TYPES.find(t => t.id === pt.terminalFroidType)
+    const label       = tfDef?.label ?? pt.terminalFroidType ?? 'Terminal froid'
+    const puissanceW  = pt.puissance ?? null
+    const T_prod      = eauGlaceeParams?.T_depart ?? 7
+    const deltaT      = eauGlaceeParams?.deltaT_reseau ?? 5
+    const T_entree    = pt.T_entree_emetteur ?? tfDef?.T_entreeDefault ?? T_prod
+    const T_sortie    = pt.T_sortie_emetteur ?? tfDef?.T_sortieDefault ?? (T_prod + deltaT)
+    const RHO_CP      = 1163
+    const dT          = Math.abs(T_entree - T_sortie)
+    const flowRateLh  = puissanceW != null && dT > 0
+      ? (puissanceW / (RHO_CP * dT)) * 1000
+      : null
+
+    const handleTypeChange = (newTypeId: string) => {
+      const newDef = TERMINAL_FROID_TYPES.find(t => t.id === newTypeId)
+      onUpdate(pt.id, 'point', {
+        terminalFroidType: newTypeId,
+        T_entree_emetteur: newDef?.T_entreeDefault ?? T_prod,
+        T_sortie_emetteur: newDef?.T_sortieDefault ?? (T_prod + deltaT),
+      })
+    }
+
+    const statRow = (lbl: string, value: React.ReactNode) => (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+        <span style={{ fontSize: 11, color: '#6b7280' }}>{lbl}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', fontFamily: 'ui-monospace, monospace' }}>{value}</span>
+      </div>
+    )
+
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title" style={{ color: '#1e40af' }}>{label}</h3>
+
+        <Field label="Type de terminal">
+          <select
+            value={pt.terminalFroidType ?? ''}
+            onChange={e => handleTypeChange(e.target.value)}
+            style={{ width: '100%', fontSize: 11, padding: '5px 6px', border: '1px solid #d1d5db',
+              borderRadius: 5, background: '#fff', cursor: 'pointer' }}
+          >
+            {TERMINAL_FROID_TYPES.map(t => (
+              <option key={t.id} value={t.id}>{t.label}</option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Puissance frigorifique" unit="W">
+          <NumInput min={1} step={100} allowEmpty
+            value={puissanceW}
+            placeholder="—"
+            onChange={v => set('puissance', v)} />
+        </Field>
+
+        <Field label="T entrée (eau glacée)" unit="°C">
+          <NumInput min={0} max={30} step={0.5}
+            value={T_entree}
+            onChange={v => set('T_entree_emetteur', v ?? tfDef?.T_entreeDefault ?? T_prod)} />
+        </Field>
+
+        <Field label="T sortie (eau glacée)" unit="°C">
+          <NumInput min={0} max={30} step={0.5}
+            value={T_sortie}
+            onChange={v => set('T_sortie_emetteur', v ?? tfDef?.T_sortieDefault ?? (T_prod + deltaT))} />
+        </Field>
+
+        <hr className="rp-divider" />
+
+        <Field label="ΔP terminal" unit="Pa">
+          <NumInput min={0} step={10} allowEmpty
+            value={pt.dp_emetteur ?? null}
+            placeholder="—"
+            onChange={v => set('dp_emetteur', v)} />
+        </Field>
+
+        <Field label="ΔP vanne régl." unit="Pa">
+          <NumInput min={0} step={10} allowEmpty
+            value={pt.dp_vanne_th ?? null}
+            placeholder="—"
+            onChange={v => set('dp_vanne_th', v)} />
+        </Field>
+
+        {flowRateLh != null && (
+          <>
+            <hr className="rp-divider" />
+            <SectionLabel>Résultats</SectionLabel>
+            {statRow('ΔT terminal', <>{dT.toFixed(0)} <span style={{ fontSize: 10, fontWeight: 400 }}>K</span></>)}
+            <div style={{ padding: '8px 12px', background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 6 }}>
+              <div style={{ fontSize: 9, color: '#1d4ed8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Débit terminal</div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
                 <span style={{ fontSize: 20, fontWeight: 800, color: '#0f172a', fontFamily: 'ui-monospace, monospace' }}>{flowRateLh.toFixed(1)}</span>
                 <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>L/h</span>
@@ -797,26 +1223,34 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           )
         })()}
 
-        {isBouclage && pdcCumResults != null && (() => {
-          const retDps = inSegs.map(s => pdcCumResults.segCumDp.get(s.id)).filter((v): v is number => v != null)
-          if (retDps.length === 0) return null
-          const maxDp = Math.max(...retDps)
+        {isBouclage && (() => {
+          const statRowEcs = (label: string, value: React.ReactNode) => (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+              <span style={{ fontSize: 11, color: '#6b7280' }}>{label}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', fontFamily: 'ui-monospace, monospace' }}>{value}</span>
+            </div>
+          )
+          const totalQecsM3h = inSegs.reduce((sum, s) => sum + (networkFlows?.get(s.id)?.flowRate ?? 0), 0)
+          const retDps = pdcCumResults
+            ? inSegs.map(s => pdcCumResults.segCumDp.get(s.id)).filter((v): v is number => v != null)
+            : []
+          const maxDp = retDps.length > 0 ? Math.max(...retDps) : null
           const u = pdcParams?.uniteAffichage ?? 'Pa'
-          const fmt = (pa: number) => u === 'mmCE' ? `${(pa / 9.81).toFixed(0)} mmCE`
-            : u === 'both' ? `${Math.round(pa)} Pa / ${(pa / 9.81).toFixed(0)} mmCE`
-            : `${Math.round(pa)} Pa`
+          const fmtEcs = (pa: number) => fmtDpLabel(pa, u)
+          if (totalQecsM3h === 0 && maxDp == null) return null
+          const unitDebit = (pdcParams as any)?.unitDebit ?? 'L/h'
+          const qEcsVal = unitDebit === 'L/h' ? (totalQecsM3h * 1000).toFixed(1) : totalQecsM3h.toFixed(3)
           return (
             <>
               <hr className="rp-divider" />
-              <div style={{ padding: '9px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6 }}>
-                <div style={{ fontSize: 8.5, color: '#64748b', fontWeight: 700, textTransform: 'uppercase',
-                  letterSpacing: '0.06em', marginBottom: 4 }}>
-                  ΔP retour (circuit le plus défavorisé)
+              {totalQecsM3h > 0 && statRowEcs('Débit total',
+                <>{qEcsVal} <span style={{ fontSize: 10, fontWeight: 400 }}>{unitDebit}</span></>)}
+              {maxDp != null && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 5 }}>
+                  <span style={{ fontSize: 11, color: '#6b7280' }}>ΔP retour (circuit le plus défavorisé)</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', fontFamily: 'ui-monospace, monospace', flexShrink: 0, marginLeft: 4 }}>{fmtEcs(maxDp)}</span>
                 </div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', fontFamily: 'ui-monospace, monospace' }}>
-                  {fmt(maxDp)}
-                </div>
-              </div>
+              )}
             </>
           )
         })()}
@@ -1854,7 +2288,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             onClick={() => setShowDims(v => !v)}
             style={{ fontSize: 10, color: '#9ca3af', background: 'none', border: 'none',
               cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 3 }}>
-            <span>{showDims ? '▲' : '▼'}</span> Dimensions
+            <span>{showDims ? '▼' : '▶'}</span> Dimensions
           </button>
           {showDims && (
             <>
@@ -1990,11 +2424,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
               ? Math.max(...pdcCumDps.filter(v => v != null) as number[])
               : null
             const unite = pdcParams?.uniteAffichage ?? 'Pa'
-            const fmtDp = (pa: number) => {
-              if (unite === 'mmCE') return `${(pa / 9.81).toFixed(0)} mmCE`
-              if (unite === 'both') return `${Math.round(pa)} Pa / ${(pa / 9.81).toFixed(0)} mmCE`
-              return `${Math.round(pa)} Pa`
-            }
+            const fmtDp = (pa: number) => fmtDpLabel(pa, unite)
             return inSegs.map((s, i) => {
               const segCumDp = pdcCumDps[i]
               const isWorst  = maxCumDp != null && segCumDp === maxCumDp
@@ -2014,7 +2444,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                     <div>
                       <div style={{ fontSize: 9, color: '#9ca3af', marginBottom: 1 }}>Débit</div>
                       <div style={{ fontSize: 12, fontWeight: 600, color: '#111827' }}>
-                        {s.flowRate != null ? s.flowRate.toFixed(3) + ' m³/h' : '—'}
+                        {(() => { const fr = isChauffage ? (chauffageFlows?.get(s.id)?.flowRate ?? null) : s.flowRate; return fr != null ? fr.toFixed(3) + ' m³/h' : '—' })()}
                       </div>
                     </div>
                     {!isChauffage && calcSubMode !== 'pdc' && (

@@ -25,6 +25,7 @@ export function computeCumDp(
   flowDirections:  Map<string, { fromId: string; toId: string }>,
   pdcResults:      Map<string, { dpTotal: number; dpPompe?: number }> | null,
   rootPointType:   string = 'productionECS',
+  nodeExtraDp?:    Map<string, number>,
 ): CumDpResult | null {
   const prodNode = points.find(p => p.type === rootPointType)
   if (!prodNode) return null
@@ -63,7 +64,7 @@ export function computeCumDp(
 
       const r          = pdcResults?.get(seg.id)
       const dp         = r?.dpPompe ?? r?.dpTotal ?? 0
-      const cumAfter   = cumHere + dp
+      const cumAfter   = cumHere + (nodeExtraDp?.get(nodeId) ?? 0) + dp
       segCumDp.set(seg.id, cumAfter)
 
       const toId = dir.toId

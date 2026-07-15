@@ -18,13 +18,30 @@ export const FITTING_TYPES = [
 ]
 
 export const EQUIPMENT_TYPES = [
-  { id: 'filtre',            label: 'Filtre / débourbeur',              kvDefault: 8    },
-  { id: 'disconnecteur',     label: 'Disconnecteur BA (EA)',             kvDefault: 3    },
-  { id: 'reducteur_pression',label: 'Réducteur de pression',            kvDefault: 5    },
-  { id: 'echangeur',         label: 'Échangeur ECS',                     kvDefault: null },
-  { id: 'vanne_regulation',  label: 'Vanne de régulation',              kvDefault: null },
-  { id: 'compteur_eau',      label: "Compteur d'eau",                    kvDefault: 5    },
+  // ── ECS bouclage / alimentation ECS ────────────────────────────────────────
+  // Kv sources : catalogues Honeywell, Caleffi, WATTS, Flamco (DN20 référence)
+  { id: 'filtre',             label: 'Filtre / débourbeur',           kvDefault: 8,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
+  { id: 'disconnecteur',      label: 'Disconnecteur BA (EA)',          kvDefault: 3,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
+  { id: 'reducteur_pression', label: 'Réducteur de pression',         kvDefault: 4,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
+  { id: 'clapet_antiretour',  label: 'Clapet anti-retour',            kvDefault: 5,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'pdc-chauffage'] },
+  { id: 'adoucisseur',        label: 'Adoucisseur',                   kvDefault: 4,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
+  { id: 'compteur_eau',       label: "Compteur d'eau",                kvDefault: 5,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
+  { id: 'vanne_equilibrage',  label: "Vanne d'équilibrage",           kvDefault: null, modes: ['bouclage-ecs', 'distribution-chauffage', 'pdc-chauffage'] },
+  { id: 'echangeur',          label: 'Échangeur ECS',                 kvDefault: null, modes: ['bouclage-ecs', 'alimentation-ecs'] },
+  { id: 'mitigeur_thermo',    label: 'Mitigeur thermostatique',       kvDefault: 3,    modes: ['alimentation-ecs'] },
+  { id: 'vanne_zone',         label: 'Vanne de zone (motorisée)',     kvDefault: 4,    modes: ['alimentation-ef', 'distribution-chauffage', 'pdc-chauffage'] },
+  { id: 'vanne_regulation',   label: 'Vanne de régulation',          kvDefault: null, modes: ['bouclage-ecs', 'alimentation-ecs', 'distribution-chauffage', 'pdc-chauffage'] },
+  // ── Chauffage ──────────────────────────────────────────────────────────────
+  { id: 'filtre_degazeur',    label: 'Filtre débourbeur / dégazeur',  kvDefault: 12,   modes: ['distribution-chauffage', 'pdc-chauffage'] },
+  { id: 'pot_decantation',    label: 'Pot de décantation',            kvDefault: 10,   modes: ['distribution-chauffage', 'pdc-chauffage'] },
+  { id: 'compteur_chaleur',   label: 'Compteur de chaleur',           kvDefault: 4,    modes: ['distribution-chauffage', 'pdc-chauffage'] },
+  { id: 'echangeur_chauffage',label: 'Échangeur de chaleur',          kvDefault: null, modes: ['distribution-chauffage', 'pdc-chauffage'] },
 ]
+
+export function getEquipmentForMode(mode: string | null | undefined) {
+  if (!mode) return EQUIPMENT_TYPES
+  return EQUIPMENT_TYPES.filter(t => (t as any).modes.includes(mode))
+}
 
 export const DEFAULT_PDC_PARAMS = {
   methodeReg:        'darcy-colebrook' as 'darcy-colebrook' | 'dtu-approche',

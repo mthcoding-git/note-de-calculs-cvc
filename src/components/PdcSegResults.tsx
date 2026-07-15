@@ -3,7 +3,7 @@ import { sf } from '../utils/fmt'
 import { FITTING_TYPES, EQUIPMENT_TYPES } from '../utils/pdcCalc'
 import { Field, SectionLabel } from './rpShared'
 
-export default function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentationData = null, cumDp, postJunction = false, segCol = null, isOnCriticalPath = false, criticalCol = null,
+export default function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowData, alimentationData = null, cumDp, cumDpLabel = 'ΔP depuis production ECS', postJunction = false, segCol = null, isOnCriticalPath = false, criticalCol = null,
                          isAlimEcs = false, deltaH = null, dpStatic = null, pressionAval = null, pStatAval = null,
                          isTerminalGroupePuisage = false, buildingType = 'habitation' }) {
   const [showIter, setShowIter]     = useState(false)
@@ -245,30 +245,37 @@ export default function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowDa
           })()}
         </div>
       ) : (
-        /* ── Bouclage ECS : ΔP depuis production ── */
+        /* ── Bouclage ECS / Chauffage : ΔP depuis production ── */
         cumDp != null && (
           <div style={{ paddingBottom: 10, marginBottom: 2, borderBottom: '2px solid #e5e7eb', paddingLeft: 14 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: (postJunction && segCol) ? 3 : 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: (isOnCriticalPath || (postJunction && (segCol != null || criticalCol != null))) ? 3 : 0 }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
-                letterSpacing: '0.07em' }}>ΔP depuis production ECS</span>
+                letterSpacing: '0.07em' }}>{cumDpLabel}</span>
               <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a',
                 fontFamily: 'ui-monospace, monospace' }}>{fmtPNode(cumDp)}</span>
             </div>
-            {postJunction && segCol && (
+            {/* Badge défavorisé : tout tronçon sur le chemin critique */}
+            {isOnCriticalPath && (
               <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 5 }}>
-                <span style={{ fontSize: 9, color: '#6b7280' }}>
-                  <strong style={{ color: '#374151' }}>{segCol}</strong>
+                <span style={{ fontSize: 8, background: '#fef3c7', color: '#92400e',
+                  padding: '1px 5px', borderRadius: 3, fontWeight: 700, letterSpacing: '0.02em' }}>
+                  défavorisé
                 </span>
-                {isOnCriticalPath ? (
-                  <span style={{ fontSize: 8, background: '#fef3c7', color: '#92400e',
-                    padding: '1px 5px', borderRadius: 3, fontWeight: 700, letterSpacing: '0.02em' }}>
-                    défavorisé
+              </div>
+            )}
+            {/* Détail jonction : colonne source du chemin critique */}
+            {!isOnCriticalPath && postJunction && (segCol != null || criticalCol != null) && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 5 }}>
+                {segCol != null && (
+                  <span style={{ fontSize: 9, color: '#6b7280' }}>
+                    <strong style={{ color: '#374151' }}>{segCol}</strong>
                   </span>
-                ) : criticalCol ? (
+                )}
+                {criticalCol && (
                   <span style={{ fontSize: 8, color: '#9ca3af' }}>
                     défavorisé : <strong style={{ color: '#6b7280' }}>{criticalCol}</strong>
                   </span>
-                ) : null}
+                )}
               </div>
             )}
           </div>
