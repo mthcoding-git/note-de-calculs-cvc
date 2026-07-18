@@ -1192,9 +1192,12 @@ export default function ResultsTable({
                   if (activeChaufFlowRowsArr && activeChaufFlowRowsArr.length > 1) return null
                   const circuits: { label: string; critIds: Set<string>; hmt: number | null }[] = []
                   const primEntry = activePumpHMT ? [...activePumpHMT.entries()].find(([, v]) => !v.isSecondary) : null
-                  const primIds = activeSplitCumDp?.criticalSegIds ?? new Set<string>()
+                  const primIds = (activeSplitCumDp?.criticalSegIds?.size ?? 0) > 0
+                    ? activeSplitCumDp!.criticalSegIds
+                    : (pdcCumResults?.criticalSegIds ?? new Set<string>())
+                  const primDp = activeSplitCumDp?.criticalDp ?? pdcCumResults?.criticalDp ?? null
                   if (primIds.size > 0 || primEntry != null) {
-                    circuits.push({ label: 'Circuit primaire', critIds: primIds, hmt: primEntry?.[1].hmt ?? null })
+                    circuits.push({ label: 'Circuit primaire', critIds: primIds, hmt: primEntry?.[1].hmt ?? primDp })
                   }
                   const secEntries = activePumpHMT ? [...activePumpHMT.entries()].filter(([, v]) => v.isSecondary) : []
                   if (secEntries.length > 0) {
@@ -1242,8 +1245,10 @@ export default function ResultsTable({
                 // Multi-production — récapitulatif global masqué (chaque partition a le sien)
                 if (isBouclage && ecsFlowRowsArr && ecsFlowRowsArr.length > 1) return null
                 if (isChaufOrEG && activeChaufFlowRowsArr && activeChaufFlowRowsArr.length > 1) return null
-                const critIds  = isChaufOrEG ? (activeSplitCumDp?.criticalSegIds ?? pdcCumResults?.criticalSegIds) : pdcCumResults?.criticalSegIds
-                const critDp   = isChaufOrEG ? (activeSplitCumDp?.criticalDp    ?? pdcCumResults?.criticalDp)    : pdcCumResults?.criticalDp
+                const critIds  = isChaufOrEG
+                  ? (activeSplitCumDp?.criticalSegIds?.size > 0 ? activeSplitCumDp.criticalSegIds : pdcCumResults?.criticalSegIds)
+                  : pdcCumResults?.criticalSegIds
+                const critDp   = isChaufOrEG ? (activeSplitCumDp?.criticalDp ?? pdcCumResults?.criticalDp) : pdcCumResults?.criticalDp
                 const leafId   = pdcCumResults?.criticalLeafSegId
                 const critCol  = leafId ? (segToCol?.get(leafId) ?? null) : null
                 if (!critIds || critIds.size === 0) return null

@@ -1546,7 +1546,7 @@ export function computeChauffageSplitCumDp(
         // Cas séparation : utiliser le lien sepToMix pour rejoindre le nœud mélange.
         // On ne traverse pas le circuit secondaire — la pompe primaire ne couvre que le circuit primaire.
         const linkedMixId = sepToMix.get(allerCur)
-        if (linkedMixId != null) {
+        if (linkedMixId != null && linkedMixId !== allerCur) {
           allerCur = linkedMixId
           continue
         }
