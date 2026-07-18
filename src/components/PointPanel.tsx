@@ -8,6 +8,30 @@ import { getModeFlags } from '../utils/calcModeFlags'
 import { EMETTEUR_TYPES } from '../data/emetteurs'
 import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
 
+function PumpCircuitButton({ criticalSegIds, criticalPathIds, onShowCriticalPath }: {
+  criticalSegIds: Set<string>
+  criticalPathIds: string[]
+  onShowCriticalPath: (ids: string[]) => void
+}) {
+  const critArr = [...criticalSegIds]
+  const isActive = critArr.length > 0 && critArr.every(id => criticalPathIds.includes(id))
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        onClick={() => onShowCriticalPath(isActive ? [] : critArr)}
+        style={{
+          width: '100%', padding: '4px 9px', fontSize: 10, fontWeight: 600,
+          border: '1px solid #93c5fd', borderRadius: 4, cursor: 'pointer',
+          background: isActive ? '#dbeafe' : '#e0f2fe',
+          color: isActive ? '#1d4ed8' : '#0369a1',
+        }}
+      >
+        {isActive ? 'Masquer' : 'Voir le circuit'}
+      </button>
+    </div>
+  )
+}
+
 const DIR_BTNS = [
   { label: '←', rot: 180, title: 'Vers la gauche' },
   { label: '↑', rot: 270, title: 'Vers le haut' },
@@ -131,10 +155,11 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
     const critDp = pumpHMTEntry?.hmt ?? pumpPartitionEntry?.critDp ?? pdcCumResults?.criticalDp ?? null
     const hmtMce = critDp != null ? critDp / 9810 : null
 
+    const splitCumDp = isChauffage ? chauffageSplitCumDp : isEauGlacee ? eauGlaceeSplitCumDp : null
     const criticalSegIds: Set<string> | null = (isChauffage || isEauGlacee)
       ? (pumpHMTEntry?.isSecondary
           ? (pumpHMTEntry.criticalSegIds)
-          : ((isChauffage ? chauffageSplitCumDp : eauGlaceeSplitCumDp)?.criticalSegIds ?? null))
+          : ((splitCumDp?.criticalSegIds?.size ?? 0) > 0 ? splitCumDp!.criticalSegIds : (pdcCumResults?.criticalSegIds ?? null)))
       : (pumpPartitionEntry?.criticalSegIds ?? pumpHMTEntry?.criticalSegIds ?? pdcCumResults?.criticalSegIds ?? null)
     const unite  = pdcParams?.uniteAffichage ?? 'Pa'
     const fmtDp  = (pa: number) => fmtDpLabel(pa, unite)
@@ -184,26 +209,13 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
               {hmtMce != null &&
                 statRow('HMT', <>{hmtMce.toFixed(2)} <span style={{ fontSize: 10, fontWeight: 400 }}>mCE</span></>)
               }
-              {criticalSegIds != null && criticalSegIds.size > 0 && onShowCriticalPath != null && (() => {
-                const critArr = [...criticalSegIds]
-                const isActive = critArr.length > 0 && critArr.every(id => criticalPathIds?.includes(id))
-                return (
-                  <div style={{ marginTop: 8 }}>
-                    <button
-                      onClick={() => onShowCriticalPath(isActive ? [] : critArr)}
-                      style={{
-                        width: '100%', padding: '4px 9px', fontSize: 10, fontWeight: 600,
-                        border: `1px solid ${isActive ? '#93c5fd' : '#93c5fd'}`,
-                        borderRadius: 4, cursor: 'pointer',
-                        background: isActive ? '#dbeafe' : '#e0f2fe',
-                        color: isActive ? '#1d4ed8' : '#0369a1',
-                      }}
-                    >
-                      {isActive ? 'Masquer' : 'Voir le circuit'}
-                    </button>
-                  </div>
-                )
-              })()}
+              {criticalSegIds != null && criticalSegIds.size > 0 && onShowCriticalPath != null && (
+                <PumpCircuitButton
+                  criticalSegIds={criticalSegIds}
+                  criticalPathIds={criticalPathIds}
+                  onShowCriticalPath={onShowCriticalPath}
+                />
+              )}
             </>)}
             {showTemp && <TempBadge temp={nodeTemp} T_depart={T_depart} />}
           </div>
