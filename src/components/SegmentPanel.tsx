@@ -22,10 +22,12 @@ interface SegmentPanelProps {
   pdcCumResults: any; pdcCumAlimResults: any; segToCol: any; flowDirections: any
   groupDisplayNames?: any
   chauffageThermal?: any
+  eauGlaceeThermal?: any
   chauffageSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
+  eauGlaceeSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
 }
 
-export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null, chauffageThermal = null, chauffageSplitCumDp = null }: SegmentPanelProps) {
+export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null, chauffageThermal = null, eauGlaceeThermal = null, chauffageSplitCumDp = null, eauGlaceeSplitCumDp = null }: SegmentPanelProps) {
   const [tab, setTab]                       = useState('params')
   const [openDetailTherm, setOpenDetailTherm] = useState(false)
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
@@ -41,7 +43,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
 
   const uiValue = computeSegUI(seg, materials, insulations, 10)
 
-  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage } = getModeFlags(activeCalcId as CalcMode | null)
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, isEauGlacee } = getModeFlags(activeCalcId as CalcMode | null)
 
   // ── Vue dédiée Alimentation ECS (dimensionnement) et Alimentation EF ──────────────────────
   if (isAlimEF || isAlimECS) {
@@ -561,27 +563,30 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                   alimentationData={isAlimECS ? alimentationData : null}
                   cumDp={isAlimMode
                     ? pdcCumAlimResults?.segCumDp?.get(seg.id)
-                    : isChauffage
-                      ? (chauffageSplitCumDp?.segCumDp.get(seg.id) ?? pdcCumResults?.segCumDp.get(seg.id))
+                    : (isChauffage || isEauGlacee)
+                      ? ((isChauffage ? chauffageSplitCumDp : eauGlaceeSplitCumDp)?.segCumDp.get(seg.id) ?? pdcCumResults?.segCumDp.get(seg.id))
                       : pdcCumResults?.segCumDp.get(seg.id)}
                   cumDpLabel={isChauffage
                     ? (chauffageSplitCumDp?.secondarySegIds.has(seg.id) ? 'ΔP depuis vanne mélange' : 'ΔP depuis production CH')
-                    : 'ΔP depuis production ECS'}
-                  postJunction={isAlimMode ? false : isChauffage
-                    ? (chauffageSplitCumDp?.segPostJunction.get(seg.id) ?? false)
+                    : isEauGlacee
+                      ? (eauGlaceeSplitCumDp?.secondarySegIds.has(seg.id) ? 'ΔP depuis vanne mélange' : 'ΔP depuis groupe froid')
+                      : 'ΔP depuis production ECS'}
+                  postJunction={isAlimMode ? false : (isChauffage || isEauGlacee)
+                    ? ((isChauffage ? chauffageSplitCumDp : eauGlaceeSplitCumDp)?.segPostJunction.get(seg.id) ?? false)
                     : (pdcCumResults?.segPostJunction.get(seg.id) ?? false)}
-                  segCol={isChauffage
+                  segCol={(isChauffage || isEauGlacee)
                     ? (() => {
-                        const winnerId = chauffageSplitCumDp?.segJunctionWinner?.get(seg.id)
+                        const splitDp = isChauffage ? chauffageSplitCumDp : eauGlaceeSplitCumDp
+                        const winnerId = splitDp?.segJunctionWinner?.get(seg.id)
                         return winnerId ? (segToCol?.get(winnerId) ?? null) : null
                       })()
                     : (segToCol?.get(seg.id) ?? null)}
                   isOnCriticalPath={isAlimMode
                     ? (pdcCumAlimResults?.criticalSegIds?.has(seg.id) ?? false)
-                    : isChauffage
-                      ? (chauffageSplitCumDp?.criticalSegIds.has(seg.id) ?? false)
+                    : (isChauffage || isEauGlacee)
+                      ? ((isChauffage ? chauffageSplitCumDp : eauGlaceeSplitCumDp)?.criticalSegIds.has(seg.id) ?? false)
                       : (pdcCumResults?.criticalSegIds?.has(seg.id) ?? false)}
-                  criticalCol={isAlimMode ? null : isChauffage ? null : (segToCol?.get(pdcCumResults?.criticalLeafSegId ?? '') ?? null)}
+                  criticalCol={isAlimMode ? null : (isChauffage || isEauGlacee) ? null : (segToCol?.get(pdcCumResults?.criticalLeafSegId ?? '') ?? null)}
                   isAlimEcs={isAlimMode}
                   deltaH={pdcCumAlimResults?.segDeltaH?.get(seg.id) ?? null}
                   dpStatic={pdcCumAlimResults?.segDpStatic?.get(seg.id) ?? null}
@@ -592,10 +597,10 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                 />
               )
             })()
-          ) : isChauffage ? (() => {
-            const chauffEntry  = chauffageThermal?.segResults?.get(seg.id)
-            const T_from       = chauffEntry?.T_from ?? null
-            const T_to         = chauffEntry?.T_to   ?? null
+          ) : (isChauffage || isEauGlacee) ? (() => {
+            const thermalEntry = isChauffage ? chauffageThermal?.segResults?.get(seg.id) : eauGlaceeThermal?.segResults?.get(seg.id)
+            const T_from       = thermalEntry?.T_from ?? null
+            const T_to         = thermalEntry?.T_to   ?? null
             const velocity     = flowData?.velocity   ?? null
             const flowRate     = flowData?.flowRate   ?? null
             const puissanceW   = flowData?.puissanceAmont ?? null
@@ -660,7 +665,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                   <div style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>
                     {di_mm == null
                       ? 'Choisir un DN pour calculer la vitesse.'
-                      : 'Débit non calculé — placez une production chauffage.'}
+                      : isChauffage ? 'Débit non calculé — placez une production chauffage.' : 'Débit non calculé — placez un groupe froid.'}
                   </div>
                 )}
 
@@ -937,6 +942,9 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
           {isChauffage ? (<>
             <option value="aller">Aller CH</option>
             <option value="retour">Retour CH</option>
+          </>) : isEauGlacee ? (<>
+            <option value="aller">Aller EG</option>
+            <option value="retour">Retour EG</option>
           </>) : (<>
             <option value="aller">Aller ECS</option>
             <option value="retour">Retour ECS</option>
@@ -1160,16 +1168,30 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
         const tAmbDefault = getSegAmbTemp(
           { ...seg, t_amb_override: null }, levels, lineYs
         )
+        const egEntry = isEauGlacee ? eauGlaceeThermal?.segResults?.get(seg.id) : null
+        const T_eg_calc = egEntry?.T_from ?? null
         return (
-          <Field label="T° ambiante" unit="°C">
-            <NumInput
-              step={0.5}
-              value={seg.t_amb_override ?? null}
-              placeholder={tAmbDefault != null ? `${tAmbDefault} (par défaut)` : 'par défaut'}
-              allowEmpty
-              onChange={v => set('t_amb_override', v)}
-            />
-          </Field>
+          <>
+            <Field label="T° ambiante" unit="°C">
+              <NumInput
+                step={0.5}
+                value={seg.t_amb_override ?? null}
+                placeholder={tAmbDefault != null ? `${tAmbDefault} (par défaut)` : 'par défaut'}
+                allowEmpty
+                onChange={v => set('t_amb_override', v)}
+              />
+            </Field>
+            {isEauGlacee && (
+              <Field label="T° tronçon" unit="°C">
+                <NumInput
+                  min={-20} max={30} step={0.5} allowEmpty
+                  value={seg.T_eg_override ?? null}
+                  placeholder={T_eg_calc != null ? `calculé : ${T_eg_calc.toFixed(1)} °C` : 'calculé : —'}
+                  onChange={v => set('T_eg_override', v)}
+                />
+              </Field>
+            )}
+          </>
         )
       })()}
       </>)}
@@ -1192,6 +1214,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
           </>
         )
       })()}
+
 
       {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (
         <>

@@ -72,6 +72,7 @@ export interface Segment {
   isLocked?: boolean
   encrassementEpaisseur?: number | null
   T_ch_override?: number | null  // température override tronçon chauffage (°C)
+  T_eg_override?: number | null  // température override tronçon eau glacée (°C)
 }
 
 export interface NodeSize {
@@ -265,6 +266,7 @@ export interface ProjectData {
   materialsChauffage:    Material[]
   materialsEauGlacee?:   Material[]
   insulations:           Insulation[]
+  insulationsEauGlacee?: Insulation[]
   levels:                Level[]
   lineYs:                number[]
   columns:               Column[]

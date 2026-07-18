@@ -34,7 +34,7 @@ function Field({ label, unit = undefined, children }) {
 
 
 // ── Levels ─────────────────────────────────────────────
-function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, chaufferie, onAddChaufferie, editChaufferie, onEditChaufferieChange, placingChaufferie, activeCalcId, locauxEF, onAddLocalEF, placingLocalEF, editLocauxEF, onEditLocauxEFChange, locauxECS, onAddLocalECS, placingLocalECS, editLocauxECS, onEditLocauxECSChange, locauxChauffage, onAddLocalChauffage, placingLocalChauffage, editLocauxChauffage, onEditLocauxChauffageChange }) {
+function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, chaufferie, onAddChaufferie, editChaufferie, onEditChaufferieChange, placingChaufferie, activeCalcId, locauxEF, onAddLocalEF, placingLocalEF, editLocauxEF, onEditLocauxEFChange, locauxECS, onAddLocalECS, placingLocalECS, editLocauxECS, onEditLocauxECSChange, locauxChauffage, onAddLocalChauffage, placingLocalChauffage, editLocauxChauffage, onEditLocauxChauffageChange, locauxGroupeFroid, onAddLocalGroupeFroid, placingLocalGroupeFroid, editLocauxGroupeFroid, onEditLocauxGroupeFroidChange }) {
   const { isAlimEF, isChauffage, isBouclage, isAlimECS, isEauGlacee } = getModeFlags(activeCalcId)
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
@@ -154,7 +154,7 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, chauffe
                         border: `1px solid ${editChaufferie ? '#818cf8' : '#e5e7eb'}`,
                         borderRadius: 5, cursor: 'pointer',
                       }}>
-                      ✎ Modifier {isChauffage ? 'la chaufferie' : isEauGlacee ? 'la production EG' : 'la production ECS'}
+                      ✎ Modifier {isChauffage ? 'la chaufferie' : isEauGlacee ? 'le groupe froid' : 'la production ECS'}
                     </button>
                   )}
                   {/* ── Locaux ECS (mode ECS bouclage / alim) ── */}
@@ -217,6 +217,38 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, chauffe
                             borderRadius: 5, cursor: 'pointer',
                           }}>
                           Ajouter un local chauffage
+                        </button>
+                      </>
+                    )
+                  })()}
+                  {/* ── Locaux Groupe Froid (EG) ── */}
+                  {isEauGlacee && (() => {
+                    const hasOnThisLevel = (locauxGroupeFroid ?? []).some(l => l.levelId === lvl.id)
+                    return (
+                      <>
+                        {hasOnThisLevel && (
+                          <button
+                            onClick={() => onEditLocauxGroupeFroidChange?.(!editLocauxGroupeFroid)}
+                            style={{
+                              marginTop: 6, width: '100%', padding: '4px 0', fontSize: 11, fontWeight: 600,
+                              background: editLocauxGroupeFroid ? '#eef2ff' : '#f8fafc',
+                              color: editLocauxGroupeFroid ? '#4338ca' : '#6b7280',
+                              border: `1px solid ${editLocauxGroupeFroid ? '#818cf8' : '#e5e7eb'}`,
+                              borderRadius: 5, cursor: 'pointer',
+                            }}>
+                            ✎ Modifier les locaux groupe froid
+                          </button>
+                        )}
+                        <button
+                          onClick={() => onAddLocalGroupeFroid?.()}
+                          style={{
+                            marginTop: 6, width: '100%', padding: '4px 0', fontSize: 11, fontWeight: 600,
+                            background: placingLocalGroupeFroid ? '#ecfdf5' : '#f8fafc',
+                            color: placingLocalGroupeFroid ? '#047857' : '#6b7280',
+                            border: `1px solid ${placingLocalGroupeFroid ? '#6ee7b7' : '#e5e7eb'}`,
+                            borderRadius: 5, cursor: 'pointer',
+                          }}>
+                          Ajouter un local groupe froid
                         </button>
                       </>
                     )
@@ -827,15 +859,16 @@ function EditParamsPanel({
   editParam, onEditParamChange,
   activeCalcId, alimentationParams,
 }) {
-  const { isAlimEF: isEF, isAlimMode: isAlim, isChauffage } = getModeFlags(activeCalcId)
+  const { isAlimEF: isEF, isAlimMode: isAlim, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
   const set = patch => onEditParamChange({ ...editParam, ...patch })
   const { paramType, segType, materialId, dn, insulationId, thickness,
           length, flowVelocityMode, flowVelocityValue } = editParam
 
-  const isBouclageECS = !isEF && !isAlim && !isChauffage
+  const isBouclageECS = !isEF && !isAlim && !isChauffage && !isEauGlacee
   const validTypes = isEF ? ['material', 'length']
     : isAlim   ? ['material', 'length']
     : isChauffage ? ['material', 'length']
+    : isEauGlacee ? ['material', 'insulation', 'length']
     : ['material', 'insulation', 'length', 'flowVelocity']
   useEffect(() => {
     if (!validTypes.includes(paramType)) set({ paramType: 'material' })
@@ -1009,7 +1042,7 @@ function EditParamsPanel({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
             {[
               { color: '#16a34a', label: 'Valeur déjà attribuée', line: 'thick' },
-              { color: '#ef4444', label: 'Paramètre absent — à attribuer', line: 'normal' },
+              { color: (isEF || isEauGlacee) ? '#93c5fd' : '#ef4444', label: 'Paramètre absent — à attribuer', line: 'normal' },
               { color: '#9ca3af', label: 'Autre valeur attribuée', line: 'normal' },
             ].map(({ color, label, line }) => (
               <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -1134,12 +1167,12 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
       {missingProdEG && (
         <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb', background: '#fef2f2' }}>
           <div style={{ fontWeight: 600, fontSize: 11, color: '#991b1b', marginBottom: 4 }}>
-            Production eau glacée non placée
+            Groupe froid non placé
           </div>
           <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.5 }}>
-            Des tronçons Aller/Retour EG sont tracés, mais aucune
-            production eau glacée n'est placée sur le synoptique.
-            Utilisez le bouton <strong style={{ color: '#374151' }}>Prod. EG</strong> dans
+            Des tronçons Aller/Retour EG sont tracés, mais aucun
+            groupe froid n'est placé sur le synoptique.
+            Utilisez le bouton <strong style={{ color: '#374151' }}>Groupe froid</strong> dans
             la barre d'outils pour la positionner.
           </div>
         </div>
@@ -1158,17 +1191,21 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
         </div>
       )}
 
-      {hasConnectedProductions && (
-        <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb', background: '#fef2f2' }}>
-          <div style={{ fontWeight: 600, fontSize: 11, color: '#991b1b', marginBottom: 4 }}>
-            Productions ECS reliées entre elles
+      {hasConnectedProductions && (() => {
+        const labelProd = isChauffage ? 'Productions chauffage' : isEauGlacee ? 'Groupes froids' : 'Productions ECS'
+        const labelUnit = isChauffage ? 'production chauffage' : isEauGlacee ? 'groupe froid' : 'production ECS'
+        return (
+          <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb', background: '#fef2f2' }}>
+            <div style={{ fontWeight: 600, fontSize: 11, color: '#991b1b', marginBottom: 4 }}>
+              {labelProd} reliés entre eux
+            </div>
+            <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.5 }}>
+              Deux {labelUnit}s ou plus sont connectés par des tronçons.
+              Chaque {labelUnit} doit appartenir à un réseau indépendant (non relié aux autres).
+            </div>
           </div>
-          <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.5 }}>
-            Deux productions ECS ou plus sont connectées par des tronçons.
-            Chaque production ECS doit appartenir à un réseau indépendant (non relié aux autres).
-          </div>
-        </div>
-      )}
+        )
+      })()}
 
       {connIssues.length > 0 && (
         <div style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb' }}>
@@ -1844,6 +1881,7 @@ interface LeftPanelProps {
   materials: any[]; onMaterialsChange: any
   materialsEF: any[]; onMaterialsEFChange: any
   insulations: any[]; onInsulationsChange: any
+  insulationsEauGlacee?: any[]; onInsulationsEauGlaceeChange?: any
   columns: any[]; columnXs: number[]
   onColumnsChange: any; onColumnXsChange: any; onRemoveColumn: any; onAddColumn: any
   onAddGap: any; onMoveGaine: any
@@ -1855,6 +1893,8 @@ interface LeftPanelProps {
   editLocauxECS: boolean; onEditLocauxECSChange: any
   locauxChauffage: any[]; onAddLocalChauffage: any; placingLocalChauffage: boolean
   editLocauxChauffage: boolean; onEditLocauxChauffageChange: any
+  locauxGroupeFroid?: any[]; onAddLocalGroupeFroid?: any; placingLocalGroupeFroid?: boolean
+  editLocauxGroupeFroid?: boolean; onEditLocauxGroupeFroidChange?: any
   chauffageParams?: any; onChauffageParamsChange?: any
   pdcParamsEauGlacee?: any; onPdcParamsEauGlaceeChange?: any
   materialsEauGlacee?: any[]; onMaterialsEauGlaceeChange?: any
@@ -1884,11 +1924,13 @@ export default function LeftPanel({
   materials, onMaterialsChange,
   materialsEF, onMaterialsEFChange,
   insulations, onInsulationsChange,
+  insulationsEauGlacee, onInsulationsEauGlaceeChange,
   columns, columnXs, onColumnsChange, onColumnXsChange, onRemoveColumn, onAddColumn, onAddGap, onMoveGaine,
   chaufferie, onChaufferieChange, onAddChaufferie, editChaufferie, onEditChaufferieChange, placingChaufferie,
   locauxEF, onAddLocalEF, placingLocalEF, editLocauxEF, onEditLocauxEFChange,
   locauxECS, onAddLocalECS, placingLocalECS, editLocauxECS, onEditLocauxECSChange,
   locauxChauffage, onAddLocalChauffage, placingLocalChauffage, editLocauxChauffage, onEditLocauxChauffageChange,
+  locauxGroupeFroid, onAddLocalGroupeFroid, placingLocalGroupeFroid, editLocauxGroupeFroid, onEditLocauxGroupeFroidChange,
   chauffageParams, onChauffageParamsChange,
   pdcParamsEauGlacee, onPdcParamsEauGlaceeChange,
   materialsEauGlacee, onMaterialsEauGlaceeChange,
@@ -1903,6 +1945,9 @@ export default function LeftPanel({
 }: LeftPanelProps) {
   const { isBouclage, isAlimECS, isAlimEF, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
 
+  const activeInsulations       = isEauGlacee ? (insulationsEauGlacee ?? insulations) : insulations
+  const activeInsulationsChange = isEauGlacee ? (onInsulationsEauGlaceeChange ?? onInsulationsChange) : onInsulationsChange
+
   if (drawMode === 'editParams') {
     return (
       <div className="left-panel">
@@ -1911,7 +1956,7 @@ export default function LeftPanel({
           <div className="lp-section-body">
             <EditParamsPanel
               segments={segments} points={points}
-              materials={isAlimEF ? materialsEF : materials} insulations={insulations}
+              materials={isAlimEF ? materialsEF : materials} insulations={activeInsulations}
               levels={levels} lineYs={lineYs}
               columns={columns} columnXs={columnXs}
               chaufferie={chaufferie}
@@ -1969,6 +2014,11 @@ export default function LeftPanel({
         placingLocalChauffage={placingLocalChauffage}
         editLocauxChauffage={editLocauxChauffage}
         onEditLocauxChauffageChange={onEditLocauxChauffageChange}
+        locauxGroupeFroid={locauxGroupeFroid}
+        onAddLocalGroupeFroid={onAddLocalGroupeFroid}
+        placingLocalGroupeFroid={placingLocalGroupeFroid}
+        editLocauxGroupeFroid={editLocauxGroupeFroid}
+        onEditLocauxGroupeFroidChange={onEditLocauxGroupeFroidChange}
       />
       <ColumnsSection
         columns={columns} columnXs={columnXs}
@@ -2021,7 +2071,7 @@ export default function LeftPanel({
       if (isAlimEF) {
         content = null
       } else {
-        content = <InsulationsSection insulations={insulations} onChange={onInsulationsChange} />
+        content = <InsulationsSection insulations={activeInsulations} onChange={activeInsulationsChange} />
       }
       break
     case 'equipements':

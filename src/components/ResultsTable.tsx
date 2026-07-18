@@ -380,11 +380,13 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
   const isLeafBranchEF = isAlimEF && role === 'leaf-branch'
   const badgeText  = isChaufOrEGLocal && isAntenne ? (isAller ? 'A' : 'R')
     : isAntenne ? 'ANT' : role === 'collecteur-aller' ? 'CA' : role === 'collecteur-retour' ? 'CR' : isAller ? 'A' : 'R'
-  const badgeCls   = (isAntenne && !isChaufOrEGLocal) ? 'rt-badge-ant' : isAller ? 'rt-badge-a' : 'rt-badge-r'
+  const badgeCls   = (isAntenne && !isChaufOrEGLocal) ? 'rt-badge-ant'
+    : isEG ? (isAller ? 'rt-badge-a-eg' : 'rt-badge-r-eg')
+    : (isAller ? 'rt-badge-a' : 'rt-badge-r')
   const indent     = depth * 13
 
   const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections)
-    .replace(/^((Collecteur (Aller|Retour) CH|Collecteur (aller|retour)|Aller CH|Retour CH|Aller|Retour|Antenne) (ECS|CH)?|EF)\s*–\s*/, '')
+    .replace(/^((Collecteur (Aller|Retour) (CH|EG)|Collecteur (aller|retour)|Aller CH|Retour CH|Aller EG|Retour EG|Aller|Retour|Antenne) (ECS|CH|EG)?|EF)\s*–\s*/, '')
   const colonneName = extractColonne(shortName, columns)
   const levelName   = segLevelName(seg, levels, lineYs)
 
@@ -699,7 +701,7 @@ export default function ResultsTable({
   if (isPdc) {
     const isAlimModePdc = isAlimMode
     const isAlimECSPdc  = isAlimModePdc
-    const prodLabel     = isChauffage ? 'Production chauffage' : isEauGlacee ? 'Production eau glacée' : 'Production ECS'
+    const prodLabel     = isChauffage ? 'Production chauffage' : isEauGlacee ? 'Groupe froid' : 'Production ECS'
     const cumDpLabel    = isChaufOrEG ? 'ΔP cumulé' : 'ΔP depuis prod. ECS'
     const flowsForPdc   = isChauffage ? chauffageFlows : isEauGlacee ? eauGlaceeFlows : networkFlows
     const isDarcy       = pdcParams?.methodeReg === 'darcy-colebrook'
@@ -909,7 +911,7 @@ export default function ResultsTable({
             </thead>
             <tbody>
               {pdcRows.length === 0 && (
-                <tr><td colSpan={nPdcCols} className="rt-empty">{isAlimEF ? 'Aucun tronçon — tracez des tronçons EF et placez une Arrivée EF' : isChauffage ? 'Aucun tronçon — tracez des tronçons CH et placez une Production chauffage' : isEauGlacee ? 'Aucun tronçon — tracez des tronçons EG et placez une Production eau glacée' : 'Aucun tronçon — tracez des tronçons et placez une Production ECS'}</td></tr>
+                <tr><td colSpan={nPdcCols} className="rt-empty">{isAlimEF ? 'Aucun tronçon — tracez des tronçons EF et placez une Arrivée EF' : isChauffage ? 'Aucun tronçon — tracez des tronçons CH et placez une Production chauffage' : isEauGlacee ? 'Aucun tronçon — tracez des tronçons EG et placez un Groupe froid' : 'Aucun tronçon — tracez des tronçons et placez une Production ECS'}</td></tr>
               )}
               {pdcRows.map((row, i) => {
                 if (row.kind === 'ef-source-banner') return (
@@ -1033,12 +1035,12 @@ export default function ResultsTable({
                   )
                 }
                 if (row.kind === 'flow-start') return (
-                  <tr key="flow-start" className="rt-flow-banner rt-flow-banner-start">
+                  <tr key="flow-start" className={`rt-flow-banner ${isEauGlacee ? 'rt-flow-banner-eg-start' : 'rt-flow-banner-start'}`}>
                     <td colSpan={nPdcCols}>▶ {prodLabel} — Départ</td>
                   </tr>
                 )
                 if (row.kind === 'flow-end') return isAlimECSPdc ? null : (
-                  <tr key="flow-end" className="rt-flow-banner rt-flow-banner-end">
+                  <tr key="flow-end" className={`rt-flow-banner ${isEauGlacee ? 'rt-flow-banner-eg-end' : 'rt-flow-banner-end'}`}>
                     <td colSpan={nPdcCols}>◀ {prodLabel} — Retour</td>
                   </tr>
                 )
@@ -1146,7 +1148,7 @@ export default function ResultsTable({
                           style={{ cursor: 'pointer', background: '#f1f5f9' }}>
                         <td className="rt-cell rt-cell-name" colSpan={nPdcCols - 2}
                             style={{ paddingLeft: 24 }}>
-                          <span style={{ display: 'inline-block', background: emPtPdc!.type === 'terminalFroid' ? '#1e40af' : '#64748b', color: '#fff', fontSize: 9,
+                          <span style={{ display: 'inline-block', background: '#64748b', color: '#fff', fontSize: 9,
                             fontWeight: 700, borderRadius: 3, padding: '1px 4px', marginRight: 6 }}>
                             {emPtPdc!.type === 'terminalFroid' ? 'TF' : 'ÉM'}
                           </span>
@@ -1361,13 +1363,13 @@ export default function ResultsTable({
                     </tr>
                     {entryDisplayRows.map((row, i) => {
                       if (row.kind === 'flow-start') return (
-                        <tr key={`fs-${chIdx}-${i}`} className="rt-flow-banner rt-flow-banner-start">
-                          <td colSpan={CHAUF_COLS}>▶ {isEauGlacee ? 'Production eau glacée' : 'Production chauffage'} — Départ</td>
+                        <tr key={`fs-${chIdx}-${i}`} className={`rt-flow-banner ${isEauGlacee ? 'rt-flow-banner-eg-start' : 'rt-flow-banner-start'}`}>
+                          <td colSpan={CHAUF_COLS}>▶ {isEauGlacee ? 'Groupe froid' : 'Production chauffage'} — Départ</td>
                         </tr>
                       )
                       if (row.kind === 'flow-end') return (
-                        <tr key={`fe-${chIdx}-${i}`} className="rt-flow-banner rt-flow-banner-end">
-                          <td colSpan={CHAUF_COLS}>◀ {isEauGlacee ? 'Production eau glacée' : 'Production chauffage'} — Retour</td>
+                        <tr key={`fe-${chIdx}-${i}`} className={`rt-flow-banner ${isEauGlacee ? 'rt-flow-banner-eg-end' : 'rt-flow-banner-end'}`}>
+                          <td colSpan={CHAUF_COLS}>◀ {isEauGlacee ? 'Groupe froid' : 'Production chauffage'} — Retour</td>
                         </tr>
                       )
                       const isMelangeRow = (r: any) => r?.kind === 'melange-header' || r?.kind === 'melange-end'
@@ -1418,9 +1420,11 @@ export default function ResultsTable({
                       const isAller = segType === 'aller'
                       const role = entry.roleMap?.get(seg.id)
                       const badgeText = role === 'collecteur-aller' ? 'CA' : role === 'collecteur-retour' ? 'CR' : isAller ? 'A' : 'R'
-                      const badgeClass = (role === 'collecteur-retour' || !isAller) ? 'rt-badge-r' : 'rt-badge-a'
+                      const badgeClass = isEauGlacee
+                        ? ((role === 'collecteur-retour' || !isAller) ? 'rt-badge-r-eg' : 'rt-badge-a-eg')
+                        : ((role === 'collecteur-retour' || !isAller) ? 'rt-badge-r' : 'rt-badge-a')
                       const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, entry.roleMap, flowDirections)
-                        .replace(/^(?:Collecteur Aller CH|Collecteur Retour CH|Aller CH|Retour CH)\s*–\s*/, '')
+                        .replace(/^(?:Collecteur Aller CH|Collecteur Retour CH|Collecteur Aller EG|Collecteur Retour EG|Aller CH|Retour CH|Aller EG|Retour EG)\s*–\s*/, '')
                       const levelName = segLevelName(seg, levels, lineYs)
                       const pdcResultCh = pdcResults?.get(seg.id)
                       const J = pdcResultCh?.J ?? null
@@ -1518,17 +1522,17 @@ export default function ResultsTable({
             </thead>
             <tbody>
               {displayRows.length === 0 && (
-                <tr><td colSpan={CHAUF_COLS} className="rt-empty">{isEauGlacee ? 'Aucun tronçon — tracez des tronçons EG Aller/Retour et placez une Production eau glacée' : 'Aucun tronçon — tracez des tronçons CH Aller/Retour et placez une Production chauffage'}</td></tr>
+                <tr><td colSpan={CHAUF_COLS} className="rt-empty">{isEauGlacee ? 'Aucun tronçon — tracez des tronçons EG Aller/Retour et placez un Groupe froid' : 'Aucun tronçon — tracez des tronçons CH Aller/Retour et placez une Production chauffage'}</td></tr>
               )}
               {displayRows.map((row, i) => {
                 if (row.kind === 'flow-start') return (
-                  <tr key="flow-start" className="rt-flow-banner rt-flow-banner-start">
-                    <td colSpan={CHAUF_COLS}>▶ {isEauGlacee ? 'Production eau glacée' : 'Production chauffage'} — Départ</td>
+                  <tr key="flow-start" className={`rt-flow-banner ${isEauGlacee ? 'rt-flow-banner-eg-start' : 'rt-flow-banner-start'}`}>
+                    <td colSpan={CHAUF_COLS}>▶ {isEauGlacee ? 'Groupe froid' : 'Production chauffage'} — Départ</td>
                   </tr>
                 )
                 if (row.kind === 'flow-end') return (
-                  <tr key="flow-end" className="rt-flow-banner rt-flow-banner-end">
-                    <td colSpan={CHAUF_COLS}>◀ {isEauGlacee ? 'Production eau glacée' : 'Production chauffage'} — Retour</td>
+                  <tr key="flow-end" className={`rt-flow-banner ${isEauGlacee ? 'rt-flow-banner-eg-end' : 'rt-flow-banner-end'}`}>
+                    <td colSpan={CHAUF_COLS}>◀ {isEauGlacee ? 'Groupe froid' : 'Production chauffage'} — Retour</td>
                   </tr>
                 )
                 const isMelangeRow = (r: any) => r?.kind === 'melange-header' || r?.kind === 'melange-end'
@@ -1581,9 +1585,11 @@ export default function ResultsTable({
                 const badgeText = role === 'collecteur-aller'  ? 'CA'
                   : role === 'collecteur-retour' ? 'CR'
                   : isAller ? 'A' : 'R'
-                const badgeClass = (role === 'collecteur-retour' || !isAller) ? 'rt-badge-r' : 'rt-badge-a'
+                const badgeClass = isEauGlacee
+                  ? ((role === 'collecteur-retour' || !isAller) ? 'rt-badge-r-eg' : 'rt-badge-a-eg')
+                  : ((role === 'collecteur-retour' || !isAller) ? 'rt-badge-r' : 'rt-badge-a')
                 const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections)
-                  .replace(/^(?:Collecteur Aller CH|Collecteur Retour CH|Aller CH|Retour CH)\s*–\s*/, '')
+                  .replace(/^(?:Collecteur Aller CH|Collecteur Retour CH|Collecteur Aller EG|Collecteur Retour EG|Aller CH|Retour CH|Aller EG|Retour EG)\s*–\s*/, '')
                 const levelName = segLevelName(seg, levels, lineYs)
                 const pdcResultCh = pdcResults?.get(seg.id)
                 const J = pdcResultCh?.J ?? null

@@ -99,6 +99,10 @@ interface DrawingCanvasProps {
   placingLocalChauffage?: boolean; onPlacingLocalChauffageDone: any
   editLocauxChauffage?: boolean; onEditLocauxChauffageChange: any
   selectedLocalChauffageId?: string | null; onSelectedLocalChauffageChange: any
+  locauxGroupeFroid?: any[]; onLocauxGroupeFroidChange: any
+  placingLocalGroupeFroid?: boolean; onPlacingLocalGroupeFroidDone: any
+  editLocauxGroupeFroid?: boolean; onEditLocauxGroupeFroidChange: any
+  selectedLocalGroupeFroidId?: string | null; onSelectedLocalGroupeFroidChange: any
   chauffageFlows?: any
   chauffageParams?: any
   eauGlaceeFlows?: any
@@ -180,6 +184,14 @@ export default function DrawingCanvas({
   onEditLocauxChauffageChange,
   selectedLocalChauffageId = null,
   onSelectedLocalChauffageChange,
+  locauxGroupeFroid = [],
+  onLocauxGroupeFroidChange,
+  placingLocalGroupeFroid = false,
+  onPlacingLocalGroupeFroidDone,
+  editLocauxGroupeFroid = false,
+  onEditLocauxGroupeFroidChange,
+  selectedLocalGroupeFroidId = null,
+  onSelectedLocalGroupeFroidChange,
   chauffageFlows,
   chauffageParams,
   eauGlaceeFlows,
@@ -225,6 +237,7 @@ export default function DrawingCanvas({
   const [dragLEF,   setDragLEF]   = useState(null)   // {type, localEFId, screenX, screenY, origX1, origX2, origHeight}
   const [dragLECS,  setDragLECS]  = useState(null)   // {type, id, screenX, screenY, origX1, origX2, origHeight}
   const [dragLCh,   setDragLCh]   = useState(null)   // {type, id, screenX, screenY, origX1, origX2, origHeight}
+  const [dragLGF,   setDragLGF]   = useState(null)   // {type, id, screenX, screenY, origX1, origX2, origHeight}
   const [drawing,   setDrawing]   = useState(null)
   const [mouse,     setMouse]     = useState({ x: 0, y: 0 })
   const [rectSt,    setRectSt]    = useState(null)
@@ -386,6 +399,7 @@ export default function DrawingCanvas({
         if (placingLocalEF) { onPlacingLocalEFDone?.(); return }
         if (placingLocalECS) { onPlacingLocalECSDone?.(); return }
         if (placingLocalChauffage) { onPlacingLocalChauffageDone?.(); return }
+        if (placingLocalGroupeFroid) { onPlacingLocalGroupeFroidDone?.(); return }
         if (placingAccessoryType) { onPlacingAccessoryDone?.(); return }
 if (drawing) commitDrawing()
         else { onSelectIds([]); onSelectedValveChange?.(null); onSelectedAccessoryChange?.(null) }
@@ -416,6 +430,11 @@ if (drawing) commitDrawing()
         if (selectedLocalChauffageId) {
           onLocauxChauffageChange?.((locauxChauffage ?? []).filter(l => l.id !== selectedLocalChauffageId))
           onSelectedLocalChauffageChange?.(null)
+          return
+        }
+        if (selectedLocalGroupeFroidId) {
+          onLocauxGroupeFroidChange?.((locauxGroupeFroid ?? []).filter(l => l.id !== selectedLocalGroupeFroidId))
+          onSelectedLocalGroupeFroidChange?.(null)
           return
         }
         if (selectedAccessoryId) {
@@ -646,6 +665,11 @@ if (drawing) commitDrawing()
       if (zone) onLocauxChauffageChange?.((locauxChauffage ?? []).map(l => l.id === dragLCh.id ? applyLocalZoneDrag(dragLCh, zone) : l))
       return
     }
+    if (dragLGF !== null) {
+      const zone = (locauxGroupeFroid ?? []).find(l => l.id === dragLGF.id)
+      if (zone) onLocauxGroupeFroidChange?.((locauxGroupeFroid ?? []).map(l => l.id === dragLGF.id ? applyLocalZoneDrag(dragLGF, zone) : l))
+      return
+    }
 
     if (ptDragRef.current) {
       const dx = e.clientX - ptDragRef.current.startX
@@ -780,7 +804,7 @@ if (drawing) commitDrawing()
     } else if (previewAccessory) {
       setPreviewAccessory(null)
     }
-  }, [tf, panSt, dragLine, dragCol, dragCh, dragLEF, dragLECS, dragLCh, rectSt, onLineYsChange, onColumnXsChange, onPPZoneDrag, chaufferie, onChaufferieChange, onChaufferiePatch, onChaufferieStartDrag, levels, lineYs, drawMode, pipeType, segments, previewVanne, placingAccessoryType, previewAccessory, locauxEF, onLocauxEFChange, locauxECS, onLocauxECSChange, locauxChauffage, onLocauxChauffageChange])
+  }, [tf, panSt, dragLine, dragCol, dragCh, dragLEF, dragLECS, dragLCh, dragLGF, rectSt, onLineYsChange, onColumnXsChange, onPPZoneDrag, chaufferie, onChaufferieChange, onChaufferiePatch, onChaufferieStartDrag, levels, lineYs, drawMode, pipeType, segments, previewVanne, placingAccessoryType, previewAccessory, locauxEF, onLocauxEFChange, locauxECS, onLocauxECSChange, locauxChauffage, onLocauxChauffageChange, locauxGroupeFroid, onLocauxGroupeFroidChange])
 
   // ── mouse down ───────────────────────────────────────
   const onMouseDown = useCallback(e => {
@@ -926,6 +950,18 @@ if (drawing) commitDrawing()
       const newZ = { id: uid('lch'), enabled: true, levelId: levels[li]?.id ?? levels[0]?.id, x1: newX1, x2: newX1 + W, height: H }
       onLocauxChauffageChange?.([...(locauxChauffage ?? []), newZ])
       onPlacingLocalChauffageDone?.()
+      return
+    }
+
+    // ── Local Groupe Froid placement mode ──
+    if (placingLocalGroupeFroid) {
+      let li = findLevelIndexAt(pos.y, lineYs)
+      if (li < 0) li = (levels.length > 0 && lineYs.length > levels.length && pos.y <= lineYs[levels.length]) ? levels.length - 1 : 0
+      const W = 270, H = 150
+      const newX1 = snap(pos.x - W / 2)
+      const newZ = { id: uid('lgf'), enabled: true, levelId: levels[li]?.id ?? levels[0]?.id, x1: newX1, x2: newX1 + W, height: H }
+      onLocauxGroupeFroidChange?.([...(locauxGroupeFroid ?? []), newZ])
+      onPlacingLocalGroupeFroidDone?.()
       return
     }
 
@@ -1140,6 +1176,7 @@ if (drawing) commitDrawing()
     setDragLEF(null)
     setDragLECS(null)
     setDragLCh(null)
+    setDragLGF(null)
 
     // Commit valve drag
     if (valveDragRef.current) {
@@ -1730,6 +1767,54 @@ if (drawing) commitDrawing()
           )
         })}
 
+        {/* Locaux Groupe Froid */}
+        {(locauxGroupeFroid ?? []).filter(z => z.enabled).map(z => {
+          const levelIdx = levels.findIndex(l => l.id === z.levelId)
+          if (levelIdx < 0 || levelIdx >= lineYs.length) return null
+          const yBot = lineYs[levelIdx]
+          const yTop = yBot - z.height
+          const { x1, x2 } = z
+          const H = 6
+          const isSel = selectedLocalGroupeFroidId === z.id
+          const stroke = '#6b7280', fillHover = 'rgba(0,0,0,0.02)'
+          return (
+            <g key={z.id}>
+              <rect x={x1} y={yTop} width={x2 - x1} height={z.height}
+                fill={fillHover} stroke={stroke} strokeWidth={1.5}
+                style={{ pointerEvents: 'none' }} />
+              <text x={(x1 + x2) / 2} y={yTop + 13}
+                fontSize={10} fill={stroke} fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none', pointerEvents: 'none' }}>Local groupe froid</text>
+              {editLocauxGroupeFroid && (isSel ? (
+                <>
+                  <rect x={x1 + H} y={yTop + H} width={x2 - x1 - H * 2} height={z.height - H * 2}
+                    fill="transparent" style={{ cursor: 'move' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLGF({ type: 'move', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height, origCenterY: yBot - z.height / 2 }) }} />
+                  <rect x={x1} y={yTop - H} width={x2 - x1} height={H * 2}
+                    fill="transparent" style={{ cursor: 'ns-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLGF({ type: 'top', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height }) }} />
+                  <rect x={x1 - H} y={yTop} width={H * 2} height={z.height}
+                    fill="transparent" style={{ cursor: 'ew-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLGF({ type: 'left', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height }) }} />
+                  <rect x={x2 - H} y={yTop} width={H * 2} height={z.height}
+                    fill="transparent" style={{ cursor: 'ew-resize' }}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragLGF({ type: 'right', id: z.id, screenX: ev.clientX, screenY: ev.clientY, origX1: x1, origX2: x2, origHeight: z.height }) }} />
+                </>
+              ) : (
+                <rect x={x1} y={yTop} width={x2 - x1} height={z.height}
+                  fill="transparent" style={{ cursor: 'pointer' }}
+                  onMouseDown={ev => {
+                    ev.stopPropagation()
+                    onSelectedLocalGroupeFroidChange?.(z.id)
+                    onSelectIds([])
+                    onSelectedValveChange?.(null)
+                    onSelectedAccessoryChange?.(null)
+                  }} />
+              ))}
+            </g>
+          )
+        })}
+
         {/* Chaufferie / Production ECS / Chaufferie */}
         {chaufferie?.enabled && (() => {
           const levelIdx = levels.findIndex(l => l.id === chaufferie.levelId)
@@ -1740,7 +1825,7 @@ if (drawing) commitDrawing()
           const H = 6
           const localStroke = '#6b7280'
           const localFill   = 'rgba(0,0,0,0.02)'
-          const localLabel  = isAlimEF ? 'Local EF' : isChauffage ? 'Chaufferie' : isEauGlacee ? 'Production EG' : 'Production ECS'
+          const localLabel  = isAlimEF ? 'Local EF' : isChauffage ? 'Chaufferie' : isEauGlacee ? 'Groupe froid' : 'Production ECS'
           return (
             <g key="chaufferie">
               <rect x={x1} y={yTop} width={x2 - x1} height={chaufferie.height}
@@ -1835,14 +1920,14 @@ if (drawing) commitDrawing()
           const isCriticalPath = hasCritPath && criticalPathIds!.includes(seg.id)
           const isCritDimmed   = hasCritPath && !isCriticalPath
 
-          // match=green · missing=red(ECS)/blue(EF) · other=gray · dash always follows segment type
-          const missingColor = isAlimEF ? '#93c5fd' : '#ef4444'
+          // match=green · missing=red(ECS)/blue(EF|EG) · other=gray · dash always follows segment type
+          const missingColor = (isAlimEF || isEauGlacee) ? '#93c5fd' : '#ef4444'
           const strokeColor = isGrayed || isCritDimmed ? '#d1d5db'
             : editStyle === 'match'   ? '#16a34a'
             : editStyle === 'missing' ? missingColor
             : editStyle === 'other'   ? '#9ca3af'
             : isCriticalPath ? '#2563eb'
-            : sel ? (isAlimEF ? '#f97316' : '#2563eb') : col
+            : sel ? (isAlimEF || isEauGlacee ? '#f97316' : '#2563eb') : col
           const strokeW = isGrayed || isCritDimmed ? 1
             : editStyle === 'match' ? 3 : editStyle === 'missing' ? 2 : editStyle === 'other' ? 1
             : isCriticalPath ? _sw + 2
@@ -2131,7 +2216,7 @@ if (drawing) commitDrawing()
           return (
             <g key={valve.id}
               transform={`translate(${x},${y})`}
-              style={{ cursor: liveDrag ? 'grabbing' : 'grab' }}>
+              style={{ cursor: liveDrag ? 'grabbing' : 'grab', pointerEvents: editParam ? 'none' : undefined }}>
               <circle r={14} fill="transparent" />
               {/* T perpendiculaire : haut sur horizontale, droite sur verticale.
                   Normalise l'angle pour rester dans le demi-plan upper-right. */}
@@ -2205,7 +2290,7 @@ if (drawing) commitDrawing()
             return (
               <g key={acc.id}
                 transform={`translate(${x},${y})`}
-                style={{ cursor: liveDrag ? 'grabbing' : 'grab' }}>
+                style={{ cursor: liveDrag ? 'grabbing' : 'grab', pointerEvents: editParam ? 'none' : undefined }}>
                 <circle cx={symX} cy={symY} r={14} fill="transparent" />
                 {/* Horizontal part (vertical pipes only) */}
                 {!isHoriz && (
@@ -2240,7 +2325,7 @@ if (drawing) commitDrawing()
           return (
             <g key={acc.id}
               transform={`translate(${x},${y}) rotate(${effectiveAngle}) scale(1,${flipY})`}
-              style={{ cursor: liveDrag ? 'grabbing' : 'grab' }}>
+              style={{ cursor: liveDrag ? 'grabbing' : 'grab', pointerEvents: editParam ? 'none' : undefined }}>
               <circle r={16} fill="transparent" />
               <g style={{ pointerEvents: 'none' }}>
                 <AccessorySymbol type={acc.type} counterAngle={-effectiveAngle} />
@@ -2540,7 +2625,7 @@ if (drawing) commitDrawing()
             const cx = pt.x, cy = pt.y
             const sqFill  = sel || dragged ? '#dbeafe' : '#fff'
             const sqStroke = sel || dragged ? '#2563eb' : '#374151'
-            const triStroke = sel || dragged ? '#2563eb' : '#92400e'
+            const triStroke = sel || dragged ? '#2563eb' : (isChauffage || isEauGlacee) ? '#000' : '#92400e'
             const halfA = 22 * Math.PI / 180  // demi-angle étroit (22°)
             const triR  = 13                   // distance center → base du triangle
 
@@ -2618,16 +2703,16 @@ if (drawing) commitDrawing()
           if (pt.type === 'productionEauGlacee') {
             const w = pt.size?.w ?? 44, h = pt.size?.h ?? 28
             const fs = Math.max(6, Math.min(9, h * 0.28))
-            const col = sel || dragged ? '#1d4ed8' : '#1e40af'
+            const col = sel || dragged ? '#2563eb' : '#000'
             return (
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
                 <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
                 <g style={{ pointerEvents: 'none' }}>
                   <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
-                    fill={sel || dragged ? '#dbeafe' : '#eff6ff'}
+                    fill={sel || dragged ? '#dbeafe' : '#fff'}
                     stroke={col} strokeWidth={1.5} rx={3} />
-                  <text x={pt.x} y={pt.y - h * 0.15} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Production</text>
-                  <text x={pt.x} y={pt.y + h * 0.28} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Eau glacée</text>
+                  <text x={pt.x} y={pt.y - h * 0.15} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>Groupe</text>
+                  <text x={pt.x} y={pt.y + h * 0.28} fontSize={fs} fill={col} fontWeight="700" textAnchor="middle" style={{ userSelect: 'none' }}>froid</text>
                 </g>
                 {canvasDisplay?.dpNoeud && (() => {
                   const retDps = Array.from(flowDirections?.entries() ?? [])
@@ -2654,7 +2739,7 @@ if (drawing) commitDrawing()
                 <g style={{ pointerEvents: 'none' }}>
                   <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
                     fill={bg} stroke={col} strokeWidth={1.2} rx={2} />
-                  {[-w/4 + 1, 1, w/4 - 1].map((ox, i) => (
+                  {[-w/4, 0, w/4].map((ox, i) => (
                     <line key={i}
                       x1={pt.x + ox} y1={pt.y - h/2 + 3}
                       x2={pt.x + ox} y2={pt.y + h/2 - 3}
@@ -2711,8 +2796,8 @@ if (drawing) commitDrawing()
 
           if (pt.type === 'terminalFroid') {
             const w = 28, h = 18
-            const col = sel || dragged ? '#1d4ed8' : '#1e40af'
-            const bg  = sel || dragged ? '#dbeafe' : '#eff6ff'
+            const col = sel || dragged ? '#2563eb' : '#000'
+            const bg  = sel || dragged ? '#dbeafe' : '#fff'
             const tfDef = TERMINAL_FROID_TYPES.find(t => t.id === pt.terminalFroidType)
             const bx = pt.x + w / 2 + 4
             return (
@@ -2721,11 +2806,11 @@ if (drawing) commitDrawing()
                 <g style={{ pointerEvents: 'none' }}>
                   <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
                     fill={bg} stroke={col} strokeWidth={1.2} rx={2} />
-                  {[-w/4 + 1, 1, w/4 - 1].map((ox, i) => (
+                  {[-w/4, 0, w/4].map((ox, i) => (
                     <line key={i}
                       x1={pt.x + ox} y1={pt.y - h/2 + 3}
                       x2={pt.x + ox} y2={pt.y + h/2 - 3}
-                      stroke={col} strokeWidth={0.9} strokeDasharray="2,1.5" />
+                      stroke={col} strokeWidth={1} strokeDasharray="2,1.5" />
                   ))}
                 </g>
                 {tfDef && (
@@ -3023,9 +3108,9 @@ if (drawing) commitDrawing()
             return (
               <g style={{ pointerEvents: 'none' }}>
                 <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
-                  fill="rgba(239,246,255,0.6)" stroke="rgba(30,64,175,0.5)" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
-                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(30,64,175,0.55)" fontWeight="700" textAnchor="middle">Production</text>
-                <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(30,64,175,0.55)" fontWeight="700" textAnchor="middle">Eau glacée</text>
+                  fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
+                <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">Groupe</text>
+                <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">froid</text>
               </g>
             )
           }
@@ -3040,7 +3125,7 @@ if (drawing) commitDrawing()
                 )}
                 <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
                   fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.5} strokeDasharray="4,3" rx={2} />
-                {[-w/4 + 1, 1, w/4 - 1].map((ox, i) => (
+                {[-w/4, 0, w/4].map((ox, i) => (
                   <line key={i}
                     x1={gx + ox} y1={gy - h/2 + 3}
                     x2={gx + ox} y2={gy + h/2 - 3}
@@ -3055,16 +3140,16 @@ if (drawing) commitDrawing()
             return (
               <g style={{ pointerEvents: 'none' }}>
                 {tfDef && (
-                  <text x={gx} y={gy - h/2 - 3} fontSize={6} fill="rgba(30,64,175,0.6)" textAnchor="middle"
+                  <text x={gx} y={gy - h/2 - 3} fontSize={6} fill="rgba(0,0,0,0.45)" textAnchor="middle"
                     style={{ userSelect: 'none' }}>{tfDef.label}</text>
                 )}
                 <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
-                  fill="rgba(239,246,255,0.6)" stroke="rgba(30,64,175,0.5)" strokeWidth={1.5} strokeDasharray="4,3" rx={2} />
-                {[-w/4 + 1, 1, w/4 - 1].map((ox, i) => (
+                  fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.2} strokeDasharray="4,3" rx={2} />
+                {[-w/4, 0, w/4].map((ox, i) => (
                   <line key={i}
                     x1={gx + ox} y1={gy - h/2 + 3}
                     x2={gx + ox} y2={gy + h/2 - 3}
-                    stroke="rgba(30,64,175,0.4)" strokeWidth={1.2} strokeDasharray="2,1.5" />
+                    stroke="rgba(0,0,0,0.35)" strokeWidth={1} strokeDasharray="2,1.5" />
                 ))}
               </g>
             )
@@ -3144,6 +3229,24 @@ if (drawing) commitDrawing()
           )
         })()}
 
+        {/* Ghost de placement local Groupe Froid */}
+        {placingLocalGroupeFroid && levels.length > 0 && (() => {
+          let li = findLevelIndexAt(mouse.y, lineYs)
+          if (li < 0) li = (lineYs.length > levels.length && mouse.y <= lineYs[levels.length]) ? levels.length - 1 : 0
+          const yBot = lineYs[li]
+          const W = 270, H = 150
+          const gx1 = snap(mouse.x - W / 2)
+          return (
+            <g style={{ pointerEvents: 'none' }}>
+              <rect x={gx1} y={yBot - H} width={W} height={H}
+                fill="rgba(0,0,0,0.04)" stroke="rgba(0,0,0,0.35)" strokeWidth={1.5} strokeDasharray="6,4" />
+              <text x={gx1 + W / 2} y={yBot - H + 13}
+                fontSize={10} fill="rgba(0,0,0,0.45)" fontWeight="600" textAnchor="middle"
+                style={{ userSelect: 'none' }}>Local groupe froid</text>
+            </g>
+          )
+        })()}
+
         {/* Selection rectangle */}
         {selRect && (
           <rect
@@ -3162,7 +3265,7 @@ if (drawing) commitDrawing()
       )}
       {placingChaufferie && (
         <text x={8} y={18} fontSize={10} fill="#818cf8">
-          Cliquez pour placer {isChauffage ? 'la chaufferie' : isEauGlacee ? 'la production EG' : 'la production ECS'} · Échap pour annuler
+          Cliquez pour placer {isChauffage ? 'la chaufferie' : isEauGlacee ? 'le groupe froid' : 'la production ECS'} · Échap pour annuler
         </text>
       )}
       {placingLocalEF && (
@@ -3178,6 +3281,11 @@ if (drawing) commitDrawing()
       {placingLocalChauffage && (
         <text x={8} y={18} fontSize={10} fill="#4338ca">
           Cliquez pour placer un local chauffage · Échap pour annuler
+        </text>
+      )}
+      {placingLocalGroupeFroid && (
+        <text x={8} y={18} fontSize={10} fill="#4338ca">
+          Cliquez pour placer un local groupe froid · Échap pour annuler
         </text>
       )}
     </svg>

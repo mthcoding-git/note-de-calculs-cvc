@@ -8,7 +8,7 @@ const RHO_CP = 1163 // Wh/(m³·K) ≈ ρ·cp eau à 50°C
 
 /** Vrai si le nœud est un terminal thermique (émetteur chauffage ou terminal froid EG). */
 const isTerminal = (pt: Point | undefined): boolean =>
-  isTerminal(pt) || pt?.type === 'terminalFroid'
+  pt?.type === 'emetteur' || pt?.type === 'terminalFroid'
 
 /** Vrai si le nœud est une production (chauffage ou eau glacée). */
 const isProduction = (pt: Point | undefined): boolean =>
@@ -414,9 +414,10 @@ function retourSegTBack(
   const seg = segments.find(s => s.id === segId)
   if (!seg) return null
 
-  if (seg.T_ch_override != null) {
-    segMemo.set(segId, seg.T_ch_override)
-    return seg.T_ch_override
+  const T_override = seg.T_ch_override ?? seg.T_eg_override ?? null
+  if (T_override != null) {
+    segMemo.set(segId, T_override)
+    return T_override
   }
 
   const dir = flowDirections.get(segId)
@@ -790,9 +791,10 @@ export function computeChauffageThermalSimple(
     const seg = segments.find(s => s.id === segId)
     if (!seg) return null
 
-    if (seg.T_ch_override != null) {
-      retourSegMemo.set(segId, seg.T_ch_override)
-      return seg.T_ch_override
+    const T_override = seg.T_ch_override ?? seg.T_eg_override ?? null
+    if (T_override != null) {
+      retourSegMemo.set(segId, T_override)
+      return T_override
     }
 
     const dir = flowDirections.get(segId)

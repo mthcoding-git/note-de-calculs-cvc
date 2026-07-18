@@ -123,15 +123,17 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
         ? { value: Math.round(sumFlowM3h * 1000), unit: 'L/h' }
         : { value: Number(sumFlowM3h.toFixed(3)), unit: 'm³/h' }
       : null
-    const pumpHMTEntry = isChauffage && chauffagePumpHMT != null ? chauffagePumpHMT.get(pt.id) : null
-    const pumpPartitionEntry = !isChauffage ? pumpCriticalMap?.get(pt.id) : null
+    const pumpHMTEntry = isChauffage ? (chauffagePumpHMT?.get(pt.id) ?? null)
+      : isEauGlacee ? (eauGlaceePumpHMT?.get(pt.id) ?? null)
+      : null
+    const pumpPartitionEntry = (!isChauffage && !isEauGlacee) ? pumpCriticalMap?.get(pt.id) : null
     const critDp = pumpHMTEntry?.hmt ?? pumpPartitionEntry?.critDp ?? pdcCumResults?.criticalDp ?? null
     const hmtMce = critDp != null ? critDp / 9810 : null
 
-    const criticalSegIds: Set<string> | null = isChauffage
+    const criticalSegIds: Set<string> | null = (isChauffage || isEauGlacee)
       ? (pumpHMTEntry?.isSecondary
           ? (pumpHMTEntry.criticalSegIds)
-          : (chauffageSplitCumDp?.criticalSegIds ?? null))
+          : ((isChauffage ? chauffageSplitCumDp : eauGlaceeSplitCumDp)?.criticalSegIds ?? null))
       : (pumpPartitionEntry?.criticalSegIds ?? pumpHMTEntry?.criticalSegIds ?? pdcCumResults?.criticalSegIds ?? null)
     const unite  = pdcParams?.uniteAffichage ?? 'Pa'
     const fmtDp  = (pa: number) => fmtDpLabel(pa, unite)
@@ -150,7 +152,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
       <div className="rp-section">
         <h3 className="rp-title">Pompe</h3>
         {(() => {
-          const prefix = isChauffage ? 'Pompe chauffage' : 'Pompe bouclage ECS'
+          const prefix = isChauffage ? 'Pompe chauffage' : isEauGlacee ? 'Pompe eau glacée' : 'Pompe bouclage ECS'
           const pumpsSorted = points.filter((p: any) => p.type === 'pump')
           const pumpIdx = pumpsSorted.findIndex((p: any) => p.id === pt.id)
           const autoName = pumpsSorted.length <= 1
@@ -546,24 +548,28 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
       !bypassSegs.some((b: any) => b.id === s.id)
     )
 
-    const T_prim: number | null = chauffageParams?.T_depart ?? null
+    const activeParams  = isEauGlacee ? eauGlaceeParams  : chauffageParams
+    const activeThermal = isEauGlacee ? eauGlaceeThermal : chauffageThermal
+    const activeFlows   = isEauGlacee ? eauGlaceeFlows   : chauffageFlows
+
+    const T_prim: number | null = activeParams?.T_depart ?? null
     const T_dep_sec = secAllerSegs.reduce((max: number, s: any) => {
-      const T = chauffageThermal?.segResults?.get(s.id)?.T_from ?? null
+      const T = activeThermal?.segResults?.get(s.id)?.T_from ?? null
       return (T != null && T > max) ? T : max
     }, -Infinity)
     // T retour secondaire = T_from du bypass (fromId = nœud séparation)
     let T_ret_sec: number | null = null
     for (const s of bypassSegs) {
-      const T = chauffageThermal?.segResults?.get(s.id)?.T_from ?? null
+      const T = activeThermal?.segResults?.get(s.id)?.T_from ?? null
       if (T != null) { T_ret_sec = T; break }
     }
 
     const Q_sec_lh    = secAllerSegs.reduce((sum: number, s: any) =>
-      sum + (chauffageFlows?.get(s.id)?.flowRate ?? 0), 0) * 1000
+      sum + (activeFlows?.get(s.id)?.flowRate ?? 0), 0) * 1000
     const Q_prim_lh   = primAllerSegs.reduce((sum: number, s: any) =>
-      sum + (chauffageFlows?.get(s.id)?.flowRate ?? 0), 0) * 1000
+      sum + (activeFlows?.get(s.id)?.flowRate ?? 0), 0) * 1000
     const Q_bypass_lh = bypassSegs.reduce((sum: number, s: any) =>
-      sum + (chauffageFlows?.get(s.id)?.flowRate ?? 0), 0) * 1000
+      sum + (activeFlows?.get(s.id)?.flowRate ?? 0), 0) * 1000
     const pctPrim    = Q_sec_lh > 0 ? (Q_prim_lh   / Q_sec_lh) * 100 : null
     const pctBypass  = Q_sec_lh > 0 ? (Q_bypass_lh  / Q_sec_lh) * 100 : null
 
@@ -748,7 +754,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
       onEauGlaceeParamsChange?.({ ...eauGlaceeParams, [key]: val })
     return (
       <div className="rp-section">
-        <h3 className="rp-title" style={{ color: '#1e40af' }}>Production Eau glacée</h3>
+        <h3 className="rp-title" style={{ color: '#1e40af' }}>Groupe froid</h3>
         <SectionLabel>Paramètres</SectionLabel>
         <Field label="T° aller" unit="°C">
           <NumInput value={tAller} min={0} max={25} step={1} onChange={v => setEG('T_depart', v)} />

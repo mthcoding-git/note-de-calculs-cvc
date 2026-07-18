@@ -91,6 +91,8 @@
 .tb-btn.active-aller    { background: #fef2f2; border-color: #dc2626; color: #dc2626; }
 .tb-btn.active-retour   { background: #fff7ed; border-color: #f97316; color: #f97316; }
 .tb-btn.active-aller-ef { background: #eff6ff; border-color: #2563eb; color: #2563eb; }
+.tb-btn.active-aller-eg { background: #eff6ff; border-color: #60a5fa; color: #1e40af; }
+.tb-btn.active-retour-eg { background: #dbeafe; border-color: #1d4ed8; color: #1d4ed8; }
 .tb-btn.active-delete { background: #fef2f2; border-color: #dc2626; color: #dc2626; font-weight: 700; }
 .tb-panel-toggle { font-weight: 600; }
 
@@ -777,6 +779,8 @@
 .rt-flow-banner-start    td { background: #dc2626; }
 .rt-flow-banner-end      td { background: #ea580c; }
 .rt-flow-banner-ef-start td { background: #1d4ed8; }
+.rt-flow-banner-eg-start td { background: #60a5fa; }
+.rt-flow-banner-eg-end   td { background: #1d4ed8; }
 .rt-ef-spacer td { height: 10px; background: #f1f5f9; border: none; padding: 0; }
 .rt-ef-source-header {
   display: flex; align-items: center; gap: 8px;
@@ -837,7 +841,8 @@
   color: #94a3b8;
   text-align: right;
 }
-.rt-badge-a, .rt-badge-r, .rt-badge-ca, .rt-badge-cr, .rt-badge-ant {
+.rt-badge-a, .rt-badge-r, .rt-badge-ca, .rt-badge-cr, .rt-badge-ant,
+.rt-badge-a-eg, .rt-badge-r-eg {
   display: inline-block;
   font-size: 8px;
   font-weight: 800;
@@ -847,11 +852,13 @@
   vertical-align: middle;
   letter-spacing: 0.4px;
 }
-.rt-badge-a   { background: #dc2626; color: #fff; }
-.rt-badge-r   { background: #ea580c; color: #fff; }
-.rt-badge-ca  { background: #1d4ed8; color: #fff; }
-.rt-badge-cr  { background: #047857; color: #fff; }
-.rt-badge-ant { background: #dc2626; color: #fff; }
+.rt-badge-a    { background: #dc2626; color: #fff; }
+.rt-badge-r    { background: #ea580c; color: #fff; }
+.rt-badge-ca   { background: #1d4ed8; color: #fff; }
+.rt-badge-cr   { background: #047857; color: #fff; }
+.rt-badge-ant  { background: #dc2626; color: #fff; }
+.rt-badge-a-eg { background: #60a5fa; color: #1e3a8a; }
+.rt-badge-r-eg { background: #1d4ed8; color: #fff; }
 
 .rt-legend {
   flex-shrink: 0;

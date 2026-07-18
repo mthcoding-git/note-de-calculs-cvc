@@ -348,7 +348,7 @@ export function buildECSFlowRows(segments, points, flowDirections, columns, colu
  */
 export function buildChauffageFlowRows(segments, points, flowDirections, columns?, columnXs?, levels?, lineYs?, mixingNodes?: Set<string>) {
   if (!segments?.length) return { rows: [], roleMap: new Map() }
-  const prod = points?.find((p: any) => p.type === 'productionChauffage')
+  const prod = points?.find((p: any) => p.type === 'productionChauffage' || p.type === 'productionEauGlacee')
   if (!prod) return { rows: [], roleMap: new Map() }
 
   const allerSegs  = segments.filter((s: any) => s.type === 'aller-ch' || s.type === 'aller')
@@ -385,18 +385,23 @@ export function buildChauffageFlowRows(segments, points, flowDirections, columns
     separationToMixMap.set(separationNodeId, mixId)
   }
 
-  // Degré aller / retour par nœud (non-dirigé : toutes connexions comptent)
-  const allerDegree  = new Map<string, number>()
-  const retourDegree = new Map<string, number>()
+  // Degré aller par nœud (non-dirigé)
+  const allerDegree = new Map<string, number>()
   for (const s of allerSegs) {
     const d = flowDirections?.get(s.id); if (!d) continue
     allerDegree.set(d.fromId, (allerDegree.get(d.fromId) ?? 0) + 1)
     allerDegree.set(d.toId,   (allerDegree.get(d.toId)   ?? 0) + 1)
   }
+
+  // Segments bypass (circuits mélangés) — exclus du comptage jonction retour
+  const bypassSegIds = new Set([...mixingNodeMap.values()].flatMap(v => v.bypassChain.map((s: any) => s.id)))
+
+  // Nombre de tronçons retour (hors bypass) arrivant (dirigé) à chaque nœud
+  const retourIncomingCount = new Map<string, number>()
   for (const s of retourSegs) {
+    if (bypassSegIds.has(s.id)) continue
     const d = flowDirections?.get(s.id); if (!d) continue
-    retourDegree.set(d.fromId, (retourDegree.get(d.fromId) ?? 0) + 1)
-    retourDegree.set(d.toId,   (retourDegree.get(d.toId)   ?? 0) + 1)
+    retourIncomingCount.set(d.toId, (retourIncomingCount.get(d.toId) ?? 0) + 1)
   }
 
   // Depuis un nœud aller, atteint-on un émetteur sans nœud jonction (allerDegree ≥ 3) ?
@@ -404,7 +409,7 @@ export function buildChauffageFlowRows(segments, points, flowDirections, columns
   const isAntenneAllerFrom = (nodeId: string): boolean => {
     if (memoAller.has(nodeId)) return memoAller.get(nodeId)!
     const pt = points.find((p: any) => p.id === nodeId)
-    if (pt?.type === 'emetteur') { memoAller.set(nodeId, true); return true }
+    if (pt?.type === 'emetteur' || pt?.type === 'terminalFroid') { memoAller.set(nodeId, true); return true }
     if ((allerDegree.get(nodeId) ?? 0) >= 3) { memoAller.set(nodeId, false); return false }
     const outgoing = allerSegs.filter((s: any) => flowDirections?.get(s.id)?.fromId === nodeId)
     const result = outgoing.some((s: any) => {
@@ -415,14 +420,15 @@ export function buildChauffageFlowRows(segments, points, flowDirections, columns
     return result
   }
 
-  // Depuis un nœud retour (amont), atteint-on un émetteur sans nœud séparation (retourDegree ≥ 3) ?
+  // Depuis un nœud retour (amont), atteint-on un émetteur sans jonction (≥2 retours hors bypass arrivent) ?
   const memoRetour = new Map<string, boolean>()
   const isAntenneRetourFrom = (nodeId: string): boolean => {
     if (memoRetour.has(nodeId)) return memoRetour.get(nodeId)!
     const pt = points.find((p: any) => p.id === nodeId)
-    if (pt?.type === 'emetteur') { memoRetour.set(nodeId, true); return true }
-    if ((retourDegree.get(nodeId) ?? 0) >= 3) { memoRetour.set(nodeId, false); return false }
-    const incoming = retourSegs.filter((s: any) => flowDirections?.get(s.id)?.toId === nodeId)
+    if (pt?.type === 'emetteur' || pt?.type === 'terminalFroid') { memoRetour.set(nodeId, true); return true }
+    if ((retourIncomingCount.get(nodeId) ?? 0) >= 2) { memoRetour.set(nodeId, false); return false }
+    const incoming = retourSegs.filter((s: any) =>
+      flowDirections?.get(s.id)?.toId === nodeId && !bypassSegIds.has(s.id))
     const result = incoming.some((s: any) => {
       const fromId = flowDirections?.get(s.id)?.fromId
       return fromId != null && isAntenneRetourFrom(fromId)
@@ -490,16 +496,6 @@ export function buildChauffageFlowRows(segments, points, flowDirections, columns
     return null
   }
 
-  // Les bypass sont gérés séparément — les exclure du compte junction
-  const bypassSegIds = new Set([...mixingNodeMap.values()].flatMap(v => v.bypassChain.map((s: any) => s.id)))
-
-  const retourIncomingCount = new Map<string, number>()
-  for (const s of retourSegs) {
-    if (bypassSegIds.has(s.id)) continue
-    const d = flowDirections?.get(s.id)
-    if (!d) continue
-    retourIncomingCount.set(d.toId, (retourIncomingCount.get(d.toId) ?? 0) + 1)
-  }
   const junctionEmitted = new Map<string, number>()
   const visited = new Set<string>()
   const rows: any[] = []

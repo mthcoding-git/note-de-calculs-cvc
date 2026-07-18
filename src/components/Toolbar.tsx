@@ -79,10 +79,10 @@ const DISPLAY_OPTIONS = [
   { key: 'nomTroncon',        label: 'Nom du tronçon',           calcIds: null },
   { key: 'material',          label: 'Matériau',                 calcIds: null },
   { key: 'dn',                label: 'DN',                       calcIds: null },
-  { key: 'length',            label: 'Longueur',                 calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage'] },
+  { key: 'length',            label: 'Longueur',                 calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'distribution-eauglacee'] },
   { key: 'insulation',        label: 'Isolant & épaisseur',      calcIds: ['bouclage-ecs'] },
-  { key: 'debit',             label: 'Débit',                    calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage'] },
-  { key: 'vitesse',           label: 'Vitesse',                  calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage'] },
+  { key: 'debit',             label: 'Débit',                    calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'distribution-eauglacee'] },
+  { key: 'vitesse',           label: 'Vitesse',                  calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'distribution-eauglacee'] },
   { key: 'temperatureNoeud',  label: 'T° nœuds',                calcIds: ['bouclage-ecs'] },
   { key: 'deltaT',            label: 'ΔT tronçon',              calcIds: ['bouclage-ecs'] },
   { key: 'dpTroncon',         label: 'ΔP tronçon',              calcIds: ['bouclage-ecs', 'distribution-chauffage', 'distribution-eauglacee'] },
@@ -310,14 +310,14 @@ export default function Toolbar({
           return (
             <>
               <button
-                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller' : ''}`}
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller-eg' : ''}`}
                 onClick={() => activateDraw('aller')}
               >
                 <span style={{ display: 'inline-block', width: 22, height: sw, background: p.colorAller, borderRadius: 1 }} />
                 Aller EG
               </button>
               <button
-                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour' : ''}`}
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour-eg' : ''}`}
                 onClick={() => activateDraw('retour')}
               >
                 <span style={{ display: 'inline-block', width: 22, height: 0, borderTop: `${sw}px dashed ${p.colorRetour}` }} />
@@ -390,7 +390,7 @@ export default function Toolbar({
               >
                 <svg width={18} height={12} viewBox="0 0 18 12" style={{ display: 'block', flexShrink: 0 }}>
                   <rect x={0.6} y={0.6} width={16.8} height={10.8} fill="none" stroke="currentColor" strokeWidth={1.2} rx={1} />
-                  {[5.5, 9, 12.5].map((x, i) => (
+                  {[4.5, 9, 13.5].map((x, i) => (
                     <line key={i} x1={x} y1={2} x2={x} y2={10} stroke="currentColor" strokeWidth={0.9} />
                   ))}
                 </svg>
@@ -479,7 +479,7 @@ export default function Toolbar({
               onClick={() => { closeAcc(); cancelVanne(); onAddProductionEauGlacee?.() }}
               disabled={hasProductionEauGlacee}
             >
-              Prod. EG
+              Groupe froid
             </button>
             {/* Terminaux froids dropdown */}
             <div ref={terminalFroidRef} style={{ position: 'relative' }}>
@@ -488,10 +488,10 @@ export default function Toolbar({
                 onClick={() => { closeAcc(); cancelVanne(); setTerminalFroidOpen(o => !o) }}
                 style={{ display: 'flex', alignItems: 'center', gap: 4 }}
               >
-                <svg width={18} height={12} viewBox="0 0 18 12" style={{ display: 'block', flexShrink: 0 }}>
-                  <rect x={0.6} y={0.6} width={16.8} height={10.8} fill="none" stroke="#1d4ed8" strokeWidth={1.2} rx={1} strokeDasharray="2,1.5" />
-                  {[5.5, 9, 12.5].map((x, i) => (
-                    <line key={i} x1={x} y1={2} x2={x} y2={10} stroke="#1d4ed8" strokeWidth={0.9} />
+                <svg width={20} height={13} viewBox="0 0 20 13" style={{ display: 'block', flexShrink: 0 }}>
+                  <rect x={0.6} y={0.6} width={18.8} height={11.8} fill="none" stroke="currentColor" strokeWidth={1.2} rx={1.5} />
+                  {[5, 10, 15].map((x, i) => (
+                    <line key={i} x1={x} y1={1.75} x2={x} y2={12.25} stroke="currentColor" strokeWidth={1} strokeDasharray="2,1.5" />
                   ))}
                 </svg>
                 Terminal froid {terminalFroidOpen ? '▲' : '▾'}
@@ -519,7 +519,7 @@ export default function Toolbar({
                       return (
                         <React.Fragment key={tf.id}>
                           <button onClick={doPlace} className="tb-display-item"
-                            style={{ padding: '4px 8px 4px 4px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontSize: 11, color: '#1e3a8a', borderRadius: 4, whiteSpace: 'nowrap' }}>
+                            style={{ padding: '4px 8px 4px 4px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontSize: 11, color: '#1e293b', borderRadius: 4, whiteSpace: 'nowrap' }}>
                             {tf.label}
                           </button>
                           <input type="number" min={0} max={30} step={1}
@@ -527,19 +527,19 @@ export default function Toolbar({
                             onChange={e => setP({ T_entree: e.target.value === '' ? null : Number(e.target.value) })}
                             onBlur={e => commitT('T_entree', e.target.value, tf.T_entreeDefault)}
                             onKeyDown={onKey} onClick={e => e.stopPropagation()}
-                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #bfdbfe', borderRadius: 4, fontSize: 11, textAlign: 'right', fontWeight: 600, color: '#1e3a8a', background: '#eff6ff' }} />
+                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #e2e8f0', borderRadius: 4, fontSize: 11, textAlign: 'right', fontWeight: 600, color: '#1e293b', background: '#f8fafc' }} />
                           <input type="number" min={0} max={30} step={1}
                             value={p.T_sortie ?? ''}
                             onChange={e => setP({ T_sortie: e.target.value === '' ? null : Number(e.target.value) })}
                             onBlur={e => commitT('T_sortie', e.target.value, tf.T_sortieDefault)}
                             onKeyDown={onKey} onClick={e => e.stopPropagation()}
-                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #bfdbfe', borderRadius: 4, fontSize: 11, textAlign: 'right', fontWeight: 600, color: '#1e3a8a', background: '#eff6ff' }} />
+                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #e2e8f0', borderRadius: 4, fontSize: 11, textAlign: 'right', fontWeight: 600, color: '#1e293b', background: '#f8fafc' }} />
                           <input type="number" min={1} step={100}
                             value={p.puissance ?? ''}
                             placeholder="—"
                             onChange={e => setP({ puissance: e.target.value === '' ? null : Math.max(1, Number(e.target.value)) })}
                             onKeyDown={onKey} onClick={e => e.stopPropagation()}
-                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #bfdbfe', borderRadius: 4, fontSize: 11, textAlign: 'right', background: '#eff6ff', color: p.puissance != null ? '#1e3a8a' : '#9ca3af' }} />
+                            style={{ width: '100%', padding: '3px 4px', border: '1px solid #e2e8f0', borderRadius: 4, fontSize: 11, textAlign: 'right', background: '#f8fafc', color: p.puissance != null ? '#1e293b' : '#9ca3af' }} />
                         </React.Fragment>
                       )
                     })}
@@ -553,7 +553,7 @@ export default function Toolbar({
             >
               <PumpSymbol
                 rotation={180}
-                color={placingEquipment?.type === 'pump' ? '#1d4ed8' : '#1e40af'}
+                color={placingEquipment?.type === 'pump' ? '#1d4ed8' : '#000'}
                 bg={placingEquipment?.type === 'pump' ? '#dbeafe' : '#fff'}
               />
               Pompe

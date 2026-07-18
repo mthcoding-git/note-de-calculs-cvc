@@ -120,6 +120,24 @@ export const DEFAULT_MATERIALS = [
     ],
   },
   {
+    id: 'pert',
+    name: 'PE-RT (type II)',
+    enabled: false,
+    lambda: 0.38,
+    epsilon: 0.00001, // rugosité (m) — plastique lisse
+    minDi: 13,   // NF DTU 60.11 — autres matériaux : di ≥ 12 mm ; 16×1,5 → di=13 mm
+    // Dimensions selon NF EN ISO 22391-2 — SDR 11 (PN6 à 70°C)
+    dns: [
+      { dn: '16×1.5', di: 13.0, de: 16.0 },
+      { dn: '20×1.9', di: 16.2, de: 20.0 },
+      { dn: '25×2.3', di: 20.4, de: 25.0 },
+      { dn: '32×3',   di: 26.0, de: 32.0 },
+      { dn: '40×3.7', di: 32.6, de: 40.0 },
+      { dn: '50×4.6', di: 40.8, de: 50.0 },
+      { dn: '63×5.8', di: 51.4, de: 63.0 },
+    ],
+  },
+  {
     id: 'pe100',
     name: 'PE100 / HDPE',
     enabled: false,
@@ -139,24 +157,6 @@ export const DEFAULT_MATERIALS = [
       { dn: '110×10',   di: 90.0,  de: 110.0 },
       { dn: '125×11.4', di: 102.2, de: 125.0 },
       { dn: '160×14.6', di: 130.8, de: 160.0 },
-    ],
-  },
-  {
-    id: 'pert',
-    name: 'PE-RT (type II)',
-    enabled: false,
-    lambda: 0.38,
-    epsilon: 0.00001, // rugosité (m) — plastique lisse
-    minDi: 13,   // NF DTU 60.11 — autres matériaux : di ≥ 12 mm ; 16×1,5 → di=13 mm
-    // Dimensions selon NF EN ISO 22391-2 — SDR 11 (PN6 à 70°C)
-    dns: [
-      { dn: '16×1.5', di: 13.0, de: 16.0 },
-      { dn: '20×1.9', di: 16.2, de: 20.0 },
-      { dn: '25×2.3', di: 20.4, de: 25.0 },
-      { dn: '32×3',   di: 26.0, de: 32.0 },
-      { dn: '40×3.7', di: 32.6, de: 40.0 },
-      { dn: '50×4.6', di: 40.8, de: 50.0 },
-      { dn: '63×5.8', di: 51.4, de: 63.0 },
     ],
   },
   {

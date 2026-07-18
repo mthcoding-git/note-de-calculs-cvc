@@ -1,7 +1,11 @@
 import { DEFAULT_MATERIALS } from '../data/materials'
 import { DEFAULT_MATERIALS_CHAUFFAGE } from '../data/materialsChauffage'
 export { DEFAULT_MATERIALS_CHAUFFAGE }
+import { DEFAULT_MATERIALS_EAU_GLACEE } from '../data/materialsEauGlacee'
+export { DEFAULT_MATERIALS_EAU_GLACEE }
 import { DEFAULT_INSULATIONS } from '../data/insulations'
+import { DEFAULT_INSULATIONS_EAU_GLACEE } from '../data/insulationsEauGlacee'
+export { DEFAULT_INSULATIONS_EAU_GLACEE }
 import { DEFAULT_PDC_PARAMS, DEFAULT_PDC_PARAMS_ALIM_ECS, DEFAULT_PDC_PARAMS_ALIM_EF } from './pdcCalc'
 import { uid } from './idGen'
 import type { DisplayPrefs } from '../types'
@@ -23,7 +27,7 @@ export const DEFAULT_DISPLAY_PREFS: DisplayPrefs = {
   },
   eauglacee: {
     unitDebit: 'm3/h', unitDp: 'Pa', unitPuissance: 'W',
-    colorAller: '#1d4ed8', colorRetour: '#60a5fa', strokeWidth: 1.5,
+    colorAller: '#60a5fa', colorRetour: '#1d4ed8', strokeWidth: 1.5,
   },
 }
 
@@ -196,8 +200,9 @@ export function initProject() {
     materialsECS:          DEFAULT_MATERIALS,
     materialsEF:           DEFAULT_MATERIALS,
     materialsChauffage:    DEFAULT_MATERIALS_CHAUFFAGE,
-    materialsEauGlacee:    DEFAULT_MATERIALS_CHAUFFAGE,
+    materialsEauGlacee:    DEFAULT_MATERIALS_EAU_GLACEE,
     insulations:           DEFAULT_INSULATIONS,
+    insulationsEauGlacee:  DEFAULT_INSULATIONS_EAU_GLACEE,
     levels:                DEFAULT_LEVELS,
     lineYs:                DEFAULT_LINE_YS,
     columns:               DEFAULT_COLUMNS,

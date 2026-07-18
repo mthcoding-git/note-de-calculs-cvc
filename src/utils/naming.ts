@@ -87,7 +87,7 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
 
   // Bypass retour CH : la chaîne physique depuis ce tronçon mène d'un côté au nœud mélange
   // (≥2 aller + ≥1 retour) et de l'autre au nœud séparation (≥3 retour).
-  const isBypassToMixing = isRetourCh && allSegs != null && (() => {
+  const isBypassToMixing = (isRetourCh || isRetourEG) && allSegs != null && (() => {
     const segs = allSegs as any[]
     const nRetour = (ptId: string) => segs.filter(s =>
       (s.type === 'retour' || s.type === 'retour-ch') &&
@@ -132,7 +132,10 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
     : isRetourCh  ? 'Retour CH'
     : isChaufSeg  && role === 'collecteur-aller'  ? 'Collecteur Aller CH'
     : isChaufSeg  ? 'Aller CH'
+    : isRetourEG  && isBypassToMixing            ? 'Retour EG vers mélange'
+    : isRetourEG  && role === 'collecteur-retour' ? 'Collecteur Retour EG'
     : isRetourEG  ? 'Retour EG'
+    : isEGSeg     && role === 'collecteur-aller'  ? 'Collecteur Aller EG'
     : isEGSeg     ? 'Aller EG'
     : role === 'collecteur-aller'  ? 'Collecteur aller ECS'
     : role === 'collecteur-retour' ? 'Collecteur retour ECS'

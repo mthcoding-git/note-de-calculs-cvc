@@ -38,7 +38,9 @@ export function computeValveKvs(
   const prodECS = points.find((p: any) => p.type === sourceType)
   if (!prodECS) return result
 
-  const sourceLabel = sourceType === 'productionChauffage' ? 'Production CH' : 'Production ECS'
+  const sourceLabel = sourceType === 'productionChauffage' ? 'Production CH'
+    : sourceType === 'productionEauGlacee' ? 'Groupe froid'
+    : 'Production ECS'
 
   // nodeId → segId sortant (sens du flux) — un seul par nœud hors jonction
   const outgoing = new Map<string, string>()
@@ -137,6 +139,8 @@ export function computeValveKvsChauffage(
   chauffageFlows:       Map<string, { flowRate: number | null }> | null,
   chauffageSplitCumDp:  { segCumDp: Map<string, number>; secondarySegIds: Set<string> } | null,
   mixingNodes:          Set<string> = new Set(),
+  prodType:             string = 'productionChauffage',
+  prodLabel:            string = 'Production CH',
 ): Map<string, ValveKvResult> {
   const result = new Map<string, ValveKvResult>()
   if (valves.length === 0 || !chauffageFlows) return result
@@ -182,7 +186,7 @@ export function computeValveKvsChauffage(
         if (dir) outgoing.set(dir.fromId, seg.id)
       }
 
-      const prodCH = points.find((p: any) => p.type === 'productionChauffage')
+      const prodCH = points.find((p: any) => p.type === prodType)
       if (prodCH) {
         const valveTrace = new Map<string, { junctionId: string; lastSegId: string; branchDp: number }>()
         for (const valve of primaryValves) {
@@ -243,14 +247,14 @@ export function computeValveKvsChauffage(
             kv, dpVanne, dpTotal,
             branchDp: trace.branchDp,
             referenceDp, isCritical, nValves, Q,
-            sourceLabel: 'Production CH',
+            sourceLabel: prodLabel,
           })
         }
       }
     } else if (pdcCumResults) {
       const primaryResults = computeValveKvs(
         primaryValves, segments, points, flowDirections,
-        pdcCumResults, chauffageFlows, 'productionChauffage',
+        pdcCumResults, chauffageFlows, prodType,
       )
       for (const [id, r] of primaryResults) result.set(id, r)
     }

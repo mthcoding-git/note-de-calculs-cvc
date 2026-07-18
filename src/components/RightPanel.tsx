@@ -290,11 +290,12 @@ function ValvePanel({ valve, onUpdate, valveKvResult, activeCalcId, segToCol }) 
   )
 }
 
-function ChaufferiePanel({ chaufferie, onChange, levels, isChauffage = false }: { chaufferie: any; onChange: any; levels: any[]; isChauffage?: boolean }) {
+function ChaufferiePanel({ chaufferie, onChange, levels, isChauffage = false, isEauGlacee = false }: { chaufferie: any; onChange: any; levels: any[]; isChauffage?: boolean; isEauGlacee?: boolean }) {
   const set = (key, val) => onChange({ ...chaufferie, [key]: val })
   const width  = Math.round(chaufferie.x2 - chaufferie.x1)
   const height = Math.round(chaufferie.height)
-  const panelTitle = isChauffage ? 'Chaufferie' : 'Production ECS'
+  const panelTitle = isChauffage ? 'Chaufferie' : isEauGlacee ? 'Local groupe froid' : 'Production ECS'
+  const entityName = isChauffage ? 'la chaufferie' : isEauGlacee ? 'le local groupe froid' : 'la production ECS'
 
   return (
     <div className="rp-section">
@@ -304,7 +305,7 @@ function ChaufferiePanel({ chaufferie, onChange, levels, isChauffage = false }: 
         <input type="checkbox"
           checked={!!chaufferie.enabled}
           onChange={e => set('enabled', e.target.checked)} />
-        <span style={{ fontSize: 11, color: '#374151' }}>Afficher {isChauffage ? 'la chaufferie' : 'la production ECS'}</span>
+        <span style={{ fontSize: 11, color: '#374151' }}>Afficher {entityName}</span>
       </label>
 
       <Field label="Niveau">
@@ -338,7 +339,7 @@ function ChaufferiePanel({ chaufferie, onChange, levels, isChauffage = false }: 
             background: '#fef2f2', color: '#dc2626',
             border: '1px solid #fecaca', borderRadius: 5, cursor: 'pointer',
           }}>
-          Supprimer {isChauffage ? 'la chaufferie' : 'la production ECS'}
+          Supprimer {entityName}
         </button>
       </div>
     </div>
@@ -459,6 +460,8 @@ interface RightPanelProps {
   selectedLocalECSId?: string | null; onSelectedLocalECSChange: any
   locauxChauffage?: any[]; onLocauxChauffageChange: any
   selectedLocalChauffageId?: string | null; onSelectedLocalChauffageChange: any
+  locauxGroupeFroid?: any[]; onLocauxGroupeFroidChange?: any
+  selectedLocalGroupeFroidId?: string | null; onSelectedLocalGroupeFroidChange?: any
   chauffageFlows?: any; chauffageParams?: any; onChauffageParamsChange?: any; chauffageThermal?: any
   eauGlaceeFlows?: any; eauGlaceeParams?: any; onEauGlaceeParamsChange?: any; eauGlaceeThermal?: any
   eauGlaceePumpHMT?: Map<string, any>
@@ -489,6 +492,8 @@ export default function RightPanel({
   selectedLocalECSId = null, onSelectedLocalECSChange,
   locauxChauffage = [], onLocauxChauffageChange,
   selectedLocalChauffageId = null, onSelectedLocalChauffageChange,
+  locauxGroupeFroid = [], onLocauxGroupeFroidChange,
+  selectedLocalGroupeFroidId = null, onSelectedLocalGroupeFroidChange,
   chauffageFlows, chauffageParams, onChauffageParamsChange, chauffageThermal,
   eauGlaceeFlows, eauGlaceeParams, onEauGlaceeParamsChange, eauGlaceeThermal,
   eauGlaceePumpHMT, eauGlaceeSplitCumDp,
@@ -497,7 +502,7 @@ export default function RightPanel({
 }: RightPanelProps) {
   const [resultsView, setResultsView] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
 
-  const { isChauffage: _isChauffage } = getModeFlags(activeCalcId)
+  const { isChauffage: _isChauffage, isEauGlacee: _isEauGlacee } = getModeFlags(activeCalcId)
   if (editChaufferie && chaufferie?.placed) {
     return (
       <ChaufferiePanel
@@ -505,6 +510,7 @@ export default function RightPanel({
         onChange={onChaufferieChange}
         levels={levels ?? []}
         isChauffage={_isChauffage}
+        isEauGlacee={_isEauGlacee}
       />
     )
   }
@@ -540,6 +546,18 @@ export default function RightPanel({
         zone={selectedLCh} label="Local chauffage" onClose="le local chauffage"
         onChange={updated => onLocauxChauffageChange?.((locauxChauffage ?? []).map(l => l.id === updated.id ? updated : l))}
         onDelete={() => { onLocauxChauffageChange?.((locauxChauffage ?? []).filter(l => l.id !== selectedLocalChauffageId)); onSelectedLocalChauffageChange?.(null) }}
+        levels={levels ?? []}
+      />
+    )
+  }
+
+  const selectedLGF = selectedLocalGroupeFroidId ? (locauxGroupeFroid ?? []).find(l => l.id === selectedLocalGroupeFroidId) : null
+  if (selectedLGF) {
+    return (
+      <LocalZonePanel
+        zone={selectedLGF} label="Local groupe froid" onClose="le local groupe froid"
+        onChange={updated => onLocauxGroupeFroidChange?.((locauxGroupeFroid ?? []).map(l => l.id === updated.id ? updated : l))}
+        onDelete={() => { onLocauxGroupeFroidChange?.((locauxGroupeFroid ?? []).filter(l => l.id !== selectedLocalGroupeFroidId)); onSelectedLocalGroupeFroidChange?.(null) }}
         levels={levels ?? []}
       />
     )
@@ -603,6 +621,7 @@ export default function RightPanel({
       globalParams={globalParams}
       thermalData={thermalResults?.segResults.get(seg.id)}
       chauffageThermal={chauffageThermal}
+      eauGlaceeThermal={eauGlaceeThermal}
       roleMap={roleMap}
       drawMode={drawMode}
       onExitEditParams={onExitEditParams}
@@ -619,6 +638,7 @@ export default function RightPanel({
       flowDirections={flowDirections}
       groupDisplayNames={groupDisplayNames}
       chauffageSplitCumDp={chauffageSplitCumDp}
+      eauGlaceeSplitCumDp={eauGlaceeSplitCumDp}
     />
   )
   if (pt) {
