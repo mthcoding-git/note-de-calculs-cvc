@@ -37,9 +37,10 @@ interface PointPanelProps {
   chauffageSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
   onShowCriticalPath?: (segIds: string[]) => void
   pumpCriticalMap?: Map<string, { critDp: number | null; criticalSegIds: Set<string> }> | null
+  selectedIds?: string[]
 }
 
-export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null, eauGlaceeFlows = null, eauGlaceeParams = null, onEauGlaceeParamsChange = null, eauGlaceeThermal = null, eauGlaceePumpHMT = null, eauGlaceeSplitCumDp = null, networkFlows = null, mixingNodes = null, chauffagePumpHMT = null, chauffageSplitCumDp = null, onShowCriticalPath = null, pumpCriticalMap = null }: PointPanelProps) {
+export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null, eauGlaceeFlows = null, eauGlaceeParams = null, onEauGlaceeParamsChange = null, eauGlaceeThermal = null, eauGlaceePumpHMT = null, eauGlaceeSplitCumDp = null, networkFlows = null, mixingNodes = null, chauffagePumpHMT = null, chauffageSplitCumDp = null, onShowCriticalPath = null, pumpCriticalMap = null, selectedIds = [] }: PointPanelProps) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
   const T_depart = globalParams?.T_depart ?? null
   const [showDims, setShowDims] = useState(false)
@@ -183,20 +184,26 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
               {hmtMce != null &&
                 statRow('HMT', <>{hmtMce.toFixed(2)} <span style={{ fontSize: 10, fontWeight: 400 }}>mCE</span></>)
               }
-              {criticalSegIds != null && criticalSegIds.size > 0 && onShowCriticalPath != null && (
-                <div style={{ marginTop: 8 }}>
-                  <button
-                    onClick={() => onShowCriticalPath([...criticalSegIds])}
-                    style={{
-                      width: '100%', padding: '4px 9px', fontSize: 10, fontWeight: 600,
-                      border: '1px solid #93c5fd', borderRadius: 4, cursor: 'pointer',
-                      background: '#e0f2fe', color: '#0369a1',
-                    }}
-                  >
-                    Voir le circuit
-                  </button>
-                </div>
-              )}
+              {criticalSegIds != null && criticalSegIds.size > 0 && onShowCriticalPath != null && (() => {
+                const critArr = [...criticalSegIds]
+                const isActive = critArr.length > 0 && critArr.every(id => selectedIds?.includes(id))
+                return (
+                  <div style={{ marginTop: 8 }}>
+                    <button
+                      onClick={() => onShowCriticalPath(isActive ? [] : critArr)}
+                      style={{
+                        width: '100%', padding: '4px 9px', fontSize: 10, fontWeight: 600,
+                        border: `1px solid ${isActive ? '#93c5fd' : '#93c5fd'}`,
+                        borderRadius: 4, cursor: 'pointer',
+                        background: isActive ? '#dbeafe' : '#e0f2fe',
+                        color: isActive ? '#1d4ed8' : '#0369a1',
+                      }}
+                    >
+                      {isActive ? 'Masquer' : 'Voir le circuit'}
+                    </button>
+                  </div>
+                )
+              })()}
             </>)}
             {showTemp && <TempBadge temp={nodeTemp} T_depart={T_depart} />}
           </div>
