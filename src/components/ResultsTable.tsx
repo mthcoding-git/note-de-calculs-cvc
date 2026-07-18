@@ -606,6 +606,8 @@ interface ResultsTableProps {
   eauGlaceeSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string>; secondaryCriticalSegIds: Set<string>; secondaryCriticalDp: number | null; criticalDp: number | null } | null
   eauGlaceePumpHMT?: Map<string, { hmt: number | null; criticalSegIds: Set<string>; isSecondary: boolean }>
   eauGlaceeFlowRowsArr?: Array<{ prodId: string; rows: any[]; roleMap: any; pdcCumResults: any; chauffageSplitCumDp: any; chauffagePumpHMT: any }> | null
+  customEmetteurTypes?: any[]
+  customTerminalFroidTypes?: any[]
 }
 
 export default function ResultsTable({
@@ -630,6 +632,8 @@ export default function ResultsTable({
   eauGlaceeSplitCumDp = null,
   eauGlaceePumpHMT = null,
   eauGlaceeFlowRowsArr = null,
+  customEmetteurTypes = [],
+  customTerminalFroidTypes = [],
 }: ResultsTableProps) {
   const selectedRowRef = useRef(null)
   useEffect(() => {
@@ -1154,8 +1158,8 @@ export default function ResultsTable({
                           </span>
                           {(() => {
                             const typeLabel = emPtPdc!.type === 'terminalFroid'
-                              ? TERMINAL_FROID_TYPES.find(t => t.id === emPtPdc!.terminalFroidType)?.label
-                              : EMETTEUR_TYPES.find(e => e.id === emPtPdc!.emetteurType)?.label
+                              ? [...TERMINAL_FROID_TYPES, ...customTerminalFroidTypes].find(t => t.id === emPtPdc!.terminalFroidType)?.label
+                              : [...EMETTEUR_TYPES, ...customEmetteurTypes].find(e => e.id === emPtPdc!.emetteurType)?.label
                             return typeLabel
                               ? <span style={{ color: '#374151', fontWeight: 600, marginRight: 6 }}>{typeLabel}</span>
                               : null

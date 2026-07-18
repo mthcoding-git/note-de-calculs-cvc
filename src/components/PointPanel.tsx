@@ -53,6 +53,7 @@ interface PointPanelProps {
   materials?: any[]; roleMap?: any; columns?: any[]; columnXs?: number[]
   thermalResults?: any; chauffageFlows?: any; chauffageParams?: any; onChauffageParamsChange?: any; chauffageThermal?: any
   eauGlaceeFlows?: any; eauGlaceeParams?: any; onEauGlaceeParamsChange?: any; eauGlaceeThermal?: any
+  customEmetteurTypes?: any[]; customTerminalFroidTypes?: any[]
   eauGlaceePumpHMT?: Map<string, { hmt: number | null; criticalSegIds: Set<string>; isSecondary: boolean }>
   eauGlaceeSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
   networkFlows?: any
@@ -64,7 +65,7 @@ interface PointPanelProps {
   criticalPathIds?: string[]
 }
 
-export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null, eauGlaceeFlows = null, eauGlaceeParams = null, onEauGlaceeParamsChange = null, eauGlaceeThermal = null, eauGlaceePumpHMT = null, eauGlaceeSplitCumDp = null, networkFlows = null, mixingNodes = null, chauffagePumpHMT = null, chauffageSplitCumDp = null, onShowCriticalPath = null, pumpCriticalMap = null, criticalPathIds = [] }: PointPanelProps) {
+export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null, eauGlaceeFlows = null, eauGlaceeParams = null, onEauGlaceeParamsChange = null, eauGlaceeThermal = null, eauGlaceePumpHMT = null, eauGlaceeSplitCumDp = null, networkFlows = null, mixingNodes = null, chauffagePumpHMT = null, chauffageSplitCumDp = null, onShowCriticalPath = null, pumpCriticalMap = null, criticalPathIds = [], customEmetteurTypes = [], customTerminalFroidTypes = [] }: PointPanelProps) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
   const T_depart = globalParams?.T_depart ?? null
   const [showDims, setShowDims] = useState(false)
@@ -858,7 +859,8 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
   }
 
   if (pt.type === 'emetteur') {
-    const emetteurDef  = EMETTEUR_TYPES.find(e => e.id === pt.emetteurType)
+    const allEmetteurTypes = [...EMETTEUR_TYPES, ...customEmetteurTypes]
+    const emetteurDef  = allEmetteurTypes.find(e => e.id === pt.emetteurType)
     const label        = emetteurDef?.label ?? pt.emetteurType ?? 'Émetteur'
     const puissanceW   = pt.puissance ?? null
     const T_prod       = chauffageParams?.T_depart ?? 70
@@ -871,7 +873,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
       : null
 
     const handleTypeChange = (newTypeId: string) => {
-      const newDef = EMETTEUR_TYPES.find(e => e.id === newTypeId)
+      const newDef = allEmetteurTypes.find(e => e.id === newTypeId)
       onUpdate(pt.id, 'point', {
         emetteurType: newTypeId,
         T_entree_emetteur: newDef?.T_entreeDefault ?? T_prod,
@@ -897,7 +899,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             style={{ width: '100%', fontSize: 11, padding: '5px 6px', border: '1px solid #d1d5db',
               borderRadius: 5, background: '#fff', cursor: 'pointer' }}
           >
-            {EMETTEUR_TYPES.map(e => (
+            {allEmetteurTypes.map(e => (
               <option key={e.id} value={e.id}>{e.label}</option>
             ))}
           </select>
@@ -957,7 +959,8 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
   }
 
   if (pt.type === 'terminalFroid') {
-    const tfDef       = TERMINAL_FROID_TYPES.find(t => t.id === pt.terminalFroidType)
+    const allTerminalFroidTypes = [...TERMINAL_FROID_TYPES, ...customTerminalFroidTypes]
+    const tfDef       = allTerminalFroidTypes.find(t => t.id === pt.terminalFroidType)
     const label       = tfDef?.label ?? pt.terminalFroidType ?? 'Terminal froid'
     const puissanceW  = pt.puissance ?? null
     const T_prod      = eauGlaceeParams?.T_depart ?? 7
@@ -971,7 +974,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
       : null
 
     const handleTypeChange = (newTypeId: string) => {
-      const newDef = TERMINAL_FROID_TYPES.find(t => t.id === newTypeId)
+      const newDef = allTerminalFroidTypes.find(t => t.id === newTypeId)
       onUpdate(pt.id, 'point', {
         terminalFroidType: newTypeId,
         T_entree_emetteur: newDef?.T_entreeDefault ?? T_prod,
@@ -997,7 +1000,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             style={{ width: '100%', fontSize: 11, padding: '5px 6px', border: '1px solid #d1d5db',
               borderRadius: 5, background: '#fff', cursor: 'pointer' }}
           >
-            {TERMINAL_FROID_TYPES.map(t => (
+            {allTerminalFroidTypes.map(t => (
               <option key={t.id} value={t.id}>{t.label}</option>
             ))}
           </select>

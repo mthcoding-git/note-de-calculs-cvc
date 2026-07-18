@@ -13,6 +13,14 @@ export interface TerminalFroidDef {
   T_sortieDefault: number  // T° sortie terminal par défaut (°C)
 }
 
+export interface CustomTerminalFroidDef {
+  id: string
+  label: string
+  deltaTDefault: number
+  T_entreeDefault: number
+  T_sortieDefault: number
+}
+
 export const TERMINAL_FROID_TYPES: TerminalFroidDef[] = [
   { id: 'ventiloconvecteur',     label: 'Ventilo-convecteur',    deltaTDefault: 5, T_entreeDefault: 7,  T_sortieDefault: 12 },
   { id: 'poutre-froide-active',  label: 'Poutre froide active',  deltaTDefault: 3, T_entreeDefault: 14, T_sortieDefault: 17 },

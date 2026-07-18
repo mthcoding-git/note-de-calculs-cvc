@@ -1900,6 +1900,12 @@ export default function App() {
         displayPrefs={displayPrefs}
         placingAccessoryType={placingAccessoryType}
         onPlacingAccessoryTypeChange={type => { setPlacingAccessoryType(type); if (type) setSelectedIds([]) }}
+        customEmetteurTypes={project.customEmetteurTypes ?? []}
+        onAddCustomEmetteurType={def => update('customEmetteurTypes', (prev: any[]) => [...(prev ?? []), def])}
+        onRemoveCustomEmetteurType={id => update('customEmetteurTypes', (prev: any[]) => (prev ?? []).filter((d: any) => d.id !== id))}
+        customTerminalFroidTypes={project.customTerminalFroidTypes ?? []}
+        onAddCustomTerminalFroidType={def => update('customTerminalFroidTypes', (prev: any[]) => [...(prev ?? []), def])}
+        onRemoveCustomTerminalFroidType={id => update('customTerminalFroidTypes', (prev: any[]) => (prev ?? []).filter((d: any) => d.id !== id))}
       />
 
       <div className="app-body">
@@ -2162,6 +2168,8 @@ export default function App() {
             onEditLocauxGroupeFroidChange={v => { setEditLocauxGroupeFroid(v); if (!v) setSelectedLocalGroupeFroidId(null) }}
             selectedLocalGroupeFroidId={selectedLocalGroupeFroidId}
             onSelectedLocalGroupeFroidChange={id => { setSelectedLocalGroupeFroidId(id); if (id) setSelectedIds([]) }}
+            customEmetteurTypes={project.customEmetteurTypes ?? []}
+            customTerminalFroidTypes={project.customTerminalFroidTypes ?? []}
           />
         </main>
 
@@ -2219,6 +2227,8 @@ export default function App() {
                   chauffageSplitCumDp={chauffageSplitCumDp}
                   chauffagePumpHMT={chauffagePumpHMT}
                   chauffageFlowRowsArr={chauffageFlowRowsArr}
+                  customEmetteurTypes={project.customEmetteurTypes ?? []}
+                  customTerminalFroidTypes={project.customTerminalFroidTypes ?? []}
                 />
               )}
               <div className="rt-toggle-bar">
@@ -2333,6 +2343,8 @@ export default function App() {
             pressionSourceAlimEF={pressionSourceAlimEF}
             pressionSourceAlimEFStatic={pressionSourceAlimEF}
             groupDisplayNames={groupDisplayNames}
+            customEmetteurTypes={project.customEmetteurTypes ?? []}
+            customTerminalFroidTypes={project.customTerminalFroidTypes ?? []}
           />
         </aside>
         </div>{/* content-area */}

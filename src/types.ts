@@ -1,9 +1,9 @@
 import type { PdcParams, PdcParamsAlimECS, PdcParamsAlimEF } from './utils/pdcCalc'
 export type { PdcParams, PdcParamsAlimECS, PdcParamsAlimEF }
-import type { EmetteurType } from './data/emetteurs'
-export type { EmetteurType }
-import type { TerminalFroidType } from './data/terminauxFroids'
-export type { TerminalFroidType }
+import type { EmetteurType, CustomEmetteurDef } from './data/emetteurs'
+export type { EmetteurType, CustomEmetteurDef }
+import type { TerminalFroidType, CustomTerminalFroidDef } from './data/terminauxFroids'
+export type { TerminalFroidType, CustomTerminalFroidDef }
 
 // ── Types centraux ──────────────────────────────────────────────────────────
 
@@ -90,9 +90,9 @@ export interface Point {
   isLocked?: boolean
   cote_override?: number | null
   // Champs émetteur chauffage
-  emetteurType?: EmetteurType
+  emetteurType?: string
   // Champs terminal froid eau glacée
-  terminalFroidType?: TerminalFroidType
+  terminalFroidType?: string
   // Champs communs émetteur / terminal froid
   puissance?: number            // W
   T_entree_emetteur?: number    // T° entrée émetteur / terminal (°C)
@@ -289,6 +289,8 @@ export interface ProjectData {
   chauffageParams:       ChauffageParams
   eauGlaceeParams?:      EauGlaceeParams
   displayPrefs?:         DisplayPrefs
+  customEmetteurTypes?:      CustomEmetteurDef[]
+  customTerminalFroidTypes?: CustomTerminalFroidDef[]
 }
 
 export interface Variant {

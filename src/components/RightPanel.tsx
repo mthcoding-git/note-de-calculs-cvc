@@ -464,6 +464,7 @@ interface RightPanelProps {
   selectedLocalGroupeFroidId?: string | null; onSelectedLocalGroupeFroidChange?: any
   chauffageFlows?: any; chauffageParams?: any; onChauffageParamsChange?: any; chauffageThermal?: any
   eauGlaceeFlows?: any; eauGlaceeParams?: any; onEauGlaceeParamsChange?: any; eauGlaceeThermal?: any
+  customEmetteurTypes?: any[]; customTerminalFroidTypes?: any[]
   eauGlaceePumpHMT?: Map<string, any>
   eauGlaceeSplitCumDp?: any
   mixingNodes?: Set<string>
@@ -501,6 +502,8 @@ export default function RightPanel({
   mixingNodes, chauffagePumpHMT, chauffageSplitCumDp, onShowCriticalPath,
   pumpCriticalMap = null,
   criticalPathIds = [],
+  customEmetteurTypes = [],
+  customTerminalFroidTypes = [],
 }: RightPanelProps) {
   const [resultsView, setResultsView] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
 
@@ -699,6 +702,8 @@ export default function RightPanel({
         onShowCriticalPath={onShowCriticalPath}
         pumpCriticalMap={pumpCriticalMap}
         criticalPathIds={criticalPathIds}
+        customEmetteurTypes={customEmetteurTypes}
+        customTerminalFroidTypes={customTerminalFroidTypes}
       />
     )
   }

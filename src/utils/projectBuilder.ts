@@ -219,6 +219,8 @@ export function initProject() {
     locauxECS:             [],
     locauxChauffage:       [],
     locauxEauGlacee:       [],
+    customEmetteurTypes:      [],
+    customTerminalFroidTypes: [],
   }
 }
 

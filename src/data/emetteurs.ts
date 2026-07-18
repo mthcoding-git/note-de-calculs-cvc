@@ -15,6 +15,14 @@ export interface EmetteurDef {
   T_sortieDefault: number // T° sortie émetteur par défaut (°C)
 }
 
+export interface CustomEmetteurDef {
+  id: string
+  label: string
+  deltaTDefault: number
+  T_entreeDefault: number
+  T_sortieDefault: number
+}
+
 export const EMETTEUR_TYPES: EmetteurDef[] = [
   { id: 'radiateur-ht',        label: 'Radiateur HT',         deltaTDefault: 20, T_entreeDefault: 70, T_sortieDefault: 50 },
   { id: 'radiateur-bt',        label: 'Radiateur BT',          deltaTDefault: 10, T_entreeDefault: 50, T_sortieDefault: 40 },

@@ -108,6 +108,8 @@ interface DrawingCanvasProps {
   eauGlaceeFlows?: any
   mixingNodes?: Set<string>
   displayPrefs?: DisplayPrefs
+  customEmetteurTypes?: any[]
+  customTerminalFroidTypes?: any[]
 }
 
 export default function DrawingCanvas({
@@ -197,6 +199,8 @@ export default function DrawingCanvas({
   eauGlaceeFlows,
   mixingNodes,
   displayPrefs,
+  customEmetteurTypes = [],
+  customTerminalFroidTypes = [],
 }: DrawingCanvasProps) {
   const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
   const activeTerminalFlows = isChauffage ? chauffageFlows : isEauGlacee ? eauGlaceeFlows : null
@@ -2731,7 +2735,7 @@ if (drawing) commitDrawing()
             const w = 28, h = 18
             const col = sel || dragged ? '#2563eb' : '#000'
             const bg  = sel || dragged ? '#dbeafe' : '#fff'
-            const emDef = EMETTEUR_TYPES.find(e => e.id === pt.emetteurType)
+            const emDef = [...EMETTEUR_TYPES, ...customEmetteurTypes].find(e => e.id === pt.emetteurType)
             const bx = pt.x + w / 2 + 4
             return (
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
@@ -2798,7 +2802,7 @@ if (drawing) commitDrawing()
             const w = 28, h = 18
             const col = sel || dragged ? '#2563eb' : '#000'
             const bg  = sel || dragged ? '#dbeafe' : '#fff'
-            const tfDef = TERMINAL_FROID_TYPES.find(t => t.id === pt.terminalFroidType)
+            const tfDef = [...TERMINAL_FROID_TYPES, ...customTerminalFroidTypes].find(t => t.id === pt.terminalFroidType)
             const bx = pt.x + w / 2 + 4
             return (
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
@@ -3116,7 +3120,7 @@ if (drawing) commitDrawing()
           }
           if (placingEquipment.type === 'emetteur') {
             const w = placingEquipment.size?.w ?? 28, h = placingEquipment.size?.h ?? 18
-            const emDef = EMETTEUR_TYPES.find(e => e.id === placingEquipment.emetteurType)
+            const emDef = [...EMETTEUR_TYPES, ...customEmetteurTypes].find(e => e.id === placingEquipment.emetteurType)
             return (
               <g style={{ pointerEvents: 'none' }}>
                 {emDef && (
@@ -3136,7 +3140,7 @@ if (drawing) commitDrawing()
           }
           if (placingEquipment.type === 'terminalFroid') {
             const w = placingEquipment.size?.w ?? 28, h = placingEquipment.size?.h ?? 18
-            const tfDef = TERMINAL_FROID_TYPES.find(t => t.id === placingEquipment.terminalFroidType)
+            const tfDef = [...TERMINAL_FROID_TYPES, ...customTerminalFroidTypes].find(t => t.id === placingEquipment.terminalFroidType)
             return (
               <g style={{ pointerEvents: 'none' }}>
                 {tfDef && (

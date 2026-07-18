@@ -4,7 +4,9 @@ import { AccessorySymbol } from './AccessorySymbol'
 import type { CalcMode, DisplayPrefs } from '../types'
 import { getModeFlags } from '../utils/calcModeFlags'
 import { EMETTEUR_TYPES } from '../data/emetteurs'
+import type { CustomEmetteurDef } from '../data/emetteurs'
 import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
+import type { CustomTerminalFroidDef } from '../data/terminauxFroids'
 import { DEFAULT_DISPLAY_PREFS } from '../utils/projectBuilder'
 
 const ACC_IDS_BY_CALCID: Partial<Record<CalcMode, string[]>> = {
@@ -112,6 +114,12 @@ export default function Toolbar({
   pdcParams,
   displayPrefs,
   placingAccessoryType, onPlacingAccessoryTypeChange,
+  customEmetteurTypes = [],
+  onAddCustomEmetteurType,
+  onRemoveCustomEmetteurType,
+  customTerminalFroidTypes = [],
+  onAddCustomTerminalFroidType,
+  onRemoveCustomTerminalFroidType,
 }: {
   drawMode: string; setDrawMode: any; pipeType: string; setPipeType: any
   panelOpen: boolean; onTogglePanel: any
@@ -127,6 +135,12 @@ export default function Toolbar({
   pdcParams: any
   displayPrefs?: DisplayPrefs
   placingAccessoryType: string | null; onPlacingAccessoryTypeChange: any
+  customEmetteurTypes?: CustomEmetteurDef[]
+  onAddCustomEmetteurType?: (def: CustomEmetteurDef) => void
+  onRemoveCustomEmetteurType?: (id: string) => void
+  customTerminalFroidTypes?: CustomTerminalFroidDef[]
+  onAddCustomTerminalFroidType?: (def: CustomTerminalFroidDef) => void
+  onRemoveCustomTerminalFroidType?: (id: string) => void
 }) {
   const [displayOpen, setDisplayOpen] = useState(false)
   const displayRef = useRef(null)
@@ -141,7 +155,33 @@ export default function Toolbar({
   const [terminalFroidParams, setTerminalFroidParams] = useState<Record<string, { T_entree: number | null; T_sortie: number | null; puissance: number | null }>>(() =>
     Object.fromEntries(TERMINAL_FROID_TYPES.map(tf => [tf.id, { T_entree: tf.T_entreeDefault, T_sortie: tf.T_sortieDefault, puissance: null }]))
   )
+  const [newEmLabel, setNewEmLabel] = useState('')
+  const [newEmTe, setNewEmTe] = useState<number>(70)
+  const [newEmTs, setNewEmTs] = useState<number>(50)
+  const [newTfLabel, setNewTfLabel] = useState('')
+  const [newTfTe, setNewTfTe] = useState<number>(7)
+  const [newTfTs, setNewTfTs] = useState<number>(12)
   const { isAlimEF, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
+
+  useEffect(() => {
+    setEmetteurParams(prev => {
+      const next = { ...prev }
+      for (const em of customEmetteurTypes) {
+        if (!next[em.id]) next[em.id] = { T_entree: em.T_entreeDefault, T_sortie: em.T_sortieDefault, puissance: null }
+      }
+      return next
+    })
+  }, [customEmetteurTypes])
+
+  useEffect(() => {
+    setTerminalFroidParams(prev => {
+      const next = { ...prev }
+      for (const tf of customTerminalFroidTypes) {
+        if (!next[tf.id]) next[tf.id] = { T_entree: tf.T_entreeDefault, T_sortie: tf.T_sortieDefault, puissance: null }
+      }
+      return next
+    })
+  }, [customTerminalFroidTypes])
   const [accPos, setAccPos] = useState({ top: 0, left: 0 })
   const accRef = useRef(null)
 
@@ -407,8 +447,8 @@ export default function Toolbar({
                     {/* Séparateur */}
                     <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #f1f5f9', margin: '2px 0 3px' }} />
                     {/* Lignes */}
-                    {EMETTEUR_TYPES.map(em => {
-                      const p = emetteurParams[em.id]
+                    {[...EMETTEUR_TYPES, ...customEmetteurTypes].map(em => {
+                      const p = emetteurParams[em.id] ?? { T_entree: em.T_entreeDefault, T_sortie: em.T_sortieDefault, puissance: null }
                       const setP = (patch: Partial<typeof p>) =>
                         setEmetteurParams(prev => ({ ...prev, [em.id]: { ...prev[em.id], ...patch } }))
                       const T_e = p.T_entree ?? em.T_entreeDefault
@@ -419,12 +459,21 @@ export default function Toolbar({
                         const v = parseFloat(raw)
                         setP({ [field]: (isNaN(v) || v < 1) ? def : Math.min(150, Math.round(v)) } as any)
                       }
+                      const isCustom = !EMETTEUR_TYPES.some(b => b.id === em.id)
                       return (
                         <React.Fragment key={em.id}>
-                          <button onClick={doPlace} className="tb-display-item"
-                            style={{ padding: '4px 8px 4px 4px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontSize: 11, color: '#1e293b', borderRadius: 4, whiteSpace: 'nowrap' }}>
-                            {em.label}
-                          </button>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <button onClick={doPlace} className="tb-display-item"
+                              style={{ flex: 1, padding: '4px 4px 4px 4px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontSize: 11, color: '#1e293b', borderRadius: 4, whiteSpace: 'nowrap' }}>
+                              {em.label}
+                            </button>
+                            {isCustom && (
+                              <button onClick={e => { e.stopPropagation(); onRemoveCustomEmetteurType?.(em.id) }}
+                                style={{ flexShrink: 0, width: 16, height: 16, padding: 0, border: '1px solid #fca5a5', borderRadius: 3, background: '#fff7f7', color: '#dc2626', fontSize: 9, cursor: 'pointer', lineHeight: 1 }}>
+                                ✕
+                              </button>
+                            )}
+                          </div>
                           <input type="number" min={1} max={150} step={1}
                             value={p.T_entree ?? ''}
                             onChange={e => setP({ T_entree: e.target.value === '' ? null : Number(e.target.value) })}
@@ -446,6 +495,47 @@ export default function Toolbar({
                         </React.Fragment>
                       )
                     })}
+                  </div>
+                  <div style={{ borderTop: '1px solid #e2e8f0', marginTop: 6, paddingTop: 6 }}>
+                    <div style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Nouveau type personnalisé</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      <input
+                        type="text" placeholder="Nom de l'émetteur"
+                        value={newEmLabel}
+                        onChange={e => setNewEmLabel(e.target.value)}
+                        onClick={e => e.stopPropagation()}
+                        style={{ width: '100%', padding: '3px 5px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, boxSizing: 'border-box' }}
+                      />
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <span style={{ fontSize: 9, color: '#6b7280', whiteSpace: 'nowrap' }}>T entrée</span>
+                        <input type="number" min={1} max={150} step={1}
+                          value={newEmTe}
+                          onChange={e => setNewEmTe(Number(e.target.value))}
+                          onClick={e => e.stopPropagation()}
+                          style={{ width: 44, padding: '3px 4px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
+                        <span style={{ fontSize: 9, color: '#6b7280', whiteSpace: 'nowrap' }}>T sortie</span>
+                        <input type="number" min={1} max={150} step={1}
+                          value={newEmTs}
+                          onChange={e => setNewEmTs(Number(e.target.value))}
+                          onClick={e => e.stopPropagation()}
+                          style={{ width: 44, padding: '3px 4px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
+                      </div>
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          const label = newEmLabel.trim()
+                          if (!label) return
+                          const id = `custom-em-${Date.now()}`
+                          const dT = Math.abs(newEmTe - newEmTs)
+                          onAddCustomEmetteurType?.({ id, label, deltaTDefault: dT, T_entreeDefault: newEmTe, T_sortieDefault: newEmTs })
+                          setNewEmLabel('')
+                        }}
+                        disabled={!newEmLabel.trim()}
+                        style={{ width: '100%', padding: '4px 6px', fontSize: 11, fontWeight: 600, border: '1px solid #93c5fd', borderRadius: 4, background: '#eff6ff', color: '#1d4ed8', cursor: newEmLabel.trim() ? 'pointer' : 'not-allowed', opacity: newEmLabel.trim() ? 1 : 0.5 }}
+                      >
+                        + Ajouter
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -504,8 +594,8 @@ export default function Toolbar({
                     <span style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 2 }}>T sortie</span>
                     <span style={{ fontSize: 9, color: '#6b7280', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 2 }}>P W</span>
                     <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #f1f5f9', margin: '2px 0 3px' }} />
-                    {TERMINAL_FROID_TYPES.map(tf => {
-                      const p = terminalFroidParams[tf.id]
+                    {[...TERMINAL_FROID_TYPES, ...customTerminalFroidTypes].map(tf => {
+                      const p = terminalFroidParams[tf.id] ?? { T_entree: tf.T_entreeDefault, T_sortie: tf.T_sortieDefault, puissance: null }
                       const setP = (patch: Partial<typeof p>) =>
                         setTerminalFroidParams(prev => ({ ...prev, [tf.id]: { ...prev[tf.id], ...patch } }))
                       const T_e = p.T_entree ?? tf.T_entreeDefault
@@ -516,12 +606,21 @@ export default function Toolbar({
                         const v = parseFloat(raw)
                         setP({ [field]: (isNaN(v) || v < 0) ? def : Math.min(30, Math.round(v)) } as any)
                       }
+                      const isCustom = !TERMINAL_FROID_TYPES.some(b => b.id === tf.id)
                       return (
                         <React.Fragment key={tf.id}>
-                          <button onClick={doPlace} className="tb-display-item"
-                            style={{ padding: '4px 8px 4px 4px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontSize: 11, color: '#1e293b', borderRadius: 4, whiteSpace: 'nowrap' }}>
-                            {tf.label}
-                          </button>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <button onClick={doPlace} className="tb-display-item"
+                              style={{ flex: 1, padding: '4px 4px 4px 4px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontSize: 11, color: '#1e293b', borderRadius: 4, whiteSpace: 'nowrap' }}>
+                              {tf.label}
+                            </button>
+                            {isCustom && (
+                              <button onClick={e => { e.stopPropagation(); onRemoveCustomTerminalFroidType?.(tf.id) }}
+                                style={{ flexShrink: 0, width: 16, height: 16, padding: 0, border: '1px solid #fca5a5', borderRadius: 3, background: '#fff7f7', color: '#dc2626', fontSize: 9, cursor: 'pointer', lineHeight: 1 }}>
+                                ✕
+                              </button>
+                            )}
+                          </div>
                           <input type="number" min={0} max={30} step={1}
                             value={p.T_entree ?? ''}
                             onChange={e => setP({ T_entree: e.target.value === '' ? null : Number(e.target.value) })}
@@ -543,6 +642,47 @@ export default function Toolbar({
                         </React.Fragment>
                       )
                     })}
+                  </div>
+                  <div style={{ borderTop: '1px solid #e2e8f0', marginTop: 6, paddingTop: 6 }}>
+                    <div style={{ fontSize: 9, color: '#9ca3af', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Nouveau type personnalisé</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      <input
+                        type="text" placeholder="Nom du terminal"
+                        value={newTfLabel}
+                        onChange={e => setNewTfLabel(e.target.value)}
+                        onClick={e => e.stopPropagation()}
+                        style={{ width: '100%', padding: '3px 5px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, boxSizing: 'border-box' }}
+                      />
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <span style={{ fontSize: 9, color: '#6b7280', whiteSpace: 'nowrap' }}>T entrée</span>
+                        <input type="number" min={0} max={30} step={1}
+                          value={newTfTe}
+                          onChange={e => setNewTfTe(Number(e.target.value))}
+                          onClick={e => e.stopPropagation()}
+                          style={{ width: 44, padding: '3px 4px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
+                        <span style={{ fontSize: 9, color: '#6b7280', whiteSpace: 'nowrap' }}>T sortie</span>
+                        <input type="number" min={0} max={30} step={1}
+                          value={newTfTs}
+                          onChange={e => setNewTfTs(Number(e.target.value))}
+                          onClick={e => e.stopPropagation()}
+                          style={{ width: 44, padding: '3px 4px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
+                      </div>
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          const label = newTfLabel.trim()
+                          if (!label) return
+                          const id = `custom-tf-${Date.now()}`
+                          const dT = Math.abs(newTfTs - newTfTe)
+                          onAddCustomTerminalFroidType?.({ id, label, deltaTDefault: dT, T_entreeDefault: newTfTe, T_sortieDefault: newTfTs })
+                          setNewTfLabel('')
+                        }}
+                        disabled={!newTfLabel.trim()}
+                        style={{ width: '100%', padding: '4px 6px', fontSize: 11, fontWeight: 600, border: '1px solid #93c5fd', borderRadius: 4, background: '#eff6ff', color: '#1d4ed8', cursor: newTfLabel.trim() ? 'pointer' : 'not-allowed', opacity: newTfLabel.trim() ? 1 : 0.5 }}
+                      >
+                        + Ajouter
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
