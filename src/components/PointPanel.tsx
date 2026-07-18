@@ -184,7 +184,9 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           const autoName = pumpsSorted.length <= 1
             ? prefix
             : `${prefix} n°${pumpIdx + 1}`
+          const allPrefixes = ['Pompe chauffage', 'Pompe eau glacée', 'Pompe bouclage ECS']
           const isDefaultName = !pt.name || pt.name === autoName
+            || allPrefixes.some(p => pt.name === p || pt.name === `${p} n°${pumpIdx + 1}`)
           return (
             <SegNameField
               displayName={autoName}
