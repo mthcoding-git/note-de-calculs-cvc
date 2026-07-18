@@ -37,10 +37,10 @@ interface PointPanelProps {
   chauffageSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
   onShowCriticalPath?: (segIds: string[]) => void
   pumpCriticalMap?: Map<string, { critDp: number | null; criticalSegIds: Set<string> }> | null
-  selectedIds?: string[]
+  criticalPathIds?: string[]
 }
 
-export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null, eauGlaceeFlows = null, eauGlaceeParams = null, onEauGlaceeParamsChange = null, eauGlaceeThermal = null, eauGlaceePumpHMT = null, eauGlaceeSplitCumDp = null, networkFlows = null, mixingNodes = null, chauffagePumpHMT = null, chauffageSplitCumDp = null, onShowCriticalPath = null, pumpCriticalMap = null, selectedIds = [] }: PointPanelProps) {
+export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null, eauGlaceeFlows = null, eauGlaceeParams = null, onEauGlaceeParamsChange = null, eauGlaceeThermal = null, eauGlaceePumpHMT = null, eauGlaceeSplitCumDp = null, networkFlows = null, mixingNodes = null, chauffagePumpHMT = null, chauffageSplitCumDp = null, onShowCriticalPath = null, pumpCriticalMap = null, criticalPathIds = [] }: PointPanelProps) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
   const T_depart = globalParams?.T_depart ?? null
   const [showDims, setShowDims] = useState(false)
@@ -186,7 +186,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
               }
               {criticalSegIds != null && criticalSegIds.size > 0 && onShowCriticalPath != null && (() => {
                 const critArr = [...criticalSegIds]
-                const isActive = critArr.length > 0 && critArr.every(id => selectedIds?.includes(id))
+                const isActive = critArr.length > 0 && critArr.every(id => criticalPathIds?.includes(id))
                 return (
                   <div style={{ marginTop: 8 }}>
                     <button

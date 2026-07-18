@@ -471,6 +471,7 @@ interface RightPanelProps {
   chauffageSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
   onShowCriticalPath?: (segIds: string[]) => void
   pumpCriticalMap?: Map<string, { critDp: number | null; criticalSegIds: Set<string> }> | null
+  criticalPathIds?: string[]
 }
 
 export default function RightPanel({
@@ -499,6 +500,7 @@ export default function RightPanel({
   eauGlaceePumpHMT, eauGlaceeSplitCumDp,
   mixingNodes, chauffagePumpHMT, chauffageSplitCumDp, onShowCriticalPath,
   pumpCriticalMap = null,
+  criticalPathIds = [],
 }: RightPanelProps) {
   const [resultsView, setResultsView] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
 
@@ -696,7 +698,7 @@ export default function RightPanel({
         chauffageSplitCumDp={chauffageSplitCumDp}
         onShowCriticalPath={onShowCriticalPath}
         pumpCriticalMap={pumpCriticalMap}
-        selectedIds={selectedIds}
+        criticalPathIds={criticalPathIds}
       />
     )
   }

@@ -2303,6 +2303,7 @@ export default function App() {
             chauffagePumpHMT={chauffagePumpHMT}
             chauffageSplitCumDp={chauffageSplitCumDp}
             onShowCriticalPath={setCriticalPathIds}
+            criticalPathIds={criticalPathIds}
             pumpCriticalMap={pumpCriticalMap}
             globalParams={project.globalParams}
             thermalResults={thermalResults}
