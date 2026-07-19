@@ -504,7 +504,7 @@ export default function Toolbar({
                     {!showNewEmForm ? (
                       <button
                         onClick={e => { e.stopPropagation(); setShowNewEmForm(true) }}
-                        style={{ gridColumn: '1 / -1', padding: '3px 6px', fontSize: 11, border: '1px dashed #d1d5db', borderRadius: 4, background: 'none', color: '#6b7280', cursor: 'pointer', textAlign: 'left' }}
+                        style={{ gridColumn: '1 / -1', marginTop: 5, padding: '3px 6px', fontSize: 11, border: '1px dashed #d1d5db', borderRadius: 4, background: 'none', color: '#6b7280', cursor: 'pointer', textAlign: 'left' }}
                       >
                         + Ajouter un émetteur
                       </button>
@@ -672,7 +672,7 @@ export default function Toolbar({
                     {!showNewTfForm ? (
                       <button
                         onClick={e => { e.stopPropagation(); setShowNewTfForm(true) }}
-                        style={{ gridColumn: '1 / -1', padding: '3px 6px', fontSize: 11, border: '1px dashed #d1d5db', borderRadius: 4, background: 'none', color: '#6b7280', cursor: 'pointer', textAlign: 'left' }}
+                        style={{ gridColumn: '1 / -1', marginTop: 5, padding: '3px 6px', fontSize: 11, border: '1px dashed #d1d5db', borderRadius: 4, background: 'none', color: '#6b7280', cursor: 'pointer', textAlign: 'left' }}
                       >
                         + Ajouter un terminal froid
                       </button>
