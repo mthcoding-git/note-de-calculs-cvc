@@ -500,7 +500,7 @@ export default function Toolbar({
                       )
                     })}
                     {/* Séparateur + formulaire de création dans la même grille */}
-                    <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #e2e8f0', margin: '4px 0 2px' }} />
+                    {showNewEmForm && <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #e2e8f0', margin: '4px 0 2px' }} />}
                     {!showNewEmForm ? (
                       <button
                         onClick={e => { e.stopPropagation(); setShowNewEmForm(true) }}
@@ -668,7 +668,7 @@ export default function Toolbar({
                       )
                     })}
                     {/* Séparateur + formulaire de création dans la même grille */}
-                    <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #e2e8f0', margin: '4px 0 2px' }} />
+                    {showNewTfForm && <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #e2e8f0', margin: '4px 0 2px' }} />}
                     {!showNewTfForm ? (
                       <button
                         onClick={e => { e.stopPropagation(); setShowNewTfForm(true) }}
