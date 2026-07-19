@@ -157,13 +157,13 @@ export default function Toolbar({
   )
   const [showNewEmForm, setShowNewEmForm] = useState(false)
   const [newEmLabel, setNewEmLabel] = useState('')
-  const [newEmTe, setNewEmTe] = useState<number>(70)
-  const [newEmTs, setNewEmTs] = useState<number>(50)
+  const [newEmTe, setNewEmTe] = useState<number | null>(null)
+  const [newEmTs, setNewEmTs] = useState<number | null>(null)
   const [newEmPuissance, setNewEmPuissance] = useState<number | null>(null)
   const [showNewTfForm, setShowNewTfForm] = useState(false)
   const [newTfLabel, setNewTfLabel] = useState('')
-  const [newTfTe, setNewTfTe] = useState<number>(7)
-  const [newTfTs, setNewTfTs] = useState<number>(12)
+  const [newTfTe, setNewTfTe] = useState<number | null>(null)
+  const [newTfTs, setNewTfTs] = useState<number | null>(null)
   const [newTfPuissance, setNewTfPuissance] = useState<number | null>(null)
   const { isAlimEF, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
 
@@ -499,56 +499,53 @@ export default function Toolbar({
                         </React.Fragment>
                       )
                     })}
-                  </div>
-                  <div style={{ borderTop: '1px solid #e2e8f0', marginTop: 6, paddingTop: 5 }}>
+                    {/* Séparateur + formulaire de création dans la même grille */}
+                    <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #e2e8f0', margin: '4px 0 2px' }} />
                     {!showNewEmForm ? (
                       <button
                         onClick={e => { e.stopPropagation(); setShowNewEmForm(true) }}
-                        style={{ width: '100%', padding: '4px 6px', fontSize: 11, border: '1px dashed #d1d5db', borderRadius: 4, background: 'none', color: '#6b7280', cursor: 'pointer', textAlign: 'left' }}
+                        style={{ gridColumn: '1 / -1', padding: '3px 6px', fontSize: 11, border: '1px dashed #d1d5db', borderRadius: 4, background: 'none', color: '#6b7280', cursor: 'pointer', textAlign: 'left' }}
                       >
                         + Ajouter un émetteur
                       </button>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                          <input
-                            type="text" placeholder="Nom"
-                            value={newEmLabel}
-                            onChange={e => setNewEmLabel(e.target.value)}
-                            onClick={e => e.stopPropagation()}
-                            autoFocus
-                            style={{ flex: 1, minWidth: 0, padding: '3px 5px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11 }}
-                          />
-                          <input type="number" min={1} max={150} step={1}
-                            value={newEmTe}
-                            onChange={e => setNewEmTe(Number(e.target.value))}
-                            onClick={e => e.stopPropagation()}
-                            title="T entrée (°C)"
-                            style={{ width: 40, padding: '3px 4px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
-                          <input type="number" min={1} max={150} step={1}
-                            value={newEmTs}
-                            onChange={e => setNewEmTs(Number(e.target.value))}
-                            onClick={e => e.stopPropagation()}
-                            title="T sortie (°C)"
-                            style={{ width: 40, padding: '3px 4px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
-                          <input type="number" min={1} step={100}
-                            value={newEmPuissance ?? ''}
-                            placeholder="W"
-                            onChange={e => setNewEmPuissance(e.target.value === '' ? null : Math.max(1, Number(e.target.value)))}
-                            onClick={e => e.stopPropagation()}
-                            title="Puissance (W)"
-                            style={{ width: 46, padding: '3px 4px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, textAlign: 'right', color: newEmPuissance != null ? '#1e293b' : '#9ca3af' }} />
-                        </div>
-                        <div style={{ display: 'flex', gap: 4 }}>
+                      <>
+                        <input
+                          type="text" placeholder="Nom"
+                          value={newEmLabel}
+                          onChange={e => setNewEmLabel(e.target.value)}
+                          onClick={e => e.stopPropagation()}
+                          autoFocus
+                          style={{ width: '100%', padding: '3px 5px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 11 }}
+                        />
+                        <input type="number" min={1} max={150} step={1}
+                          value={newEmTe ?? ''}
+                          placeholder="°C"
+                          onChange={e => setNewEmTe(e.target.value === '' ? null : Number(e.target.value))}
+                          onClick={e => e.stopPropagation()}
+                          style={{ width: '100%', padding: '3px 4px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
+                        <input type="number" min={1} max={150} step={1}
+                          value={newEmTs ?? ''}
+                          placeholder="°C"
+                          onChange={e => setNewEmTs(e.target.value === '' ? null : Number(e.target.value))}
+                          onClick={e => e.stopPropagation()}
+                          style={{ width: '100%', padding: '3px 4px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
+                        <input type="number" min={1} step={100}
+                          value={newEmPuissance ?? ''}
+                          placeholder="—"
+                          onChange={e => setNewEmPuissance(e.target.value === '' ? null : Math.max(1, Number(e.target.value)))}
+                          onClick={e => e.stopPropagation()}
+                          style={{ width: '100%', padding: '3px 4px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 11, textAlign: 'right', color: newEmPuissance != null ? '#1e293b' : '#9ca3af' }} />
+                        <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 4, marginTop: 2 }}>
                           <button
                             onClick={e => {
                               e.stopPropagation()
                               const label = newEmLabel.trim()
                               if (!label) return
                               const id = `custom-em-${Date.now()}`
-                              const dT = Math.abs(newEmTe - newEmTs)
-                              onAddCustomEmetteurType?.({ id, label, deltaTDefault: dT, T_entreeDefault: newEmTe, T_sortieDefault: newEmTs })
-                              setNewEmLabel(''); setNewEmPuissance(null); setShowNewEmForm(false)
+                              const Te = newEmTe ?? 70; const Ts = newEmTs ?? 50
+                              onAddCustomEmetteurType?.({ id, label, deltaTDefault: Math.abs(Te - Ts), T_entreeDefault: Te, T_sortieDefault: Ts })
+                              setNewEmLabel(''); setNewEmTe(null); setNewEmTs(null); setNewEmPuissance(null); setShowNewEmForm(false)
                             }}
                             disabled={!newEmLabel.trim()}
                             style={{ flex: 1, padding: '4px 6px', fontSize: 11, fontWeight: 600, border: '1px solid #86efac', borderRadius: 4, background: '#f0fdf4', color: '#15803d', cursor: newEmLabel.trim() ? 'pointer' : 'not-allowed', opacity: newEmLabel.trim() ? 1 : 0.5 }}
@@ -556,13 +553,13 @@ export default function Toolbar({
                             Créer
                           </button>
                           <button
-                            onClick={e => { e.stopPropagation(); setShowNewEmForm(false); setNewEmLabel(''); setNewEmPuissance(null) }}
+                            onClick={e => { e.stopPropagation(); setShowNewEmForm(false); setNewEmLabel(''); setNewEmTe(null); setNewEmTs(null); setNewEmPuissance(null) }}
                             style={{ padding: '4px 8px', fontSize: 11, border: '1px solid #e2e8f0', borderRadius: 4, background: '#f8fafc', color: '#6b7280', cursor: 'pointer' }}
                           >
                             Annuler
                           </button>
                         </div>
-                      </div>
+                      </>
                     )}
                   </div>
                 </div>
@@ -670,56 +667,53 @@ export default function Toolbar({
                         </React.Fragment>
                       )
                     })}
-                  </div>
-                  <div style={{ borderTop: '1px solid #e2e8f0', marginTop: 6, paddingTop: 5 }}>
+                    {/* Séparateur + formulaire de création dans la même grille */}
+                    <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #e2e8f0', margin: '4px 0 2px' }} />
                     {!showNewTfForm ? (
                       <button
                         onClick={e => { e.stopPropagation(); setShowNewTfForm(true) }}
-                        style={{ width: '100%', padding: '4px 6px', fontSize: 11, border: '1px dashed #d1d5db', borderRadius: 4, background: 'none', color: '#6b7280', cursor: 'pointer', textAlign: 'left' }}
+                        style={{ gridColumn: '1 / -1', padding: '3px 6px', fontSize: 11, border: '1px dashed #d1d5db', borderRadius: 4, background: 'none', color: '#6b7280', cursor: 'pointer', textAlign: 'left' }}
                       >
                         + Ajouter un terminal froid
                       </button>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                          <input
-                            type="text" placeholder="Nom"
-                            value={newTfLabel}
-                            onChange={e => setNewTfLabel(e.target.value)}
-                            onClick={e => e.stopPropagation()}
-                            autoFocus
-                            style={{ flex: 1, minWidth: 0, padding: '3px 5px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11 }}
-                          />
-                          <input type="number" min={0} max={30} step={1}
-                            value={newTfTe}
-                            onChange={e => setNewTfTe(Number(e.target.value))}
-                            onClick={e => e.stopPropagation()}
-                            title="T entrée (°C)"
-                            style={{ width: 40, padding: '3px 4px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
-                          <input type="number" min={0} max={30} step={1}
-                            value={newTfTs}
-                            onChange={e => setNewTfTs(Number(e.target.value))}
-                            onClick={e => e.stopPropagation()}
-                            title="T sortie (°C)"
-                            style={{ width: 40, padding: '3px 4px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
-                          <input type="number" min={1} step={100}
-                            value={newTfPuissance ?? ''}
-                            placeholder="W"
-                            onChange={e => setNewTfPuissance(e.target.value === '' ? null : Math.max(1, Number(e.target.value)))}
-                            onClick={e => e.stopPropagation()}
-                            title="Puissance (W)"
-                            style={{ width: 46, padding: '3px 4px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, textAlign: 'right', color: newTfPuissance != null ? '#1e293b' : '#9ca3af' }} />
-                        </div>
-                        <div style={{ display: 'flex', gap: 4 }}>
+                      <>
+                        <input
+                          type="text" placeholder="Nom"
+                          value={newTfLabel}
+                          onChange={e => setNewTfLabel(e.target.value)}
+                          onClick={e => e.stopPropagation()}
+                          autoFocus
+                          style={{ width: '100%', padding: '3px 5px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 11 }}
+                        />
+                        <input type="number" min={0} max={30} step={1}
+                          value={newTfTe ?? ''}
+                          placeholder="°C"
+                          onChange={e => setNewTfTe(e.target.value === '' ? null : Number(e.target.value))}
+                          onClick={e => e.stopPropagation()}
+                          style={{ width: '100%', padding: '3px 4px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
+                        <input type="number" min={0} max={30} step={1}
+                          value={newTfTs ?? ''}
+                          placeholder="°C"
+                          onChange={e => setNewTfTs(e.target.value === '' ? null : Number(e.target.value))}
+                          onClick={e => e.stopPropagation()}
+                          style={{ width: '100%', padding: '3px 4px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 11, textAlign: 'right' }} />
+                        <input type="number" min={1} step={100}
+                          value={newTfPuissance ?? ''}
+                          placeholder="—"
+                          onChange={e => setNewTfPuissance(e.target.value === '' ? null : Math.max(1, Number(e.target.value)))}
+                          onClick={e => e.stopPropagation()}
+                          style={{ width: '100%', padding: '3px 4px', border: '1px solid #93c5fd', borderRadius: 4, fontSize: 11, textAlign: 'right', color: newTfPuissance != null ? '#1e293b' : '#9ca3af' }} />
+                        <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 4, marginTop: 2 }}>
                           <button
                             onClick={e => {
                               e.stopPropagation()
                               const label = newTfLabel.trim()
                               if (!label) return
                               const id = `custom-tf-${Date.now()}`
-                              const dT = Math.abs(newTfTs - newTfTe)
-                              onAddCustomTerminalFroidType?.({ id, label, deltaTDefault: dT, T_entreeDefault: newTfTe, T_sortieDefault: newTfTs })
-                              setNewTfLabel(''); setNewTfPuissance(null); setShowNewTfForm(false)
+                              const Te = newTfTe ?? 7; const Ts = newTfTs ?? 12
+                              onAddCustomTerminalFroidType?.({ id, label, deltaTDefault: Math.abs(Ts - Te), T_entreeDefault: Te, T_sortieDefault: Ts })
+                              setNewTfLabel(''); setNewTfTe(null); setNewTfTs(null); setNewTfPuissance(null); setShowNewTfForm(false)
                             }}
                             disabled={!newTfLabel.trim()}
                             style={{ flex: 1, padding: '4px 6px', fontSize: 11, fontWeight: 600, border: '1px solid #86efac', borderRadius: 4, background: '#f0fdf4', color: '#15803d', cursor: newTfLabel.trim() ? 'pointer' : 'not-allowed', opacity: newTfLabel.trim() ? 1 : 0.5 }}
@@ -727,13 +721,13 @@ export default function Toolbar({
                             Créer
                           </button>
                           <button
-                            onClick={e => { e.stopPropagation(); setShowNewTfForm(false); setNewTfLabel(''); setNewTfPuissance(null) }}
+                            onClick={e => { e.stopPropagation(); setShowNewTfForm(false); setNewTfLabel(''); setNewTfTe(null); setNewTfTs(null); setNewTfPuissance(null) }}
                             style={{ padding: '4px 8px', fontSize: 11, border: '1px solid #e2e8f0', borderRadius: 4, background: '#f8fafc', color: '#6b7280', cursor: 'pointer' }}
                           >
                             Annuler
                           </button>
                         </div>
-                      </div>
+                      </>
                     )}
                   </div>
                 </div>
