@@ -164,7 +164,7 @@ function SegRow({ row, segments, points, materials, insulations,
 
       <td className="rt-cell"><span className={cls(flowIsDefault)}>{flowRate != null ? flowRate.toFixed(3) : '—'}</span></td>
       <td className="rt-cell" style={{
-        color: (velocityRedMin || velocityOrangeMax) ? '#f97316' : undefined,
+        color: velocityRedMin ? '#dc2626' : velocityOrangeMax ? '#f97316' : undefined,
         fontWeight: (velocityRedMin || velocityOrangeMax) ? 700 : undefined }}>
         {velocity != null ? fmt(velocity, 3) : '—'}
       </td>
