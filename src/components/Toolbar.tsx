@@ -212,10 +212,10 @@ export default function Toolbar({
 
   useEffect(() => {
     if (!accOpen) return
-    const handle = (e) => { if (!accRef.current?.contains(e.target)) setAccOpen(false) }
+    const handle = (e) => { if (!accRef.current?.contains(e.target) && !placingAccessoryType) setAccOpen(false) }
     document.addEventListener('mousedown', handle)
     return () => document.removeEventListener('mousedown', handle)
-  }, [accOpen])
+  }, [accOpen, placingAccessoryType])
 
   const cancelVanne = () => {
     if (drawMode === 'draw' && pipeType === 'vanne') setDrawMode('select')
