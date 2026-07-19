@@ -511,7 +511,7 @@ export default function Toolbar({
                     ) : (
                       <>
                         <input
-                          type="text" placeholder="Nom"
+                          type="text" placeholder="Nom" size={1}
                           value={newEmLabel}
                           onChange={e => setNewEmLabel(e.target.value)}
                           onClick={e => e.stopPropagation()}
@@ -679,7 +679,7 @@ export default function Toolbar({
                     ) : (
                       <>
                         <input
-                          type="text" placeholder="Nom"
+                          type="text" placeholder="Nom" size={1}
                           value={newTfLabel}
                           onChange={e => setNewTfLabel(e.target.value)}
                           onClick={e => e.stopPropagation()}
