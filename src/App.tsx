@@ -1154,6 +1154,7 @@ export default function App() {
   const [selectedValveId,    setSelectedValveId]    = useState(null)
   const [selectedAccessoryId, setSelectedAccessoryId] = useState(null)
   const [activeSection,      setActiveSection]      = useState<string | null>(null)
+  useEffect(() => { setActiveSection(null) }, [activeCalcId])
   const [editLinesEnabled,     setEditLinesEnabled]     = useState(false)
   const [editChaufferie,       setEditChaufferie]       = useState(false)
   const [placingChaufferie,    setPlacingChaufferie]    = useState(false)
