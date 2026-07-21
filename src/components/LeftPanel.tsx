@@ -41,6 +41,7 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, chauffe
   const rename        = (id, name)  => onLevelsChange(levels.map(l => l.id === id ? { ...l, name } : l))
   const setHauteur    = (id, h)     => onLevelsChange(levels.map(l => l.id === id ? { ...l, hauteur: h } : l))
   const setTAmb       = (id, v)     => onLevelsChange(levels.map(l => l.id === id ? { ...l, t_amb_override: v } : l))
+  const setHrEg       = (id, v)     => onLevelsChange(levels.map(l => l.id === id ? { ...l, hr_eg_default: v } : l))
   const toggleSousSol = (id)        => onLevelsChange(levels.map(l => l.id === id ? { ...l, isSousSol: !l.isSousSol } : l))
 
   const moveUp = (i) => {
@@ -141,6 +142,20 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, chauffe
                       onChange={v => setTAmb(lvl.id, v)}
                     />
                     <span className="lp-level-expanded-unit">°C</span>
+                  </div>
+                  )}
+                  {isEauGlacee && (
+                  <div className="lp-level-expanded-row">
+                    <span className="lp-level-expanded-label">HR (EG)</span>
+                    <NumInput
+                      min={0} max={100} step={1}
+                      className="lp-level-exp-input"
+                      value={lvl.hr_eg_default ?? null}
+                      placeholder="60 (par défaut)"
+                      allowEmpty
+                      onChange={v => setHrEg(lvl.id, v)}
+                    />
+                    <span className="lp-level-expanded-unit">%</span>
                   </div>
                   )}
                   {/* ── Chaufferie / Production ECS — bouton Modifier uniquement si déjà posée ── */}

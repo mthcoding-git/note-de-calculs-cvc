@@ -1,6 +1,7 @@
-﻿import React, { useRef, useEffect, useMemo } from 'react'
+﻿import React, { useRef, useEffect, useMemo, useState } from 'react'
 import type { CalcMode } from '../types'
-import { computeSegUI } from '../utils/thermalCalc'
+import { computeSegUI, getSegAmbTemp } from '../utils/thermalCalc'
+import { getSegHR, computeCondensationFromParams, getDewPoint } from '../utils/condensationCalc'
 import { getDisplayName } from '../utils/naming'
 import { FITTING_TYPES, EQUIPMENT_TYPES } from '../utils/pdcCalc'
 import { EMETTEUR_TYPES } from '../data/emetteurs'
@@ -608,6 +609,8 @@ interface ResultsTableProps {
   eauGlaceeFlowRowsArr?: Array<{ prodId: string; rows: any[]; roleMap: any; pdcCumResults: any; chauffageSplitCumDp: any; chauffagePumpHMT: any }> | null
   customEmetteurTypes?: any[]
   customTerminalFroidTypes?: any[]
+  eauGlaceeThermal?: any
+  eauGlaceeParams?: any
 }
 
 export default function ResultsTable({
@@ -634,11 +637,15 @@ export default function ResultsTable({
   eauGlaceeFlowRowsArr = null,
   customEmetteurTypes = [],
   customTerminalFroidTypes = [],
+  eauGlaceeThermal = null,
+  eauGlaceeParams = null,
 }: ResultsTableProps) {
   const selectedRowRef = useRef(null)
   useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [selectedIds])
+
+
 
   const { isBouclage, isAlimECS, isAlimEF, isAlimMode, hasPdc, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
   const isChaufOrEG = isChauffage || isEauGlacee
@@ -1286,6 +1293,151 @@ export default function ResultsTable({
     )
   }
 
+  const egCondensationJSX: React.ReactNode = isEauGlacee ? (() => {
+    const COND_COLS = 9
+    const isMelangeRow = (r: any) => r?.kind === 'melange-header' || r?.kind === 'melange-end'
+    const totalMelangeCond = displayRows.filter((r: any) => r.kind === 'melange-header').length
+
+    return (
+      <table className="rt-table">
+        <thead>
+          <tr className="rt-thead-cols">
+            <th className="rt-th">Tronçon</th>
+            <th className="rt-th">T<sub>fluide</sub> (°C)</th>
+            <th className="rt-th">T<sub>amb</sub> (°C)</th>
+            <th className="rt-th">HR (%)</th>
+            <th className="rt-th">T<sub>rosée</sub> (°C)</th>
+            <th className="rt-th">Isolant</th>
+            <th className="rt-th">e (mm)</th>
+            <th className="rt-th">T<sub>surf</sub> (°C)</th>
+            <th className="rt-th rt-th-result">Résultat / R<sub>néc</sub> (K·m/W)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {displayRows.length === 0 && (
+            <tr><td colSpan={COND_COLS} className="rt-empty">Aucun tronçon EG</td></tr>
+          )}
+          {displayRows.map((row: any, i: number) => {
+            if (row.kind === 'flow-start') return (
+              <tr key="cond-flow-start" className="rt-flow-banner rt-flow-banner-eg-start">
+                <td colSpan={COND_COLS}>▶ Groupe froid — Départ</td>
+              </tr>
+            )
+            if (row.kind === 'flow-end') return (
+              <tr key="cond-flow-end" className="rt-flow-banner rt-flow-banner-eg-end">
+                <td colSpan={COND_COLS}>◀ Groupe froid — Retour</td>
+              </tr>
+            )
+            if (row.kind === 'junction') {
+              if (isMelangeRow(displayRows[i - 1]) || isMelangeRow(displayRows[i + 1])) return null
+              return <tr key={`cond-junc-${row.ptId}-${i}`} className="rt-collecteur-header"><td colSpan={COND_COLS} /></tr>
+            }
+            if (row.kind === 'col-header') return (
+              <tr key={`cond-col-${row.name}-${i}`} className="rt-col-sep"><td colSpan={COND_COLS}>{row.name}</td></tr>
+            )
+            if (row.kind === 'collecteur-header') {
+              if (isMelangeRow(displayRows[i - 1]) || isMelangeRow(displayRows[i + 1])) return null
+              return <tr key={`cond-coll-h-${row.role}-${i}`} className="rt-collecteur-header"><td colSpan={COND_COLS} /></tr>
+            }
+            if (row.kind === 'melange-header') return (
+              <tr key={`cond-melange-h-${row.mixId}-${i}`} className="rt-melange-header">
+                <td colSpan={COND_COLS}>{totalMelangeCond > 1 ? `Circuit mélangé ${row.index}` : 'Circuit mélangé'}</td>
+              </tr>
+            )
+            if (row.kind === 'melange-end') return (
+              <tr key={`cond-melange-end-${i}`} className="rt-melange-end">
+                <td colSpan={COND_COLS} style={{ padding: 0 }}>
+                  <div style={{ borderTop: '1px dashed #cbd5e1', padding: '2px 10px' }}>
+                    {totalMelangeCond > 1 ? `fin circuit mélangé ${row.index}` : 'fin circuit mélangé'}
+                  </div>
+                </td>
+              </tr>
+            )
+            if (row.kind !== 'segment') return null
+
+            const { seg, segType } = row
+            const mat = materials?.find((m: any) => m.id === seg.materialId)
+            const dnDef = mat?.dns?.find((d: any) => d.dn === seg.dn)
+            const de_mm: number | null = seg.de_override ?? dnDef?.de ?? null
+            const T_fluid: number =
+              eauGlaceeThermal?.segResults?.get(seg.id)?.T_from
+              ?? eauGlaceeParams?.T_depart ?? 7
+            const T_amb = getSegAmbTemp(seg, levels, lineYs)
+            const HR = getSegHR(seg, levels, lineYs)
+            const ins = (insulations ?? []).find((i: any) => i.id === seg.insulationId && i.enabled)
+            const e_mm = typeof seg.thickness === 'number' && seg.thickness > 0 ? seg.thickness : null
+            const isAller = segType === 'aller'
+            const role = roleMap?.get(seg.id)
+            const badgeText = role === 'collecteur-aller' ? 'CA' : role === 'collecteur-retour' ? 'CR' : isAller ? 'A' : 'R'
+            const badgeClass = (role === 'collecteur-retour' || !isAller) ? 'rt-badge-r-eg' : 'rt-badge-a-eg'
+            const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections)
+              .replace(/^(?:Collecteur Aller EG|Collecteur Retour EG|Aller EG|Retour EG)\s*–\s*/, '')
+
+            const nameCell = (
+              <td className="rt-cell rt-cell-name" style={{ paddingLeft: 6 }}>
+                <span className={badgeClass}>{badgeText}</span>{shortName}
+              </td>
+            )
+
+            if (de_mm == null) {
+              return (
+                <tr key={seg.id} className="rt-row">
+                  {nameCell}
+                  <td className="rt-cell" colSpan={COND_COLS - 1}
+                      style={{ color: '#9ca3af', fontStyle: 'italic' }}>Matériau / DN non défini</td>
+                </tr>
+              )
+            }
+
+            const T_rosee_bare = getDewPoint(T_amb, HR)
+            if (!ins || e_mm == null) {
+              const risque = T_fluid < T_rosee_bare
+              return (
+                <tr key={seg.id} className="rt-row">
+                  {nameCell}
+                  <td className="rt-cell">{fmt(T_fluid, 1)}</td>
+                  <td className="rt-cell">{fmt(T_amb, 1)}</td>
+                  <td className="rt-cell">{fmt(HR, 0)}</td>
+                  <td className="rt-cell">{fmt(T_rosee_bare, 1)}</td>
+                  <td className="rt-cell" style={{ color: '#9ca3af', fontStyle: 'italic' }}>Non isolé</td>
+                  <td className="rt-cell">—</td>
+                  <td className="rt-cell">—</td>
+                  <td className="rt-cell rt-result"
+                      style={{ color: risque ? '#ef4444' : '#6b7280', fontWeight: risque ? 700 : 400 }}>
+                    {risque ? '⚠ Risque (non isolé)' : 'OK (non isolé)'}
+                  </td>
+                </tr>
+              )
+            }
+
+            const di_mm: number | null = seg.di_override ?? dnDef?.di ?? null
+            const lambda_tube: number | null = mat?.lambda ?? null
+            const lambda_ins = seg.lambda_insul_override ?? ins.lambda
+            const res = computeCondensationFromParams(T_fluid, T_amb, HR, de_mm, e_mm, lambda_ins, di_mm, lambda_tube)
+            return (
+              <tr key={seg.id} className="rt-row">
+                {nameCell}
+                <td className="rt-cell">{fmt(T_fluid, 1)}</td>
+                <td className="rt-cell">{fmt(T_amb, 1)}</td>
+                <td className="rt-cell">{fmt(HR, 0)}</td>
+                <td className="rt-cell">{fmt(res.T_rosee, 1)}</td>
+                <td className="rt-cell">{ins.name}</td>
+                <td className="rt-cell">{fmt(e_mm, 0)}</td>
+                <td className="rt-cell">{fmt(res.T_surf, 1)}</td>
+                <td className="rt-cell rt-result"
+                    style={res.risque ? { color: '#ef4444', fontWeight: 700 } : { color: '#16a34a' }}>
+                  {res.risque
+                    ? `⚠ Risque — R_néc ${res.R_nec != null && isFinite(res.R_nec) ? res.R_nec.toFixed(3) : '∞'} K·m/W`
+                    : `✓ OK — marge ${fmt(res.marge, 1)} °C`}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    )
+  })() : null
+
   // ── Chauffage / EG multi-production : N sections empilées ────────────────────
   if (isChaufOrEG && activeChaufFlowRowsArr && activeChaufFlowRowsArr.length > 1) {
     const CHAUF_COLS = 11
@@ -1330,7 +1482,7 @@ export default function ResultsTable({
     return (
       <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
         <div className="rt-table-scroll">
-          <table className="rt-table">
+          {activeTable !== 'condensation' && <table className="rt-table">
             <thead>
               <tr className="rt-thead-group">
                 <th colSpan={3} className="rt-thg">Identification</th>
@@ -1481,7 +1633,8 @@ export default function ResultsTable({
                 )
               })}
             </tbody>
-          </table>
+          </table>}
+          {isEauGlacee && activeTable === 'condensation' && egCondensationJSX}
         </div>
       </div>
     )
@@ -1490,24 +1643,11 @@ export default function ResultsTable({
   // ── Chauffage / Eau glacée ────────────────────────────────────────────────────
   if (isChaufOrEG) {
     const CHAUF_COLS = 11
-    // Recommandations chauffage (règle de l'art, non réglementaire)
-    const V_LOW = 0.2, V_MAX = 1.5   // <0,2 : sédimentation ; >1,5 : bruit/érosion
-    const J_HIGH = 150                // >150 Pa/m : au-delà de la plage recommandée
-    const velStyle = (v: number | null | undefined) => {
-      if (v == null) return {}
-      if (v < V_LOW || v > V_MAX) return { color: '#f97316', fontWeight: 700 }
-      return {}
-    }
-    const jStyle = (j: number | null | undefined) => {
-      if (j == null) return {}
-      if (j > J_HIGH) return { color: '#f97316', fontWeight: 700 }
-      return {}
-    }
     const totalMelange = displayRows.filter(r => r.kind === 'melange-header').length
     return (
       <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
         <div className="rt-table-scroll">
-          <table className="rt-table">
+          {activeTable !== 'condensation' && <table className="rt-table">
             <thead>
               <tr className="rt-thead-group">
                 <th colSpan={3} className="rt-thg">Identification</th>
@@ -1632,10 +1772,10 @@ export default function ResultsTable({
                       <td className="rt-cell rt-result">
                         {flow?.flowRate != null ? (flow.flowRate * 1000).toFixed(1) : '—'}
                       </td>
-                      <td className="rt-cell rt-result" style={velStyle(velocity)}>
+                      <td className="rt-cell rt-result">
                         {velocity != null ? velocity.toFixed(3) : '—'}
                       </td>
-                      <td className="rt-cell rt-result" style={jStyle(J)}>
+                      <td className="rt-cell rt-result">
                         {J != null ? J.toFixed(1) : '—'}
                       </td>
                     </tr>
@@ -1643,7 +1783,8 @@ export default function ResultsTable({
                 )
               })}
             </tbody>
-          </table>
+          </table>}
+          {isEauGlacee && activeTable === 'condensation' && egCondensationJSX}
         </div>
       </div>
     )

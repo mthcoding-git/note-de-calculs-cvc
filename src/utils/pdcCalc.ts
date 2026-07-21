@@ -20,22 +20,26 @@ export const FITTING_TYPES = [
 export const EQUIPMENT_TYPES = [
   // ── ECS bouclage / alimentation ECS ────────────────────────────────────────
   // Kv sources : catalogues Honeywell, Caleffi, WATTS, Flamco (DN20 référence)
-  { id: 'filtre',             label: 'Filtre / débourbeur',           kvDefault: 8,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
+  { id: 'filtre',             label: 'Filtre / débourbeur',           kvDefault: 8,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-eauglacee'] },
   { id: 'disconnecteur',      label: 'Disconnecteur BA (EA)',          kvDefault: 3,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
   { id: 'reducteur_pression', label: 'Réducteur de pression',         kvDefault: 4,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
-  { id: 'clapet_antiretour',  label: 'Clapet anti-retour',            kvDefault: 5,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'pdc-chauffage'] },
+  { id: 'clapet_antiretour',  label: 'Clapet anti-retour',            kvDefault: 5,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'pdc-chauffage', 'distribution-eauglacee'] },
   { id: 'adoucisseur',        label: 'Adoucisseur',                   kvDefault: 4,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
   { id: 'compteur_eau',       label: "Compteur d'eau",                kvDefault: 5,    modes: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef'] },
-  { id: 'vanne_equilibrage',  label: "Vanne d'équilibrage",           kvDefault: null, modes: ['bouclage-ecs', 'distribution-chauffage', 'pdc-chauffage'] },
+  { id: 'vanne_equilibrage',  label: "Vanne d'équilibrage",           kvDefault: null, modes: ['bouclage-ecs', 'distribution-chauffage', 'pdc-chauffage', 'distribution-eauglacee'] },
   { id: 'echangeur',          label: 'Échangeur ECS',                 kvDefault: null, modes: ['bouclage-ecs', 'alimentation-ecs'] },
   { id: 'mitigeur_thermo',    label: 'Mitigeur thermostatique',       kvDefault: 3,    modes: ['alimentation-ecs'] },
-  { id: 'vanne_zone',         label: 'Vanne de zone (motorisée)',     kvDefault: 4,    modes: ['alimentation-ef', 'distribution-chauffage', 'pdc-chauffage'] },
-  { id: 'vanne_regulation',   label: 'Vanne de régulation',          kvDefault: null, modes: ['bouclage-ecs', 'alimentation-ecs', 'distribution-chauffage', 'pdc-chauffage'] },
+  { id: 'vanne_zone',         label: 'Vanne de zone (motorisée)',     kvDefault: 4,    modes: ['alimentation-ef', 'distribution-chauffage', 'pdc-chauffage', 'distribution-eauglacee'] },
+  { id: 'vanne_regulation',   label: 'Vanne de régulation',          kvDefault: null, modes: ['bouclage-ecs', 'alimentation-ecs', 'distribution-chauffage', 'pdc-chauffage', 'distribution-eauglacee'] },
   // ── Chauffage ──────────────────────────────────────────────────────────────
-  { id: 'filtre_degazeur',    label: 'Filtre débourbeur / dégazeur',  kvDefault: 12,   modes: ['distribution-chauffage', 'pdc-chauffage'] },
-  { id: 'pot_decantation',    label: 'Pot de décantation',            kvDefault: 10,   modes: ['distribution-chauffage', 'pdc-chauffage'] },
-  { id: 'compteur_chaleur',   label: 'Compteur de chaleur',           kvDefault: 4,    modes: ['distribution-chauffage', 'pdc-chauffage'] },
-  { id: 'echangeur_chauffage',label: 'Échangeur de chaleur',          kvDefault: null, modes: ['distribution-chauffage', 'pdc-chauffage'] },
+  { id: 'filtre_degazeur',    label: 'Filtre débourbeur / dégazeur',  kvDefault: 12,   modes: ['distribution-chauffage', 'pdc-chauffage', 'distribution-eauglacee'] },
+  { id: 'pot_decantation',    label: 'Pot de décantation',            kvDefault: 10,   modes: ['distribution-chauffage', 'pdc-chauffage', 'distribution-eauglacee'] },
+  { id: 'compteur_chaleur',   label: 'Compteur de chaleur / énergie froid', kvDefault: 4, modes: ['distribution-chauffage', 'pdc-chauffage', 'distribution-eauglacee'] },
+  { id: 'echangeur_chauffage',label: 'Échangeur de chaleur (sous-station)', kvDefault: null, modes: ['distribution-chauffage', 'pdc-chauffage', 'distribution-eauglacee'] },
+  // ── Eau Glacée ─────────────────────────────────────────────────────────────
+  // Kv sources : Belimo B212/B215/B220 (DN15/20), Siemens VVG41/VXG44 (DN15/20)
+  { id: 'vanne_2voies_eg',    label: 'Vanne 2 voies motorisée (terminal EG)', kvDefault: 1.6,  modes: ['distribution-eauglacee'] },
+  { id: 'vanne_3voies_eg',    label: 'Vanne 3 voies motorisée (EG)',          kvDefault: 4,    modes: ['distribution-eauglacee'] },
 ]
 
 export function getEquipmentForMode(mode: string | null | undefined) {

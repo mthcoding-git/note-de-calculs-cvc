@@ -73,6 +73,7 @@ export interface Segment {
   encrassementEpaisseur?: number | null
   T_ch_override?: number | null  // température override tronçon chauffage (°C)
   T_eg_override?: number | null  // température override tronçon eau glacée (°C)
+  hr_override?: number | null    // humidité relative override tronçon EG (%)
 }
 
 export interface NodeSize {
@@ -108,6 +109,7 @@ export interface Level {
   isSousSol?: boolean
   y?: number
   hauteur?: number
+  hr_eg_default?: number   // Humidité relative (%) pour le calcul condensation EG
 }
 
 export interface Column {

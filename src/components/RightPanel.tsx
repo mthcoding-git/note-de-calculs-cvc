@@ -644,6 +644,7 @@ export default function RightPanel({
       groupDisplayNames={groupDisplayNames}
       chauffageSplitCumDp={chauffageSplitCumDp}
       eauGlaceeSplitCumDp={eauGlaceeSplitCumDp}
+      eauGlaceeParams={eauGlaceeParams}
     />
   )
   if (pt) {

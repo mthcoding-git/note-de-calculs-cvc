@@ -1143,7 +1143,7 @@ export default function App() {
   const [groupesEditMode,    setGroupesEditMode]    = useState(false)
   const [showGroupeNames,    setShowGroupeNames]    = useState(false)
   const [canvasDisplay, setCanvasDisplay] = useState(CANVAS_DISPLAY_RESET)
-  const [activeTable, setActiveTable] = useState<'dimensionnement' | 'pdc' | null>(null)
+  const [activeTable, setActiveTable] = useState<'dimensionnement' | 'pdc' | 'condensation' | null>(null)
   const [tableHeight, setTableHeight] = useState(300)
   const tableHeightRef = useRef(0)
   tableHeightRef.current = tableHeight
@@ -2230,6 +2230,8 @@ export default function App() {
                   chauffageFlowRowsArr={chauffageFlowRowsArr}
                   customEmetteurTypes={project.customEmetteurTypes ?? []}
                   customTerminalFroidTypes={project.customTerminalFroidTypes ?? []}
+                  eauGlaceeThermal={eauGlaceeThermal}
+                  eauGlaceeParams={project.eauGlaceeParams}
                 />
               )}
               <div className="rt-toggle-bar">
@@ -2241,6 +2243,15 @@ export default function App() {
                   Dimensionnement
                   <span style={{ fontSize: 8, opacity: 0.6 }}>{activeTable === 'dimensionnement' ? '▼' : '▲'}</span>
                 </button>
+                {isEauGlacee && (
+                  <button
+                    className={`rt-toggle-btn${activeTable === 'condensation' ? ' active' : ''}`}
+                    onClick={() => setActiveTable(t => t === 'condensation' ? null : 'condensation')}
+                  >
+                    Condensation
+                    <span style={{ fontSize: 8, opacity: 0.6 }}>{activeTable === 'condensation' ? '▼' : '▲'}</span>
+                  </button>
+                )}
                 {hasPdc && (
                   <button
                     className={`rt-toggle-btn${activeTable === 'pdc' ? ' active' : ''}`}

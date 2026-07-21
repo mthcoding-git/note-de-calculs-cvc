@@ -3,6 +3,9 @@ import type { CalcMode } from '../types'
 import { getDisplayName } from '../utils/naming'
 import { getModeFlags } from '../utils/calcModeFlags'
 import { computeSegUI, getSegAmbTemp } from '../utils/thermalCalc'
+import { getSegHR, computeCondensationFromParams, getDewPoint, getRequiredResistance,
+  getInternalResistance, getPipeWallResistance, getInsulationResistance, getExteriorResistance,
+  H_INT_DEFAULT, H_EXT_DEFAULT } from '../utils/condensationCalc'
 import { sf, fmtDpLabel } from '../utils/fmt'
 import { NumInput } from './NumInput'
 import { SegFittingsPanel, SegEquipPanel } from './segPanelShared'
@@ -25,11 +28,14 @@ interface SegmentPanelProps {
   eauGlaceeThermal?: any
   chauffageSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
   eauGlaceeSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
+  eauGlaceeParams?: any
 }
 
-export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null, chauffageThermal = null, eauGlaceeThermal = null, chauffageSplitCumDp = null, eauGlaceeSplitCumDp = null }: SegmentPanelProps) {
+export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null, chauffageThermal = null, eauGlaceeThermal = null, chauffageSplitCumDp = null, eauGlaceeSplitCumDp = null, eauGlaceeParams = null }: SegmentPanelProps) {
   const [tab, setTab]                       = useState('params')
   const [openDetailTherm, setOpenDetailTherm] = useState(false)
+  const [openCondDetail, setOpenCondDetail]   = useState(false)
+  const [openResDetail, setOpenResDetail]     = useState(false)
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
 
   const enabledMats = materials.filter(m => m.enabled)
@@ -277,7 +283,8 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
               <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', marginBottom: 4 }}>
                 {(['dimensionnement', 'pdc'] as const).map(key => (
                   <button key={key} onClick={() => onResultsViewChange(key)} style={{
-                    padding: '2px 10px 7px', fontSize: 10.5,
+                    flex: 1, textAlign: 'center' as const,
+                    padding: '2px 4px 7px', fontSize: 10.5,
                     fontWeight: resultsView === key ? 700 : 400,
                     color: resultsView === key ? '#4338ca' : '#6b7280',
                     border: 'none',
@@ -532,21 +539,32 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
 
       {tab === 'results' && (
         <div>
-          {pdcParams != null && (
+          {(pdcParams != null || isEauGlacee) && (
             <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', marginBottom: 12 }}>
-              {(['dimensionnement', 'pdc'] as const).map(key => (
-                <button key={key} onClick={() => onResultsViewChange(key)} style={{
-                  padding: '2px 10px 7px', fontSize: 10.5,
-                  fontWeight: resultsView === key ? 700 : 400,
-                  color: resultsView === key ? '#4338ca' : '#6b7280',
-                  border: 'none',
-                  borderBottom: resultsView === key ? '2px solid #6366f1' : '2px solid transparent',
-                  background: 'none', cursor: 'pointer', marginBottom: -1,
-                  whiteSpace: 'nowrap', transition: 'color 0.1s',
-                }}>
-                  {key === 'pdc' ? 'Pertes de charge' : 'Dimensionnement'}
-                </button>
-              ))}
+              {(isEauGlacee
+                ? ['dimensionnement', 'condensation', ...(pdcParams != null ? ['pdc'] : [])]
+                : ['dimensionnement', 'pdc']
+              ).map(key => {
+                const label = isEauGlacee
+                  ? key === 'dimensionnement' ? 'Dimensionnement'
+                  : key === 'condensation'    ? 'Condensation'
+                  :                             'PDC'
+                  : key === 'pdc' ? 'Pertes de charge' : 'Dimensionnement'
+                return (
+                  <button key={key} onClick={() => onResultsViewChange(key)} style={{
+                    flex: 1, textAlign: 'center' as const,
+                    padding: '2px 4px 7px', fontSize: 10.5,
+                    fontWeight: resultsView === key ? 700 : 400,
+                    color: resultsView === key ? '#4338ca' : '#6b7280',
+                    border: 'none',
+                    borderBottom: resultsView === key ? '2px solid #6366f1' : '2px solid transparent',
+                    background: 'none', cursor: 'pointer', marginBottom: -1,
+                    whiteSpace: 'nowrap', transition: 'color 0.1s',
+                  }}>
+                    {label}
+                  </button>
+                )
+              })}
             </div>
           )}
           {isBouclage && roleMap?.get(seg.id) === 'antenne' ? (
@@ -597,7 +615,171 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                 />
               )
             })()
-          ) : (isChauffage || isEauGlacee) ? (() => {
+          ) : resultsView === 'condensation' && isEauGlacee ? (() => {
+            const thermalEntry  = eauGlaceeThermal?.segResults?.get(seg.id)
+            const T_from_cond   = thermalEntry?.T_from ?? null
+            const T_fluid: number = T_from_cond ?? eauGlaceeParams?.T_depart ?? 7
+            const T_amb_cond    = getSegAmbTemp(seg, levels, lineYs)
+            const HR            = getSegHR(seg, levels, lineYs)
+            const de_mm: number | null = seg.de_override ?? dnDef?.de ?? null
+            const di_mm: number | null = seg.di_override ?? dnDef?.di ?? null
+            const lambda_tube: number | null = selMat?.lambda ?? null
+            const e_mm = typeof seg.thickness === 'number' && seg.thickness > 0 ? seg.thickness : null
+            const hasInsul = selIns != null && e_mm != null
+            const anyInsulEnabled = enabledIns.length > 0
+
+            const dRowC = (label: string, value: string, color?: string) => (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                padding: '5px 10px', borderBottom: '1px solid #f3f4f6', gap: 8 }}>
+                <span style={{ fontSize: 10, color: '#6b7280' }}>{label}</span>
+                <span style={{ fontSize: 10.5, fontWeight: color ? 700 : 500, color: color ?? '#374151',
+                  fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
+              </div>
+            )
+
+            if (!anyInsulEnabled) {
+              return (
+                <div style={{ fontSize: 10, color: '#6b7280', fontStyle: 'italic' }}>
+                  Aucun isolant activé dans les paramètres EG.
+                </div>
+              )
+            }
+
+            if (de_mm == null) {
+              return (
+                <div style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic' }}>
+                  Matériau / DN non défini — impossible de calculer.
+                </div>
+              )
+            }
+
+            const T_rosee = getDewPoint(T_amb_cond, HR)
+            let T_surf: number
+            let R_ins: number | null = null
+            let res: any = null
+
+            if (hasInsul) {
+              const lambda_ins = seg.lambda_insul_override ?? selIns!.lambda
+              res    = computeCondensationFromParams(T_fluid, T_amb_cond, HR, de_mm, e_mm!, lambda_ins, di_mm, lambda_tube)
+              T_surf = res.T_surf
+              R_ins  = res.R_ins
+            } else {
+              T_surf = T_fluid
+            }
+
+            const marge  = T_surf - T_rosee
+            const risque = marge < 0
+            const R_nec: number | null = risque
+              ? (res?.R_nec ?? getRequiredResistance(T_amb_cond, T_fluid, T_rosee, de_mm, di_mm, lambda_tube))
+              : null
+            const margeColor = risque ? '#ef4444' : '#16a34a'
+
+            // Résistances individuelles pour l'affichage dans données techniques
+            const R_si_val   = (di_mm != null && di_mm > 0) ? getInternalResistance(di_mm) : 0
+            const R_tube_val = (di_mm != null && di_mm > 0 && lambda_tube != null && lambda_tube > 0)
+              ? getPipeWallResistance(di_mm, de_mm, lambda_tube) : 0
+            const lambda_ins_val = hasInsul ? (seg.lambda_insul_override ?? selIns!.lambda) : null
+            const R_ins_val  = hasInsul && lambda_ins_val != null
+              ? getInsulationResistance(de_mm, e_mm!, lambda_ins_val) : 0
+            const R_ext_val  = getExteriorResistance(de_mm, hasInsul ? e_mm! : 0)
+
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+                {/* Statut */}
+                <div style={{ padding: '8px 12px', background: '#fff',
+                  border: `1px solid ${risque ? '#fecaca' : '#d1fae5'}`, borderRadius: 6 }}>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: risque ? '#ef4444' : '#16a34a' }}>
+                    {risque ? '⚠ Risque' : '✓ OK'}
+                  </div>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, color: margeColor, marginTop: 2 }}>
+                    {risque && R_nec != null
+                      ? `Rés. nécessaire = ${isFinite(R_nec) ? R_nec.toFixed(3) : '∞'} K·m/W`
+                      : `Marge = +${marge.toFixed(1)} °C`}
+                  </div>
+                </div>
+
+                {/* Résultats */}
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
+                  {/* Résistance totale avec détail inline */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '5px 10px', borderBottom: '1px solid #f3f4f6', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <span style={{ fontSize: 10, color: '#6b7280' }}>Résistance totale</span>
+                      <button onClick={() => setOpenResDetail(o => !o)} style={{
+                        background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer',
+                        fontSize: 8.5, color: '#c4c9d4', display: 'flex', alignItems: 'center', gap: 2, fontWeight: 500,
+                      }}>
+                        <span style={{ display: 'inline-block', fontSize: 6,
+                          transform: openResDetail ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>▶</span>
+                        détail
+                      </button>
+                    </div>
+                    <span style={{ fontSize: 10.5, fontWeight: 500, color: '#374151',
+                      fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>
+                      {(R_si_val + R_tube_val + R_ins_val + R_ext_val).toFixed(4)} K·m/W
+                    </span>
+                  </div>
+                  {openResDetail && (
+                    <div style={{ borderBottom: '1px solid #f3f4f6',
+                      fontSize: 9, color: '#9ca3af', lineHeight: 2,
+                      fontFamily: 'ui-monospace, monospace', padding: '2px 10px 6px 22px' }}>
+                      {R_si_val > 0   && <div>R conv. intérieure  = {R_si_val.toFixed(4)} K·m/W</div>}
+                      {R_tube_val > 0 && <div>R canalisation      = {R_tube_val.toFixed(4)} K·m/W</div>}
+                      {hasInsul       && <div>R isolant            = {R_ins_val.toFixed(4)} K·m/W</div>}
+                      <div>R conv. extérieure  = {R_ext_val.toFixed(4)} K·m/W</div>
+                    </div>
+                  )}
+                  {dRowC(
+                    hasInsul ? 'Température de surface' : 'Température de surface (nue)',
+                    `${T_surf.toFixed(1)} °C`
+                  )}
+                  {dRowC('Température de rosée', `${T_rosee.toFixed(1)} °C`)}
+                  {dRowC('Marge', `${marge >= 0 ? '+' : ''}${marge.toFixed(1)} °C`, margeColor)}
+                  {risque && R_nec != null && dRowC('Résistance nécessaire', `${isFinite(R_nec) ? R_nec.toFixed(3) : '∞'} K·m/W`, '#ef4444')}
+                </div>
+
+                {!hasInsul && risque && (
+                  <div style={{ fontSize: 9.5, color: '#9ca3af', fontStyle: 'italic' }}>
+                    Attribuez un isolant dont la résistance thermique atteint la résistance nécessaire.
+                  </div>
+                )}
+
+                {/* Données techniques */}
+                <div style={{ marginTop: 4 }}>
+                  <button onClick={() => setOpenCondDetail(o => !o)} style={{
+                    background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer',
+                    fontSize: 9, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 500,
+                  }}>
+                    <span style={{ display: 'inline-block', fontSize: 7,
+                      transform: openCondDetail ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>▶</span>
+                    Données techniques
+                  </button>
+                  {openCondDetail && (
+                    <div style={{ fontSize: 9, color: '#9ca3af', lineHeight: 2,
+                      fontFamily: 'ui-monospace, monospace', paddingLeft: 12, marginTop: 2 }}>
+                      <div>T° fluide = {T_fluid.toFixed(1)} °C</div>
+                      <div>T° ambiante = {T_amb_cond.toFixed(1)} °C</div>
+                      <div>Humidité relative = {HR.toFixed(0)} %</div>
+                      {di_mm != null && <div>Diamètre intérieur = {di_mm} mm</div>}
+                      <div>Diamètre extérieur = {de_mm} mm</div>
+                      {lambda_tube != null && <div>λ canalisation = {lambda_tube.toFixed(3)} W/(m·K)</div>}
+                      {hasInsul
+                        ? <>
+                            <div>Isolant = {selIns!.name} — {e_mm} mm</div>
+                            {lambda_ins_val != null && <div>λ isolant = {lambda_ins_val.toFixed(3)} W/(m·K)</div>}
+                          </>
+                        : <div>Isolant = Non isolé</div>}
+                      <div>Conv. intérieure = {H_INT_DEFAULT} W/(m²·K)</div>
+                      <div>Conv. extérieure = {H_EXT_DEFAULT} W/(m²·K)</div>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )
+          })()
+          : (isChauffage || isEauGlacee) ? (() => {
             const thermalEntry = isChauffage ? chauffageThermal?.segResults?.get(seg.id) : eauGlaceeThermal?.segResults?.get(seg.id)
             const T_from       = thermalEntry?.T_from ?? null
             const T_to         = thermalEntry?.T_to   ?? null
@@ -607,34 +789,13 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             const puissanceKW  = puissanceW != null ? puissanceW / 1000 : null
             const di_mm        = seg.di_override ?? dnDef?.di ?? null
 
-            // Recommandations chauffage (règle de l'art, non réglementaire)
-            const V_LOW = 0.2   // en dessous : risque sédimentation/boues
-            const V_MAX = 1.5   // au-dessus  : risque bruit/érosion
-
-            const velLow  = velocity != null && velocity < V_LOW
-            const velHigh = velocity != null && velocity > V_MAX
-            const velOk   = velocity != null && !velLow && !velHigh
-            const velStatusColor = velOk ? '#16a34a' : '#f97316'
-            const velStatus = velLow  ? '⚠ v < 0,2 m/s — risque de sédimentation'
-              : velHigh ? '⚠ v > 1,5 m/s — risque d\'érosion et bruit'
-              : velOk   ? '✓ 0,2 ≤ v ≤ 1,5 m/s — plage recommandée'
-              : null
-
             const J = pdcResult?.J ?? null   // gradient linéaire Pa/m
-            // Recommandation : 50–150 Pa/m (règle de l'art BET France)
-            const J_OPT_HIGH = 150
 
-            const jOk  = J != null && J <= J_OPT_HIGH
-            const jStatusColor = jOk ? '#16a34a' : '#f97316'
-            const jStatus = J == null ? null
-              : J > J_OPT_HIGH ? '⚠ R > 150 Pa/m — au-delà de la plage recommandée'
-              : '✓ R ≤ 150 Pa/m — plage recommandée'
-
-            const dRow = (label: string, value: string) => (
+            const dRow = (label: string, value: string, color?: string) => (
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
                 padding: '5px 10px', borderBottom: '1px solid #f3f4f6', gap: 8 }}>
                 <span style={{ fontSize: 10, color: '#6b7280' }}>{label}</span>
-                <span style={{ fontSize: 10.5, fontWeight: 500, color: '#374151',
+                <span style={{ fontSize: 10.5, fontWeight: color ? 700 : 500, color: color ?? '#374151',
                   fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
               </div>
             )
@@ -654,12 +815,6 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                       </span>
                       <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
                     </div>
-                    {velStatus && (
-                      <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid #f1f5f9',
-                        fontSize: 9.5, fontWeight: 600, color: velStatusColor }}>
-                        {velStatus}
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <div style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>
@@ -681,12 +836,6 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                       </span>
                       <span style={{ fontSize: 11, color: '#9ca3af' }}>Pa/m</span>
                     </div>
-                    {jStatus && (
-                      <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid #f1f5f9',
-                        fontSize: 9.5, fontWeight: 600, color: jStatusColor }}>
-                        {jStatus}
-                      </div>
-                    )}
                   </div>
                 ) : velocity != null && di_mm != null ? (
                   <div style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>
@@ -719,6 +868,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                     </div>
                   )}
                 </div>
+
 
               </div>
             )
@@ -1188,6 +1338,16 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                   value={seg.T_eg_override ?? null}
                   placeholder={T_eg_calc != null ? `calculé : ${T_eg_calc.toFixed(1)} °C` : 'calculé : —'}
                   onChange={v => set('T_eg_override', v)}
+                />
+              </Field>
+            )}
+            {isEauGlacee && (
+              <Field label="HR tronçon" unit="%">
+                <NumInput
+                  min={0} max={100} step={1} allowEmpty
+                  value={seg.hr_override ?? null}
+                  placeholder="défaut (niveau / 60%)"
+                  onChange={v => set('hr_override', v)}
                 />
               </Field>
             )}
