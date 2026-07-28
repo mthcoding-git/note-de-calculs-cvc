@@ -14,6 +14,7 @@ const ACC_IDS_BY_CALCID: Partial<Record<CalcMode, string[]>> = {
   'bouclage-ecs':          ['vanne_arret', 'clapet_anti_retour', 'filtre_y', 'manometre', 'thermometre', 'vase_expansion', 'purgeur_air', 'robinet_vidange'],
   'alimentation-ef':       ['vanne_arret', 'disconnecteur', 'reducteur_pression', 'filtre_y', 'compteur_eau', 'clapet_anti_retour', 'manometre', 'ballon_anti_belier', 'robinet_vidange'],
   'distribution-chauffage':['vanne_arret', 'clapet_anti_retour', 'soupape_securite', 'pot_boues', 'filtre_y', 'manometre', 'thermometre', 'compteur_energie', 'vase_expansion', 'purgeur_air', 'robinet_vidange'],
+  'distribution-eauglacee':['vanne_arret', 'clapet_anti_retour', 'filtre_y', 'manometre', 'thermometre', 'vase_expansion', 'soupape_securite', 'pot_boues', 'purgeur_air', 'compteur_energie', 'robinet_vidange'],
 }
 
 // Cursor SVG icon for "select" mode
@@ -81,18 +82,19 @@ const DISPLAY_OPTIONS = [
   { key: 'nomTroncon',        label: 'Nom du tronçon',           calcIds: null },
   { key: 'material',          label: 'Matériau',                 calcIds: null },
   { key: 'dn',                label: 'DN',                       calcIds: null },
-  { key: 'length',            label: 'Longueur',                 calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'distribution-eauglacee'] },
-  { key: 'insulation',        label: 'Isolant & épaisseur',      calcIds: ['bouclage-ecs'] },
-  { key: 'debit',             label: 'Débit',                    calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'distribution-eauglacee'] },
-  { key: 'vitesse',           label: 'Vitesse',                  calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'distribution-eauglacee'] },
+  { key: 'length',            label: 'Longueur',                 calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'distribution-eauglacee', 'distribution-ventilation'] },
+  { key: 'insulation',        label: 'Isolant & épaisseur',      calcIds: ['bouclage-ecs', 'distribution-eauglacee'] },
+  { key: 'debit',             label: 'Débit',                    calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'distribution-eauglacee', 'distribution-ventilation'] },
+  { key: 'vitesse',           label: 'Vitesse',                  calcIds: ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'distribution-eauglacee', 'distribution-ventilation'] },
   { key: 'temperatureNoeud',  label: 'T° nœuds',                calcIds: ['bouclage-ecs'] },
   { key: 'deltaT',            label: 'ΔT tronçon',              calcIds: ['bouclage-ecs'] },
-  { key: 'dpTroncon',         label: 'ΔP tronçon',              calcIds: ['bouclage-ecs', 'distribution-chauffage', 'distribution-eauglacee'] },
+  { key: 'dpTroncon',         label: 'ΔP tronçon',              calcIds: ['bouclage-ecs', 'distribution-chauffage', 'distribution-eauglacee', 'distribution-ventilation'] },
   { key: 'dpNoeud',           label: 'ΔP cumulée',              calcIds: ['bouclage-ecs', 'distribution-chauffage', 'distribution-eauglacee'] },
-  { key: 'rLinear',           label: 'R (Pa/m)',                 calcIds: ['distribution-chauffage', 'distribution-eauglacee'] },
+  { key: 'rLinear',           label: 'J (Pa/m)',                 calcIds: ['distribution-chauffage', 'distribution-eauglacee', 'distribution-ventilation'] },
   { key: 'puissanceTroncon',  label: 'Puissances transportées',  calcIds: ['distribution-chauffage', 'distribution-eauglacee'] },
   { key: 'puissanceEmetteur', label: 'Puissances terminal',      calcIds: ['distribution-chauffage', 'distribution-eauglacee'] },
   { key: 'dpEmetteur',        label: 'ΔP terminal',             calcIds: ['distribution-chauffage', 'distribution-eauglacee'] },
+  { key: 'condensationRisque', label: 'Risque condensation',     calcIds: ['distribution-eauglacee'] },
   { key: 'pressionDispo',     label: 'Pression disponible',     calcIds: ['alimentation-ecs', 'alimentation-ef'] },
   { key: 'pressionStat',      label: 'Pression statique',       calcIds: ['alimentation-ecs', 'alimentation-ef'] },
   { key: 'equipment',         label: 'Équipements (groupes PP)', calcIds: ['alimentation-ecs', 'alimentation-ef', 'bouclage-ecs'] },
@@ -109,6 +111,7 @@ export default function Toolbar({
   onAddProductionChauffage, hasProductionChauffage, onAddPumpChauffage,
   onAddEmetteur,
   onAddProductionEauGlacee, hasProductionEauGlacee, onAddTerminalFroid,
+  onAddCTA, onAddBoucheVentilation,
   canvasDisplay, onCanvasDisplayToggle,
   activeFluidId, activeCalcId,
   pdcParams,
@@ -130,6 +133,7 @@ export default function Toolbar({
   onAddProductionChauffage: any; hasProductionChauffage: boolean; onAddPumpChauffage: any
   onAddEmetteur: any
   onAddProductionEauGlacee: any; hasProductionEauGlacee: boolean; onAddTerminalFroid: any
+  onAddCTA?: any; onAddBoucheVentilation?: any
   canvasDisplay: any; onCanvasDisplayToggle: any
   activeFluidId: string | null; activeCalcId: CalcMode | null
   pdcParams: any
@@ -165,7 +169,7 @@ export default function Toolbar({
   const [newTfTe, setNewTfTe] = useState<number | null>(null)
   const [newTfTs, setNewTfTs] = useState<number | null>(null)
   const [newTfPuissance, setNewTfPuissance] = useState<number | null>(null)
-  const { isAlimEF, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
+  const { isAlimEF, isChauffage, isEauGlacee, isVentilation } = getModeFlags(activeCalcId)
 
   useEffect(() => {
     setEmetteurParams(prev => {
@@ -373,6 +377,53 @@ export default function Toolbar({
               >
                 <span style={{ display: 'inline-block', width: 22, height: 0, borderTop: `${sw}px dashed ${p.colorRetour}` }} />
                 Retour EG
+              </button>
+            </>
+          )
+        })() : isVentilation ? (() => {
+          const p = (displayPrefs ?? DEFAULT_DISPLAY_PREFS).ventilation
+          const sw = Math.max(2, p?.strokeWidth ?? 1.5)
+          const cS  = (p as any)?.colorAller    ?? '#059669'
+          const cR  = (p as any)?.colorRetour   ?? '#db2777'
+          const cAN = (p as any)?.colorAirNeuf  ?? '#38bdf8'
+          const cAR = (p as any)?.colorAirRejete ?? '#94a3b8'
+          const LinePreview = ({ color, dashed }: { color: string; dashed?: boolean }) => (
+            <svg width={24} height={10} style={{ flexShrink: 0 }}>
+              <line x1={0} y1={5} x2={24} y2={5}
+                stroke={color} strokeWidth={sw}
+                strokeDasharray={dashed ? '5,3' : 'none'}
+                strokeLinecap="round" />
+            </svg>
+          )
+          return (
+            <>
+              <button
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'aller' ? 'active-aller-vt' : ''}`}
+                onClick={() => activateDraw('aller')}
+              >
+                <LinePreview color={cS} />
+                Air soufflé
+              </button>
+              <button
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'retour' ? 'active-retour-vt' : ''}`}
+                onClick={() => activateDraw('retour')}
+              >
+                <LinePreview color={cR} />
+                Air extrait
+              </button>
+              <button
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'air-neuf' ? 'active-air-neuf' : ''}`}
+                onClick={() => activateDraw('air-neuf')}
+              >
+                <LinePreview color={cAN} />
+                Air neuf
+              </button>
+              <button
+                className={`tb-btn pipe-btn ${drawMode === 'draw' && pipeType === 'air-rejete' ? 'active-air-rejete' : ''}`}
+                onClick={() => activateDraw('air-rejete')}
+              >
+                <LinePreview color={cAR} />
+                Air rejeté
               </button>
             </>
           )
@@ -761,8 +812,26 @@ export default function Toolbar({
           </>
         )}
 
-        {/* Équipements ECS — hors alimentation-ef et hors chauffage */}
-        {!isAlimEF && !isChauffage && !isEauGlacee && (
+        {/* Équipements Ventilation */}
+        {isVentilation && (
+          <>
+            <button
+              className={`tb-btn ${placingEquipment?.type === 'cta' ? 'active' : ''}`}
+              onClick={() => { closeAcc(); cancelVanne(); onAddCTA?.() }}
+            >
+              CTA
+            </button>
+            <button
+              className={`tb-btn ${placingEquipment?.type === 'boucheVentilation' ? 'active' : ''}`}
+              onClick={() => { closeAcc(); cancelVanne(); onAddBoucheVentilation?.() }}
+            >
+              Bouche
+            </button>
+          </>
+        )}
+
+        {/* Équipements ECS — hors alimentation-ef, chauffage, eau glacée, ventilation */}
+        {!isAlimEF && !isChauffage && !isEauGlacee && !isVentilation && (
           <>
             <button
               className={`tb-btn ${placingEquipment?.type === 'productionECS' ? 'active' : ''}`}
@@ -792,8 +861,8 @@ export default function Toolbar({
           </>
         )}
 
-        {/* Popover accessoires — toujours visible */}
-        <div ref={accRef}>
+        {/* Popover accessoires — masqué pour ventilation (pas d'accessoires définis) */}
+        {!isVentilation && <div ref={accRef}>
           <button
             className={`tb-btn ${accOpen || placingAccessoryType ? 'active' : ''}`}
             onClick={openAcc}
@@ -823,7 +892,7 @@ export default function Toolbar({
               </div>
             </div>
           )}
-        </div>
+        </div>}
       </div>
 
       {/* Errors */}

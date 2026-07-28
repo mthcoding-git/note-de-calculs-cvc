@@ -3,6 +3,7 @@ export type TerminalFroidType =
   | 'poutre-froide-active'
   | 'poutre-froide-passive'
   | 'dalle-froide'
+  | 'plafond-froid-rayonnant'
   | 'batterie-froide-cta'
 
 export interface TerminalFroidDef {
@@ -22,9 +23,10 @@ export interface CustomTerminalFroidDef {
 }
 
 export const TERMINAL_FROID_TYPES: TerminalFroidDef[] = [
-  { id: 'ventiloconvecteur',     label: 'Ventilo-convecteur',    deltaTDefault: 5, T_entreeDefault: 7,  T_sortieDefault: 12 },
-  { id: 'poutre-froide-active',  label: 'Poutre froide active',  deltaTDefault: 3, T_entreeDefault: 14, T_sortieDefault: 17 },
-  { id: 'poutre-froide-passive', label: 'Poutre froide passive', deltaTDefault: 3, T_entreeDefault: 14, T_sortieDefault: 17 },
-  { id: 'dalle-froide',          label: 'Dalle froide',          deltaTDefault: 4, T_entreeDefault: 15, T_sortieDefault: 19 },
-  { id: 'batterie-froide-cta',   label: 'Batterie froide CTA',   deltaTDefault: 5, T_entreeDefault: 7,  T_sortieDefault: 12 },
+  { id: 'ventiloconvecteur',        label: 'Ventilo-convecteur',       deltaTDefault: 5, T_entreeDefault: 7,  T_sortieDefault: 12 },
+  { id: 'poutre-froide-active',     label: 'Poutre froide active',     deltaTDefault: 4, T_entreeDefault: 14, T_sortieDefault: 18 },
+  { id: 'poutre-froide-passive',    label: 'Poutre froide passive',    deltaTDefault: 3, T_entreeDefault: 16, T_sortieDefault: 19 },
+  { id: 'dalle-froide',             label: 'Dalle froide (TABS)',      deltaTDefault: 3, T_entreeDefault: 15, T_sortieDefault: 18 },
+  { id: 'plafond-froid-rayonnant',  label: 'Plafond froid rayonnant',  deltaTDefault: 3, T_entreeDefault: 16, T_sortieDefault: 19 },
+  { id: 'batterie-froide-cta',      label: 'Batterie froide CTA',      deltaTDefault: 5, T_entreeDefault: 7,  T_sortieDefault: 12 },
 ]

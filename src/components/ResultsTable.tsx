@@ -1,8 +1,11 @@
 ﻿import React, { useRef, useEffect, useMemo, useState } from 'react'
 import type { CalcMode } from '../types'
 import { computeSegUI, getSegAmbTemp } from '../utils/thermalCalc'
-import { getSegHR, computeCondensationFromParams, getDewPoint } from '../utils/condensationCalc'
-import { getDisplayName } from '../utils/naming'
+import { getSegHR, computeCondensationFromParams, getDewPoint,
+  getInternalResistance, getPipeWallResistance, getInsulationResistance, getExteriorResistance,
+  H_EXT_DEFAULT, H_INT_DEFAULT,
+} from '../utils/condensationCalc'
+import { getDisplayName, buildDisplayDists } from '../utils/naming'
 import { FITTING_TYPES, EQUIPMENT_TYPES } from '../utils/pdcCalc'
 import { EMETTEUR_TYPES } from '../data/emetteurs'
 import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
@@ -71,7 +74,7 @@ function SegRow({ row, segments, points, materials, insulations,
                   levels, lineYs, columns, columnXs, chaufferie,
                   globalParams, networkFlows, thermalResults,
                   selectedIds, onSelectIds, rowRef, roleMap, activeCalcId, flowDirections = null,
-                  hasEncrassement = false }) {
+                  hasEncrassement = false, segDisplayDists = null }) {
   const { seg, depth, segType } = row
 
   const sr = thermalResults?.segResults?.get(seg.id)
@@ -96,15 +99,15 @@ function SegRow({ row, segments, points, materials, insulations,
   const T_aval   = sr?.T_to
   const deltaT   = sr?.deltaT
   const T_amb    = sr?.T_amb
-  const T_depart = globalParams?.T_depart ?? 60
+  const prodECS = points?.find(p => p.type === 'productionECS')
+  const T_depart = prodECS?.T_depart_override ?? globalParams?.T_depart ?? 60
   const deltaTFromProd = T_aval != null ? T_depart - T_aval : null
 
   const role = roleMap?.get(seg.id)
   const isCollecteurRetour = role === 'collecteur-retour'
   const vMax = isCollecteurRetour ? 1.0 : 0.5
   const velocityRedMin    = seg.type === 'retour' && velocity != null && velocity < 0.2
-  const velocityOrangeMax = velocity != null && velocity > vMax
-  const prodECS = points?.find(p => p.type === 'productionECS')
+  const velocityOrangeMax = seg.type === 'retour' && velocity != null && velocity > vMax
   const isLinkedToProdECS = prodECS != null
     && (seg.startPointId === prodECS.id || seg.endPointId === prodECS.id)
   const dtFromProdOrange = isLinkedToProdECS && seg.type === 'retour'
@@ -119,7 +122,7 @@ function SegRow({ row, segments, points, materials, insulations,
   const lenIsDefault  = seg.length_override == null
   const flowIsDefault = seg.flowRate == null && seg.velocity == null
 
-  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId, roleMap, flowDirections)
+  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId, roleMap, flowDirections, segDisplayDists)
     .replace(/^((Collecteur (aller|retour)|Aller|Retour|Antenne) ECS|EF)\s*–\s*/, '')
   const colonneName = extractColonne(shortName, columns)
   const levelName   = segLevelName(seg, levels, lineYs)
@@ -213,7 +216,7 @@ function JunctionRow({ row, thermalResults, globalParams, selectedIds, onSelectI
 
 function SegRowAlim({ row, segments, points, materials, insulations,
                       levels, lineYs, columns, columnXs, chaufferie,
-                      alimentationResults, selectedIds, onSelectIds, rowRef, roleMap, hideAllerBadge = false, activeCalcId, flowDirections = null }) {
+                      alimentationResults, selectedIds, onSelectIds, rowRef, roleMap, hideAllerBadge = false, activeCalcId, flowDirections = null, segDisplayDists = null }) {
   const { seg } = row
 
   const ar   = alimentationResults?.get(seg.id)
@@ -245,7 +248,7 @@ function SegRowAlim({ row, segments, points, materials, insulations,
     : null
   const velErrEncr = !velErr && velocity_eff_alim != null && velocity_eff_alim > vMax
 
-  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId, roleMap, flowDirections)
+  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, roleMap?.get(seg.id), activeCalcId, roleMap, flowDirections, segDisplayDists)
     .replace(/^((Collecteur (aller|retour)|Aller|Retour|Antenne) ECS|EF)\s*–\s*/, '')
 
   const methodLabel  = ar == null ? '—' : ar.method === 'individual' ? 'Individuelle' : 'Collective'
@@ -350,7 +353,7 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
                      dpStatic, deltaH, pStatAval, coteAmont, coteAval,
                      needsSingTot, needsEquipTot, isTerminalGroupePuisage = false,
                      hasEncrassement = false,
-                     selectedIds, onSelectIds, rowRef, roleMap, activeCalcId, flowDirections = null }) {
+                     selectedIds, onSelectIds, rowRef, roleMap, activeCalcId, flowDirections = null, segDisplayDists = null }) {
   const { seg, depth, segType } = row
 
   const mat   = materials?.find(m => m.id === seg.materialId)
@@ -386,7 +389,7 @@ function SegRowPdc({ row, segments, points, materials, levels, lineYs, columns, 
     : (isAller ? 'rt-badge-a' : 'rt-badge-r')
   const indent     = depth * 13
 
-  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections)
+  const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections, segDisplayDists)
     .replace(/^((Collecteur (Aller|Retour) (CH|EG)|Collecteur (aller|retour)|Aller CH|Retour CH|Aller EG|Retour EG|Aller|Retour|Antenne) (ECS|CH|EG)?|EF)\s*–\s*/, '')
   const colonneName = extractColonne(shortName, columns)
   const levelName   = segLevelName(seg, levels, lineYs)
@@ -599,7 +602,7 @@ interface ResultsTableProps {
   pdcResults: any; pdcParams: any; pdcCumResults: any; pdcCumAlimResults: any; segToCol: any
   globalParams: any; selectedIds: any[]; onSelectIds: any; onCircuitSelect: any
   height: number
-  chauffageFlows?: any; chauffageParams?: any
+  chauffageFlows?: any; chauffageParams?: any; chauffageThermal?: any
   chauffageSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string>; secondaryCriticalSegIds: Set<string>; secondaryCriticalDp: number | null; criticalDp: number | null } | null
   chauffagePumpHMT?: Map<string, { hmt: number | null; criticalSegIds: Set<string>; isSecondary: boolean }>
   chauffageFlowRowsArr?: Array<{ prodId: string; rows: any[]; roleMap: any; pdcCumResults: any; chauffageSplitCumDp: any; chauffagePumpHMT: any }> | null
@@ -611,6 +614,9 @@ interface ResultsTableProps {
   customTerminalFroidTypes?: any[]
   eauGlaceeThermal?: any
   eauGlaceeParams?: any
+  hrGlobalDefault?: number | null
+  calcConstants?: import('../types').CalcConstants
+  ventilationResults?: Map<string, any>
 }
 
 export default function ResultsTable({
@@ -627,7 +633,7 @@ export default function ResultsTable({
   pdcResults, pdcParams, pdcCumResults, pdcCumAlimResults, segToCol,
   globalParams, selectedIds, onSelectIds, onCircuitSelect,
   height,
-  chauffageFlows, chauffageParams,
+  chauffageFlows, chauffageParams, chauffageThermal = null,
   chauffageSplitCumDp = null,
   chauffagePumpHMT = null,
   chauffageFlowRowsArr = null,
@@ -639,6 +645,9 @@ export default function ResultsTable({
   customTerminalFroidTypes = [],
   eauGlaceeThermal = null,
   eauGlaceeParams = null,
+  hrGlobalDefault = null,
+  calcConstants,
+  ventilationResults,
 }: ResultsTableProps) {
   const selectedRowRef = useRef(null)
   useEffect(() => {
@@ -647,9 +656,32 @@ export default function ResultsTable({
 
 
 
-  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, hasPdc, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, hasPdc, isChauffage, isEauGlacee, isVentilation } = getModeFlags(activeCalcId)
   const isChaufOrEG = isChauffage || isEauGlacee
-  const activeChaufFlows = isChauffage ? chauffageFlows : isEauGlacee ? eauGlaceeFlows : null
+  const activeChaufFlows   = isChauffage ? chauffageFlows   : isEauGlacee ? eauGlaceeFlows   : null
+  const activeChaufThermal = isChauffage ? chauffageThermal : isEauGlacee ? eauGlaceeThermal : null
+
+  const segDisplayDists = useMemo(
+    () => buildDisplayDists(segments ?? [], points ?? []),
+    [segments, points]
+  )
+
+  const getEmitterColInfo = (emitterId: string | null | undefined) => {
+    if (!emitterId) return null
+    const emPt = points?.find((p: any) => p.id === emitterId)
+    if (!emPt) return null
+    const label = emPt.type === 'terminalFroid'
+      ? [...TERMINAL_FROID_TYPES, ...customTerminalFroidTypes].find((t: any) => t.id === emPt.terminalFroidType)?.label
+      : [...EMETTEUR_TYPES, ...customEmetteurTypes].find((e: any) => e.id === emPt.emetteurType)?.label
+    const allerSeg = segments?.find((s: any) =>
+      (s.type === 'aller-ch' || s.type === 'aller') && flowDirections?.get(s.id)?.toId === emitterId)
+    const retourSeg = segments?.find((s: any) =>
+      (s.type === 'retour-ch' || s.type === 'retour') && flowDirections?.get(s.id)?.fromId === emitterId)
+    const T_entree   = allerSeg  ? activeChaufThermal?.segResults?.get(allerSeg.id)?.T_to   : null
+    const T_sortie   = retourSeg ? activeChaufThermal?.segResults?.get(retourSeg.id)?.T_from : null
+    const puissanceW = allerSeg  ? activeChaufFlows?.get(allerSeg.id)?.puissanceAmont        : null
+    return { label, T_entree, T_sortie, puissanceW }
+  }
   const activeSplitCumDp = isChauffage ? chauffageSplitCumDp : isEauGlacee ? eauGlaceeSplitCumDp : null
   const activePumpHMT = isChauffage ? chauffagePumpHMT : isEauGlacee ? eauGlaceePumpHMT : null
   const activeChaufFlowRowsArr = isChauffage ? chauffageFlowRowsArr : isEauGlacee ? eauGlaceeFlowRowsArr : null
@@ -689,6 +721,7 @@ export default function ResultsTable({
     levels, lineYs, columns, columnXs, chaufferie,
     globalParams, networkFlows, thermalResults,
     selectedIds, onSelectIds, roleMap, activeCalcId,
+    segDisplayDists,
   }
 
   const isAlim = isAlimMode
@@ -705,6 +738,7 @@ export default function ResultsTable({
     levels, lineYs, columns, columnXs, chaufferie,
     alimentationResults: isEF ? alimentationResultsEF : alimentationResults,
     selectedIds, onSelectIds, roleMap, activeCalcId, flowDirections,
+    segDisplayDists,
   }
 
   // ── PDC ────────────────────────────────────────────────────────────────────
@@ -844,6 +878,7 @@ export default function ResultsTable({
     const sharedPdc = {
       segments, points, materials, levels, lineYs, columns, columnXs, chaufferie,
       networkFlows: flowsForPdc, alimentationResults: activeAlimResults, pdcParams, needsSingTot, needsEquipTot, hasEncrassement, selectedIds, onSelectIds, roleMap: pdcRoleMap, activeCalcId, flowDirections,
+      segDisplayDists,
     }
 
     return (
@@ -1294,23 +1329,44 @@ export default function ResultsTable({
   }
 
   const egCondensationJSX: React.ReactNode = isEauGlacee ? (() => {
-    const COND_COLS = 9
+    const COND_COLS = 21
     const isMelangeRow = (r: any) => r?.kind === 'melange-header' || r?.kind === 'melange-end'
     const totalMelangeCond = displayRows.filter((r: any) => r.kind === 'melange-header').length
+    const fmtR = (v: number) => v > 0 ? v.toFixed(3) : '—'
 
     return (
       <table className="rt-table">
         <thead>
+          <tr className="rt-thead-group">
+            <th colSpan={1} className="rt-thg">Identification</th>
+            <th colSpan={4} className="rt-thg">Conditions</th>
+            <th colSpan={5} className="rt-thg">Canalisation</th>
+            <th colSpan={3} className="rt-thg">Isolation</th>
+            <th colSpan={5} className="rt-thg rt-thg-result rt-th-result-first">Résistances (K·m/W)</th>
+            <th colSpan={3} className="rt-thg rt-thg-result">Résultat</th>
+          </tr>
           <tr className="rt-thead-cols">
             <th className="rt-th">Tronçon</th>
-            <th className="rt-th">T<sub>fluide</sub> (°C)</th>
-            <th className="rt-th">T<sub>amb</sub> (°C)</th>
+            <th className="rt-th">T fluide (°C)</th>
+            <th className="rt-th">T amb (°C)</th>
             <th className="rt-th">HR (%)</th>
-            <th className="rt-th">T<sub>rosée</sub> (°C)</th>
+            <th className="rt-th">T rosée (°C)</th>
+            <th className="rt-th">Matériau</th>
+            <th className="rt-th">DN</th>
+            <th className="rt-th">dᵢ (mm)</th>
+            <th className="rt-th">dₑ (mm)</th>
+            <th className="rt-th">λ tube (W/m·K)</th>
             <th className="rt-th">Isolant</th>
-            <th className="rt-th">e (mm)</th>
-            <th className="rt-th">T<sub>surf</sub> (°C)</th>
-            <th className="rt-th rt-th-result">Résultat / R<sub>néc</sub> (K·m/W)</th>
+            <th className="rt-th">ép. (mm)</th>
+            <th className="rt-th">λ isol (W/m·K)</th>
+            <th className="rt-th rt-th-result rt-th-result-first">R conv.i.</th>
+            <th className="rt-th rt-th-result">R tube</th>
+            <th className="rt-th rt-th-result">R ins.</th>
+            <th className="rt-th rt-th-result">R conv.e.</th>
+            <th className="rt-th rt-th-result">R tot</th>
+            <th className="rt-th rt-th-result">T surface (°C)</th>
+            <th className="rt-th rt-th-result">T rosée (°C)</th>
+            <th className="rt-th rt-th-result" style={{ minWidth: 120 }}>Écart (°C)</th>
           </tr>
         </thead>
         <tbody>
@@ -1359,20 +1415,22 @@ export default function ResultsTable({
             const mat = materials?.find((m: any) => m.id === seg.materialId)
             const dnDef = mat?.dns?.find((d: any) => d.dn === seg.dn)
             const de_mm: number | null = seg.de_override ?? dnDef?.de ?? null
-            const T_fluid: number =
-              eauGlaceeThermal?.segResults?.get(seg.id)?.T_from
-              ?? eauGlaceeParams?.T_depart ?? 7
+            const di_mm: number | null = seg.di_override ?? dnDef?.di ?? null
+            const lambda_tube: number | null = seg.lambda_tube_override ?? mat?.lambda ?? null
+            const T_fluid: number = eauGlaceeThermal?.segResults?.get(seg.id)?.T_from ?? eauGlaceeParams?.T_depart ?? 7
             const T_amb = getSegAmbTemp(seg, levels, lineYs)
-            const HR = getSegHR(seg, levels, lineYs)
+            const HR = getSegHR(seg, levels, lineYs, hrGlobalDefault)
             const ins = (insulations ?? []).find((i: any) => i.id === seg.insulationId && i.enabled)
-            const e_mm = typeof seg.thickness === 'number' && seg.thickness > 0 ? seg.thickness : null
+            const hasInsul = ins != null && typeof seg.thickness === 'number' && seg.thickness > 0
+            const e_mm = hasInsul ? (seg.thickness as number) : 0
+            const lambda_ins = hasInsul ? (seg.lambda_insul_override ?? ins!.lambda) : 0.04
             const isAller = segType === 'aller'
             const role = roleMap?.get(seg.id)
             const badgeText = role === 'collecteur-aller' ? 'CA' : role === 'collecteur-retour' ? 'CR' : isAller ? 'A' : 'R'
             const badgeClass = (role === 'collecteur-retour' || !isAller) ? 'rt-badge-r-eg' : 'rt-badge-a-eg'
-            const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections)
+            const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections, segDisplayDists)
               .replace(/^(?:Collecteur Aller EG|Collecteur Retour EG|Aller EG|Retour EG)\s*–\s*/, '')
-
+            const isSelected = selectedIds?.includes(seg.id)
             const nameCell = (
               <td className="rt-cell rt-cell-name" style={{ paddingLeft: 6 }}>
                 <span className={badgeClass}>{badgeText}</span>{shortName}
@@ -1381,7 +1439,10 @@ export default function ResultsTable({
 
             if (de_mm == null) {
               return (
-                <tr key={seg.id} className="rt-row">
+                <tr key={seg.id}
+                    ref={isSelected ? selectedRowRef : null}
+                    className={`rt-row${isSelected ? ' rt-row-selected' : ''}`}
+                    onClick={() => onSelectIds?.([seg.id])} style={{ cursor: 'pointer' }}>
                   {nameCell}
                   <td className="rt-cell" colSpan={COND_COLS - 1}
                       style={{ color: '#9ca3af', fontStyle: 'italic' }}>Matériau / DN non défini</td>
@@ -1389,46 +1450,57 @@ export default function ResultsTable({
               )
             }
 
-            const T_rosee_bare = getDewPoint(T_amb, HR)
-            if (!ins || e_mm == null) {
-              const risque = T_fluid < T_rosee_bare
-              return (
-                <tr key={seg.id} className="rt-row">
-                  {nameCell}
-                  <td className="rt-cell">{fmt(T_fluid, 1)}</td>
-                  <td className="rt-cell">{fmt(T_amb, 1)}</td>
-                  <td className="rt-cell">{fmt(HR, 0)}</td>
-                  <td className="rt-cell">{fmt(T_rosee_bare, 1)}</td>
-                  <td className="rt-cell" style={{ color: '#9ca3af', fontStyle: 'italic' }}>Non isolé</td>
-                  <td className="rt-cell">—</td>
-                  <td className="rt-cell">—</td>
-                  <td className="rt-cell rt-result"
-                      style={{ color: risque ? '#ef4444' : '#6b7280', fontWeight: risque ? 700 : 400 }}>
-                    {risque ? '⚠ Risque (non isolé)' : 'OK (non isolé)'}
-                  </td>
-                </tr>
-              )
-            }
+            const R_si   = di_mm != null && di_mm > 0 ? getInternalResistance(di_mm) : 0
+            const R_tube = di_mm != null && di_mm > 0 && lambda_tube != null && lambda_tube > 0
+              ? getPipeWallResistance(di_mm, de_mm, lambda_tube) : 0
+            const R_ins  = hasInsul ? getInsulationResistance(de_mm, e_mm, lambda_ins) : 0
+            const R_ext  = getExteriorResistance(de_mm, e_mm)
+            const R_tot  = R_si + R_tube + R_ins + R_ext
 
-            const di_mm: number | null = seg.di_override ?? dnDef?.di ?? null
-            const lambda_tube: number | null = mat?.lambda ?? null
-            const lambda_ins = seg.lambda_insul_override ?? ins.lambda
-            const res = computeCondensationFromParams(T_fluid, T_amb, HR, de_mm, e_mm, lambda_ins, di_mm, lambda_tube)
+            const res = HR != null ? computeCondensationFromParams(
+              T_fluid, T_amb, HR, de_mm, e_mm, lambda_ins, di_mm, lambda_tube,
+              calcConstants?.h_ext_eg ?? H_EXT_DEFAULT,
+              calcConstants?.h_int_eg ?? H_INT_DEFAULT,
+              calcConstants?.margin_cond ?? 1,
+            ) : null
+
+            const risqueStyle = { color: '#ef4444', fontWeight: 700 }
+            const okStyle     = { color: '#16a34a' }
+
             return (
-              <tr key={seg.id} className="rt-row">
+              <tr key={seg.id}
+                  ref={isSelected ? selectedRowRef : null}
+                  className={`rt-row${isSelected ? ' rt-row-selected' : ''}`}
+                  onClick={() => onSelectIds?.([seg.id])} style={{ cursor: 'pointer' }}>
                 {nameCell}
+                {/* Conditions */}
                 <td className="rt-cell">{fmt(T_fluid, 1)}</td>
-                <td className="rt-cell">{fmt(T_amb, 1)}</td>
-                <td className="rt-cell">{fmt(HR, 0)}</td>
-                <td className="rt-cell">{fmt(res.T_rosee, 1)}</td>
-                <td className="rt-cell">{ins.name}</td>
-                <td className="rt-cell">{fmt(e_mm, 0)}</td>
-                <td className="rt-cell">{fmt(res.T_surf, 1)}</td>
-                <td className="rt-cell rt-result"
-                    style={res.risque ? { color: '#ef4444', fontWeight: 700 } : { color: '#16a34a' }}>
-                  {res.risque
-                    ? `⚠ Risque — R_néc ${res.R_nec != null && isFinite(res.R_nec) ? res.R_nec.toFixed(3) : '∞'} K·m/W`
-                    : `✓ OK — marge ${fmt(res.marge, 1)} °C`}
+                <td className="rt-cell"><span className={seg.t_amb_override == null ? 'rt-val-default' : 'rt-val-override'}>{fmt(T_amb, 1)}</span></td>
+                <td className="rt-cell"><span className={seg.hr_override == null ? 'rt-val-default' : 'rt-val-override'}>{HR != null ? fmt(HR, 0) : '—'}</span></td>
+                <td className="rt-cell">{res != null ? fmt(res.T_rosee, 1) : '—'}</td>
+                {/* Canalisation */}
+                <td className="rt-cell"><span className={seg.materialId == null ? 'rt-val-default' : 'rt-val-override'}>{mat?.name ?? <span className="rt-val-default">—</span>}</span></td>
+                <td className="rt-cell"><span className={seg.dn == null ? 'rt-val-default' : 'rt-val-override'}>{seg.dn ?? '—'}</span></td>
+                <td className="rt-cell"><span className={seg.di_override == null ? 'rt-val-default' : 'rt-val-override'}>{di_mm != null ? fmt(di_mm, 1) : '—'}</span></td>
+                <td className="rt-cell"><span className={seg.de_override == null ? 'rt-val-default' : 'rt-val-override'}>{fmt(de_mm, 1)}</span></td>
+                <td className="rt-cell"><span className={seg.lambda_tube_override == null ? 'rt-val-default' : 'rt-val-override'}>{lambda_tube != null ? lambda_tube.toFixed(3) : '—'}</span></td>
+                {/* Isolation */}
+                <td className="rt-cell">{hasInsul ? <span className={seg.insulationId == null ? 'rt-val-default' : 'rt-val-override'}>{ins!.name}</span> : <span className="rt-val-default">Non isolé</span>}</td>
+                <td className="rt-cell">{hasInsul ? <span className={seg.thickness == null ? 'rt-val-default' : 'rt-val-override'}>{fmt(e_mm, 0)}</span> : '—'}</td>
+                <td className="rt-cell">{hasInsul ? <span className={seg.lambda_insul_override == null ? 'rt-val-default' : 'rt-val-override'}>{lambda_ins.toFixed(3)}</span> : '—'}</td>
+                {/* Résistances */}
+                <td className="rt-cell rt-result rt-result-first">{fmtR(R_si)}</td>
+                <td className="rt-cell rt-result">{fmtR(R_tube)}</td>
+                <td className="rt-cell rt-result">{hasInsul ? fmtR(R_ins) : '—'}</td>
+                <td className="rt-cell rt-result">{fmtR(R_ext)}</td>
+                <td className="rt-cell rt-result" style={{ fontWeight: 600 }}>{R_tot.toFixed(3)}</td>
+                {/* Résultat */}
+                <td className="rt-cell rt-result">{res != null ? fmt(res.T_surf, 1) : '—'}</td>
+                <td className="rt-cell rt-result">{res != null ? fmt(res.T_rosee, 1) : '—'}</td>
+                <td className="rt-cell rt-result" style={{ ...(res != null ? (res.risque ? risqueStyle : okStyle) : {}), whiteSpace: 'nowrap' }}>
+                  {res != null
+                    ? (res.risque ? `⚠ ${res.marge.toFixed(1)} °C` : `✓ +${res.marge.toFixed(1)} °C`)
+                    : <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>HR non renseignée</span>}
                 </td>
               </tr>
             )
@@ -1535,6 +1607,7 @@ export default function ResultsTable({
                       )
                       const isMelangeRow = (r: any) => r?.kind === 'melange-header' || r?.kind === 'melange-end'
                       if (row.kind === 'junction') {
+                        if (entryDisplayRows[i + 1]?.kind === 'flow-end') return null
                         if (isMelangeRow(entryDisplayRows[i - 1]) || isMelangeRow(entryDisplayRows[i + 1])) return null
                         return (
                           <tr key={`junc-${row.ptId}-${i}-${chIdx}`} className="rt-collecteur-header">
@@ -1542,11 +1615,31 @@ export default function ResultsTable({
                           </tr>
                         )
                       }
-                      if (row.kind === 'col-header') return (
-                        <tr key={`col-${row.name}-${i}-${chIdx}`} className="rt-col-sep">
-                          <td colSpan={CHAUF_COLS}>{row.name}</td>
-                        </tr>
-                      )
+                      if (row.kind === 'col-header') {
+                        const emInfo = getEmitterColInfo(row.emitterId)
+                        return (
+                          <tr key={`col-${row.name}-${i}-${chIdx}`} className="rt-col-sep">
+                            <td colSpan={CHAUF_COLS} style={{ padding: '5px 10px' }}>
+                              <span>{row.name}</span>
+                              {emInfo && <>
+                                {emInfo.label && <span style={{ fontWeight: 400, fontSize: 10, color: '#64748b' }}> / {emInfo.label}</span>}
+                                {emInfo.T_entree != null && emInfo.T_sortie != null && (
+                                  <span style={{ fontWeight: 400, fontSize: 10, color: '#64748b' }}> / {Math.round(emInfo.T_entree)} → {Math.round(emInfo.T_sortie)} °C</span>
+                                )}
+                                {emInfo.puissanceW != null && <span style={{ fontWeight: 400, fontSize: 10, color: '#64748b' }}> / {(emInfo.puissanceW / 1000).toFixed(2)} kW</span>}
+                              </>}
+                            </td>
+                          </tr>
+                        )
+                      }
+                      if (row.kind === 'separation') {
+                        if (entryDisplayRows[i + 1]?.kind === 'flow-end') return null
+                        return (
+                          <tr key={`sep-${i}-${chIdx}`} className="rt-collecteur-header">
+                            <td colSpan={CHAUF_COLS} />
+                          </tr>
+                        )
+                      }
                       if (row.kind === 'collecteur-header') {
                         if (isMelangeRow(entryDisplayRows[i - 1]) || isMelangeRow(entryDisplayRows[i + 1])) return null
                         return (
@@ -1584,7 +1677,7 @@ export default function ResultsTable({
                       const badgeClass = isEauGlacee
                         ? ((role === 'collecteur-retour' || !isAller) ? 'rt-badge-r-eg' : 'rt-badge-a-eg')
                         : ((role === 'collecteur-retour' || !isAller) ? 'rt-badge-r' : 'rt-badge-a')
-                      const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, entry.roleMap, flowDirections)
+                      const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, entry.roleMap, flowDirections, segDisplayDists)
                         .replace(/^(?:Collecteur Aller CH|Collecteur Retour CH|Collecteur Aller EG|Collecteur Retour EG|Aller CH|Retour CH|Aller EG|Retour EG)\s*–\s*/, '')
                       const levelName = segLevelName(seg, levels, lineYs)
                       const pdcResultCh = pdcResults?.get(seg.id)
@@ -1686,6 +1779,7 @@ export default function ResultsTable({
                 )
                 const isMelangeRow = (r: any) => r?.kind === 'melange-header' || r?.kind === 'melange-end'
                 if (row.kind === 'junction') {
+                  if (displayRows[i + 1]?.kind === 'flow-end') return null
                   if (isMelangeRow(displayRows[i - 1]) || isMelangeRow(displayRows[i + 1])) return null
                   return (
                     <tr key={`junc-${row.ptId}-${i}`} className="rt-collecteur-header">
@@ -1693,11 +1787,31 @@ export default function ResultsTable({
                     </tr>
                   )
                 }
-                if (row.kind === 'col-header') return (
-                  <tr key={`col-${row.name}-${i}`} className="rt-col-sep">
-                    <td colSpan={CHAUF_COLS}>{row.name}</td>
-                  </tr>
-                )
+                if (row.kind === 'col-header') {
+                  const emInfo = getEmitterColInfo(row.emitterId)
+                  return (
+                    <tr key={`col-${row.name}-${i}`} className="rt-col-sep">
+                      <td colSpan={CHAUF_COLS} style={{ padding: '5px 10px' }}>
+                        <span>{row.name}</span>
+                        {emInfo && <>
+                          {emInfo.label && <span style={{ fontWeight: 400, fontSize: 10, color: '#64748b' }}> / {emInfo.label}</span>}
+                          {emInfo.T_entree != null && emInfo.T_sortie != null && (
+                            <span style={{ fontWeight: 400, fontSize: 10, color: '#64748b' }}> / {Math.round(emInfo.T_entree)} → {Math.round(emInfo.T_sortie)} °C</span>
+                          )}
+                          {emInfo.puissanceW != null && <span style={{ fontWeight: 400, fontSize: 10, color: '#64748b' }}> / {(emInfo.puissanceW / 1000).toFixed(2)} kW</span>}
+                        </>}
+                      </td>
+                    </tr>
+                  )
+                }
+                if (row.kind === 'separation') {
+                  if (displayRows[i + 1]?.kind === 'flow-end') return null
+                  return (
+                    <tr key={`sep-${i}`} className="rt-collecteur-header">
+                      <td colSpan={CHAUF_COLS} />
+                    </tr>
+                  )
+                }
                 if (row.kind === 'collecteur-header') {
                   if (isMelangeRow(displayRows[i - 1]) || isMelangeRow(displayRows[i + 1])) return null
                   return (
@@ -1737,7 +1851,7 @@ export default function ResultsTable({
                 const badgeClass = isEauGlacee
                   ? ((role === 'collecteur-retour' || !isAller) ? 'rt-badge-r-eg' : 'rt-badge-a-eg')
                   : ((role === 'collecteur-retour' || !isAller) ? 'rt-badge-r' : 'rt-badge-a')
-                const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections)
+                const shortName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections, segDisplayDists)
                   .replace(/^(?:Collecteur Aller CH|Collecteur Retour CH|Collecteur Aller EG|Collecteur Retour EG|Aller CH|Retour CH|Aller EG|Retour EG)\s*–\s*/, '')
                 const levelName = segLevelName(seg, levels, lineYs)
                 const pdcResultCh = pdcResults?.get(seg.id)
@@ -2056,6 +2170,96 @@ export default function ResultsTable({
                 </React.Fragment>
               )
             })}
+          </table>
+        </div>
+      </div>
+    )
+  }
+
+  if (isVentilation) {
+    const VENT_COLS = 9
+    const ROLE_COLOR: Record<string, string> = {
+      soufflage: '#059669', reprise: '#f472b6', 'air-neuf': '#38bdf8', 'air-rejete': '#94a3b8',
+    }
+    const ROLE_LABEL: Record<string, string> = {
+      soufflage: 'Air soufflé', reprise: 'Air extrait', 'air-neuf': 'Air neuf', 'air-rejete': 'Air rejeté',
+    }
+    return (
+      <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
+        <div className="rt-table-scroll">
+          <table className="rt-table">
+            <thead>
+              <tr className="rt-thead-group">
+                <th colSpan={2} className="rt-thg">Identification</th>
+                <th colSpan={2} className="rt-thg">Canalisation</th>
+                <th colSpan={5} className="rt-thg rt-thg-result rt-th-result-first">Résultats</th>
+              </tr>
+              <tr className="rt-thead-cols">
+                <th className="rt-th">Tronçon</th>
+                <th className="rt-th">Rôle</th>
+                <th className="rt-th">DN</th>
+                <th className="rt-th">L (m)</th>
+                <th className="rt-th rt-th-result rt-th-result-first">Q (m³/h)</th>
+                <th className="rt-th rt-th-result">V (m/s)</th>
+                <th className="rt-th rt-th-result">J (Pa/m)</th>
+                <th className="rt-th rt-th-result">ΔP lin. (Pa)</th>
+                <th className="rt-th rt-th-result">ΔP tot. (Pa)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayRows.length === 0 && (
+                <tr><td colSpan={VENT_COLS} className="rt-empty">Aucun tronçon — tracez des réseaux ventilation et placez une CTA</td></tr>
+              )}
+              {displayRows.map((row, i) => {
+                if (row.kind === 'flow-start') return (
+                  <tr key="flow-start" className="rt-flow-banner rt-flow-banner-start">
+                    <td colSpan={VENT_COLS}>▶ CTA — Départ air soufflé</td>
+                  </tr>
+                )
+                if (row.kind === 'flow-end') return (
+                  <tr key="flow-end" className="rt-flow-banner rt-flow-banner-end">
+                    <td colSpan={VENT_COLS}>◀ CTA — Retour air extrait</td>
+                  </tr>
+                )
+                if (row.kind !== 'segment') return null
+                const { seg } = row
+                const role = roleMap?.get(seg.id) ?? 'soufflage'
+                const vr = ventilationResults?.get(seg.id)
+                const mat = materials?.find((m: any) => m.id === seg.materialId)
+                const isSelected = selectedIds?.includes(seg.id)
+                const name = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections, segDisplayDists)
+                return (
+                  <tr key={seg.id}
+                    className={`rt-row${isSelected ? ' rt-row-selected' : ''}`}
+                    ref={isSelected ? selectedRowRef : null}
+                    onClick={() => onSelectIds?.([seg.id])}>
+                    <td className="rt-td">{name ?? seg.name ?? '—'}</td>
+                    <td className="rt-td">
+                      <span style={{ color: ROLE_COLOR[role] ?? '#374151', fontWeight: 600, fontSize: 10 }}>
+                        {ROLE_LABEL[role] ?? role}
+                      </span>
+                    </td>
+                    <td className="rt-td">{seg.dn ?? '—'}</td>
+                    <td className="rt-td">{seg.length_override != null ? seg.length_override.toFixed(2) : '—'}</td>
+                    <td className="rt-td rt-td-result rt-td-result-first">
+                      {vr ? vr.Q_m3h.toFixed(0) : '—'}
+                    </td>
+                    <td className="rt-td rt-td-result" style={vr && vr.v_ms > 8 ? { color: '#ef4444', fontWeight: 700 } : vr && vr.v_ms > 5 ? { color: '#f97316', fontWeight: 700 } : {}}>
+                      {vr ? vr.v_ms.toFixed(2) : '—'}
+                    </td>
+                    <td className="rt-td rt-td-result" style={vr && vr.dp_Pa_m > 1.5 ? { color: '#f97316', fontWeight: 700 } : {}}>
+                      {vr ? vr.dp_Pa_m.toFixed(2) : '—'}
+                    </td>
+                    <td className="rt-td rt-td-result">
+                      {vr && seg.length_override != null ? Math.round(vr.dp_Pa) : '—'}
+                    </td>
+                    <td className="rt-td rt-td-result" style={{ fontWeight: 600 }}>
+                      {vr && seg.length_override != null ? Math.round(vr.dp_total_Pa) : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
           </table>
         </div>
       </div>

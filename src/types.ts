@@ -16,6 +16,9 @@ export interface DnEntry {
   dn: string
   di: number
   de: number
+  a?: number   // gaine rectangulaire : largeur (mm)
+  b?: number   // gaine rectangulaire : hauteur (mm)
+  dh?: number  // gaine rectangulaire : diamètre hydraulique (mm)
 }
 
 export interface Material {
@@ -28,6 +31,7 @@ export interface Material {
   dns: DnEntry[]
   encrassement?: boolean
   encrassementEpaisseur?: number
+  shapeType?: 'circular' | 'rectangular'
 }
 
 export interface Insulation {
@@ -39,9 +43,9 @@ export interface Insulation {
 }
 
 export type SegmentType = 'aller' | 'retour'
-export type PointType = 'productionECS' | 'arriveeEF' | 'groupe' | 'pump' | 'node' | 'productionChauffage' | 'emetteur' | 'productionEauGlacee' | 'terminalFroid'
+export type PointType = 'productionECS' | 'arriveeEF' | 'groupe' | 'pump' | 'node' | 'productionChauffage' | 'emetteur' | 'productionEauGlacee' | 'terminalFroid' | 'cta' | 'boucheVentilation'
 
-export type FluidId = 'ecs' | 'ef' | 'chauffage' | 'eauglacee'
+export type FluidId = 'ecs' | 'ef' | 'chauffage' | 'eauglacee' | 'ventilation'
 
 export type CalcMode =
   | 'bouclage-ecs'
@@ -50,6 +54,7 @@ export type CalcMode =
   | 'distribution-chauffage'
   | 'pdc-chauffage'
   | 'distribution-eauglacee'
+  | 'distribution-ventilation'
 
 export interface Segment {
   id: string
@@ -234,6 +239,11 @@ export interface EauGlaceeParams {
   deltaT_reseau: number // ΔT par défaut des terminaux (K) — peut être overridé par terminal
 }
 
+export interface VentilationParams {
+  T_soufflage: number   // Température de soufflage (°C)
+  deltaT: number        // ΔT soufflage/reprise (K)
+}
+
 export interface LocalEauGlacee {
   id: string
   enabled: boolean
@@ -251,14 +261,28 @@ export interface NetworkDisplayPrefs {
   strokeWidth: number
 }
 
+export interface VentilationDisplayPrefs extends NetworkDisplayPrefs {
+  colorAirNeuf:   string
+  colorAirRejete: string
+}
+
 export interface DisplayPrefs {
   ecs: NetworkDisplayPrefs
   ef: NetworkDisplayPrefs
   chauffage: NetworkDisplayPrefs & { unitPuissance: 'W' | 'kW' }
   eauglacee: NetworkDisplayPrefs & { unitPuissance: 'W' | 'kW' }
+  ventilation?: VentilationDisplayPrefs
 }
 
 // ── Types variantes ─────────────────────────────────────────────────────────
+
+export interface CalcConstants {
+  he_ecs?: number       // W/(m²·K) — convection extérieure ECS, défaut 10
+  rho_cp?: number       // Wh/(m³·K) — ρ·cp eau chauffage/EG, défaut 1163
+  h_ext_eg?: number     // W/(m²·K) — convection extérieure EG, défaut 10
+  h_int_eg?: number     // W/(m²·K) — convection intérieure EG, défaut 3000
+  margin_cond?: number  // °C — marge de sécurité condensation, défaut 1
+}
 
 export interface ProjectData {
   segments:              Segment[]
@@ -290,7 +314,12 @@ export interface ProjectData {
   locauxEauGlacee?:      LocalEauGlacee[]
   chauffageParams:       ChauffageParams
   eauGlaceeParams?:      EauGlaceeParams
+  ventilationParams?:    VentilationParams
+  pdcParamsVentilation?: PdcParams
+  materialsVentilation?: Material[]
   displayPrefs?:         DisplayPrefs
+  calcConstants?:        CalcConstants
+  hrGlobalDefault?:      number | null
   customEmetteurTypes?:      CustomEmetteurDef[]
   customTerminalFroidTypes?: CustomTerminalFroidDef[]
 }

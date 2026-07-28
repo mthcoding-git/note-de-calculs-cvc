@@ -14,9 +14,9 @@ const isTerminal = (pt: Point | undefined): boolean =>
 const isProduction = (pt: Point | undefined): boolean =>
   pt?.type === 'productionChauffage' || pt?.type === 'productionEauGlacee'
 
-export function emetteurFlowRate(puissanceW: number, dTPrimaire: number): number {
+export function emetteurFlowRate(puissanceW: number, dTPrimaire: number, rho_cp = RHO_CP): number {
   if (dTPrimaire <= 0 || puissanceW <= 0) return 0
-  return puissanceW / (RHO_CP * dTPrimaire)
+  return puissanceW / (rho_cp * dTPrimaire)
 }
 
 function getSegLen(seg: Segment): number {
@@ -191,7 +191,7 @@ function terminalTEntree(pt: Point, T_prod: number): number {
  * Q = P / (RHO_CP × |T_entrée − T_sortie|) — débit propre à chaque terminal.
  * |dT| est utilisé pour fonctionner en chauffage (dT > 0) et en EG (dT < 0).
  */
-function buildTerminalQMap(points: Point[], params: ChauffageParams): Map<string, number> {
+function buildTerminalQMap(points: Point[], params: ChauffageParams, rho_cp?: number): Map<string, number> {
   const T_prod = params.T_depart
   const map = new Map<string, number>()
   for (const pt of points) {
@@ -199,7 +199,7 @@ function buildTerminalQMap(points: Point[], params: ChauffageParams): Map<string
     const T_entree = terminalTEntree(pt, T_prod)
     const T_sortie = terminalTSortie(pt, T_prod)
     const dT = Math.abs(T_entree - T_sortie)
-    map.set(pt.id, emetteurFlowRate(pt.puissance ?? 0, dT))
+    map.set(pt.id, emetteurFlowRate(pt.puissance ?? 0, dT, rho_cp))
   }
   return map
 }
@@ -505,10 +505,11 @@ function retourLeafT(
 export function computeChauffageFlows(
   segments: Segment[], points: Point[], materials: any[],
   chauffageParams: ChauffageParams, flowDirections: FlowDirections,
-  mixingNodes: Set<string> = new Set()
+  mixingNodes: Set<string> = new Set(),
+  rho_cp?: number
 ): Map<string, ChauffageFlowEntry> {
   const { T_depart } = chauffageParams
-  const emetteurQs = buildTerminalQMap(points, chauffageParams)
+  const emetteurQs = buildTerminalQMap(points, chauffageParams, rho_cp)
 
   const velFn = (seg: Segment, Q: number): number | null => {
     const di_mm = getDi_mm(seg, materials)

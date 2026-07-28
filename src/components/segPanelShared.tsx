@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { FITTING_TYPES, EQUIPMENT_TYPES, getEquipmentForMode } from '../utils/pdcCalc'
+import { FITTING_TYPES, EQUIPMENT_TYPES, getEquipmentForMode, getFittingsForMode } from '../utils/pdcCalc'
 import { NumInput } from './NumInput'
 
-export function SegFittingsPanel({ seg, set, pdcParams }) {
+export function SegFittingsPanel({ seg, set, pdcParams, mode = null }: { seg: any; set: any; pdcParams: any; mode?: string | null }) {
   const [addOpen, setAddOpen] = useState(false)
   const dropRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -31,11 +31,17 @@ export function SegFittingsPanel({ seg, set, pdcParams }) {
   }
 
   const customLibF: any[] = pdcParams?.customFittings ?? []
+  // allStdF : liste complète pour résoudre les IDs déjà stockés (labels + ξ)
   const allStdF = [
     ...FITTING_TYPES,
     ...customLibF.map(t => ({ id: t.id, label: t.label || 'Personnalisé', xi: t.xi })),
   ]
-  const available = allStdF.filter(t => !fittings.find(f => f.type === t.id))
+  // modeFittings : liste filtrée par mode pour le dropdown "Ajouter"
+  const modeFittings = [
+    ...getFittingsForMode(mode),
+    ...customLibF.map(t => ({ id: t.id, label: t.label || 'Personnalisé', xi: t.xi })),
+  ]
+  const available = modeFittings.filter(t => !fittings.find(f => f.type === t.id))
 
   const row: React.CSSProperties = {
     display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4,
@@ -138,11 +144,15 @@ export function SegEquipPanel({ seg, set, pdcParams, mode = null }: { seg: any; 
     return () => document.removeEventListener('mousedown', h)
   }, [addOpen])
 
+  const isVent      = mode === 'distribution-ventilation'
   const equipment: any[]  = seg.equipment ?? []
   const libOverrides       = pdcParams?.equipmentOverrides ?? {}
 
   const setKv = (typeId: string, val: number | null) => {
     set('equipment', equipment.map(e => e.type === typeId ? { ...e, kvOverride: val ?? undefined } : e))
+  }
+  const setDp = (typeId: string, val: number | null) => {
+    set('equipment', equipment.map(e => e.type === typeId ? { ...e, dpOverride: val ?? undefined } : e))
   }
   const del = (typeId: string) => set('equipment', equipment.filter(e => e.type !== typeId))
   const add = (typeId: string) => {
@@ -155,11 +165,11 @@ export function SegEquipPanel({ seg, set, pdcParams, mode = null }: { seg: any; 
   const customLibE: any[] = pdcParams?.customEquipments ?? []
   const allStdE = [
     ...EQUIPMENT_TYPES,
-    ...customLibE.map(t => ({ id: t.id, label: t.label || 'Personnalisé', kvDefault: t.kvDefault })),
+    ...customLibE.map((t: any) => ({ id: t.id, label: t.label || 'Personnalisé', kvDefault: t.kvDefault, dpDefault: t.dpDefault })),
   ]
   const availableStdE = [
     ...getEquipmentForMode(mode),
-    ...customLibE.map(t => ({ id: t.id, label: t.label || 'Personnalisé', kvDefault: t.kvDefault })),
+    ...customLibE.map((t: any) => ({ id: t.id, label: t.label || 'Personnalisé', kvDefault: t.kvDefault, dpDefault: t.dpDefault })),
   ]
   const available = availableStdE.filter(t => !equipment.find(e => e.type === t.id))
 
@@ -185,11 +195,42 @@ export function SegEquipPanel({ seg, set, pdcParams, mode = null }: { seg: any; 
       )}
 
       {equipment.map(e => {
-        const def       = allStdE.find(t => t.id === e.type)
-        const libKv     = def ? (libOverrides[e.type] ?? def.kvDefault) : null
-        const kv        = e.kvOverride ?? libKv
+        const def = allStdE.find(t => t.id === e.type)
+        if (isVent) {
+          const libDp    = def ? (libOverrides[e.type] ?? (def as any).dpDefault) : null
+          const dp       = e.dpOverride ?? libDp
+          const overridden = e.dpOverride != null
+          const needsDp  = dp == null
+          return (
+            <div key={e.type} style={row}>
+              <span style={{ flex: 1, fontSize: 10, color: '#374151', lineHeight: 1.3 }}>
+                {def?.label ?? e.type}
+              </span>
+              <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>ΔP</span>
+              <NumInput min={0} step={1} value={dp ?? null} allowEmpty
+                placeholder={libDp != null ? `${libDp}` : 'requis'}
+                onChange={val => setDp(e.type, val)}
+                style={{ ...inp({ width: 50,
+                                  color: needsDp ? '#f97316' : overridden ? '#7c3aed' : '#374151',
+                                  border: `1px solid ${needsDp ? '#fed7aa' : overridden ? '#ddd6fe' : '#e5e7eb'}` }) }} />
+              <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Pa</span>
+              {overridden && libDp != null && (
+                <button onClick={() => setDp(e.type, null)} title={`Rétablir (${libDp} Pa)`}
+                  style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11, padding: 0 }}>
+                  ↺
+                </button>
+              )}
+              <button onClick={() => del(e.type)}
+                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 15, padding: '0 2px', lineHeight: 1 }}>
+                ×
+              </button>
+            </div>
+          )
+        }
+        const libKv    = def ? (libOverrides[e.type] ?? (def as any).kvDefault) : null
+        const kv       = e.kvOverride ?? libKv
         const overridden = e.kvOverride != null
-        const needsKv   = kv == null
+        const needsKv  = kv == null
         return (
           <div key={e.type} style={row}>
             <span style={{ flex: 1, fontSize: 10, color: '#374151', lineHeight: 1.3 }}>
@@ -232,8 +273,10 @@ export function SegEquipPanel({ seg, set, pdcParams, mode = null }: { seg: any; 
                 Tous les équipements sont déjà ajoutés
               </div>
             ) : available.map(t => {
-              const libKv = libOverrides[t.id] ?? t.kvDefault
-              const long = t.label.length > 32
+              const long = (t.label as string).length > 32
+              const hint = isVent
+                ? `ΔP = ${(t as any).dpDefault ?? '—'} Pa`
+                : `Kv = ${(t as any).kvDefault ?? '—'}`
               return (
                 <div key={t.id} onClick={() => add(t.id)}
                   style={{ padding: '5px 10px', fontSize: 10.5, cursor: 'pointer', borderRadius: 5,
@@ -243,7 +286,7 @@ export function SegEquipPanel({ seg, set, pdcParams, mode = null }: { seg: any; 
                   onMouseLeave={e => (e.currentTarget.style.background = '')}>
                   <span>{t.label}</span>
                   <span style={{ fontSize: 9.5, color: '#9ca3af', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                    Kv = {libKv ?? '—'}
+                    {hint}
                   </span>
                 </div>
               )

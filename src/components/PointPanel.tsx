@@ -53,6 +53,7 @@ interface PointPanelProps {
   materials?: any[]; roleMap?: any; columns?: any[]; columnXs?: number[]
   thermalResults?: any; chauffageFlows?: any; chauffageParams?: any; onChauffageParamsChange?: any; chauffageThermal?: any
   eauGlaceeFlows?: any; eauGlaceeParams?: any; onEauGlaceeParamsChange?: any; eauGlaceeThermal?: any
+  egApportsMap?: Map<string, number> | null
   customEmetteurTypes?: any[]; customTerminalFroidTypes?: any[]
   eauGlaceePumpHMT?: Map<string, { hmt: number | null; criticalSegIds: Set<string>; isSecondary: boolean }>
   eauGlaceeSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
@@ -63,17 +64,21 @@ interface PointPanelProps {
   onShowCriticalPath?: (segIds: string[]) => void
   pumpCriticalMap?: Map<string, { critDp: number | null; criticalSegIds: Set<string> }> | null
   criticalPathIds?: string[]
+  calcConstants?: import('../types').CalcConstants
+  ventilationResults?: Map<string, any>
 }
 
-export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null, eauGlaceeFlows = null, eauGlaceeParams = null, onEauGlaceeParamsChange = null, eauGlaceeThermal = null, eauGlaceePumpHMT = null, eauGlaceeSplitCumDp = null, networkFlows = null, mixingNodes = null, chauffagePumpHMT = null, chauffageSplitCumDp = null, onShowCriticalPath = null, pumpCriticalMap = null, criticalPathIds = [], customEmetteurTypes = [], customTerminalFroidTypes = [] }: PointPanelProps) {
+export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null, eauGlaceeFlows = null, eauGlaceeParams = null, onEauGlaceeParamsChange = null, eauGlaceeThermal = null, egApportsMap = null, eauGlaceePumpHMT = null, eauGlaceeSplitCumDp = null, networkFlows = null, mixingNodes = null, chauffagePumpHMT = null, chauffageSplitCumDp = null, onShowCriticalPath = null, pumpCriticalMap = null, criticalPathIds = [], customEmetteurTypes = [], customTerminalFroidTypes = [], calcConstants, ventilationResults = null }: PointPanelProps) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
-  const T_depart = globalParams?.T_depart ?? null
+  const T_depart     = globalParams?.T_depart ?? null
+  const _prodECS_ref = points.find(p => p.type === 'productionECS')
+  const T_depart_eff = _prodECS_ref?.T_depart_override ?? T_depart
   const [showDims, setShowDims] = useState(false)
   const [showDimsCH, setShowDimsCH] = useState(false)
   const [showDimsEF, setShowDimsEF] = useState(false)
   const deltaTByType = useRef<Record<string, number | null>>({})
 
-  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, hasPdc, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, hasPdc, isChauffage, isEauGlacee, isVentilation } = getModeFlags(activeCalcId)
 
   const coteDef = getNodeDefaultCote(pt, levels, lineYs)
   const coteJsx = isAlimMode ? (
@@ -137,6 +142,158 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
       )
     }
     return null
+  }
+
+  if (pt.type === 'cta') {
+    const set = (k, v) => onUpdate(pt.id, 'point', { [k]: v })
+    const connectedSegs = allSegs.filter(s => s.startPointId === pt.id || s.endPointId === pt.id)
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title">CTA</h3>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginBottom: 8,
+          padding: '3px 8px', background: '#f0fdf4', border: '1px solid #86efac',
+          borderRadius: 4, fontSize: 10, fontWeight: 700, color: '#059669' }}>
+          Centrale de Traitement d'Air
+        </div>
+        <hr className="rp-divider" />
+        <div className="lp-field">
+          <label className="lp-label">Nom</label>
+          <input type="text" value={pt.name ?? ''} onChange={e => set('name', e.target.value)}
+            style={{ width: '100%', padding: '4px 6px', fontSize: 11, border: '1px solid #d1d5db', borderRadius: 4 }} />
+        </div>
+        {/* Températures par type de réseau */}
+        <hr className="rp-divider" />
+        <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
+          letterSpacing: '0.06em', marginBottom: 6 }}>Températures réseau</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px', marginBottom: 4 }}>
+          {([
+            { key: 'T_soufflage', label: 'Air soufflé',  color: '#059669', def: 18 },
+            { key: 'T_reprise',   label: 'Air extrait',   color: '#f472b6', def: 20 },
+            { key: 'T_airNeuf',   label: 'Air neuf',      color: '#0284c7', def: -8 },
+            { key: 'T_airRejete', label: 'Air rejeté',    color: '#94a3b8', def: 20 },
+          ] as const).map(({ key, label, color, def }) => (
+            <div key={key} className="lp-field" style={{ marginBottom: 0 }}>
+              <label className="lp-label" style={{ color, fontWeight: 600 }}>
+                {label} <span className="lp-unit">°C</span>
+              </label>
+              <NumInput step={1} min={-30} max={60} allowEmpty
+                value={(pt as any)[key] ?? null}
+                placeholder={String(def)}
+                onChange={v => set(key, v)} />
+            </div>
+          ))}
+        </div>
+
+        {connectedSegs.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
+              letterSpacing: '0.06em', marginBottom: 4 }}>Tronçons connectés</div>
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: 5, overflow: 'hidden' }}>
+              {connectedSegs.map(s => {
+                const role = roleMap?.get(s.id) ?? (s.type === 'retour' ? 'reprise' : 'soufflage')
+                const roleColor = role === 'reprise' ? '#f472b6' : role === 'air-rejete' ? '#94a3b8' : role === 'air-neuf' ? '#38bdf8' : '#059669'
+                const roleLabel = role === 'reprise' ? 'Air extrait' : role === 'air-rejete' ? 'Air rejeté' : role === 'air-neuf' ? 'Air neuf' : 'Air soufflé'
+                const vr = ventilationResults?.get(s.id)
+                return (
+                  <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '5px 10px', borderBottom: '1px solid #f3f4f6', gap: 8 }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: roleColor,
+                      background: roleColor + '18', padding: '1px 5px', borderRadius: 3 }}>{roleLabel}</span>
+                    <span style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: '#374151' }}>
+                      {vr ? `${vr.Q_m3h.toFixed(0)} m³/h` : '—'}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (pt.type === 'boucheVentilation') {
+    const set = (k, v) => onUpdate(pt.id, 'point', { [k]: v })
+    const connectedSegs = allSegs.filter(s => s.startPointId === pt.id || s.endPointId === pt.id)
+    const isReprise = connectedSegs.some(s => roleMap?.get(s.id) === 'reprise')
+    const role = isReprise ? 'reprise' : 'soufflage'
+    const roleColor = isReprise ? '#f472b6' : '#059669'
+    const roleLabel = isReprise ? 'Air extrait' : 'Air soufflé'
+    const totalQ = connectedSegs.reduce((sum, s) => {
+      const vr = ventilationResults?.get(s.id)
+      return sum + (vr?.Q_m3h ?? 0)
+    }, 0)
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title">Bouche</h3>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginBottom: 8,
+          padding: '3px 8px', background: roleColor + '18', border: `1px solid ${roleColor}44`,
+          borderRadius: 4, fontSize: 10, fontWeight: 700, color: roleColor }}>
+          {roleLabel}
+        </div>
+        <hr className="rp-divider" />
+        <div className="lp-field">
+          <label className="lp-label">Nom</label>
+          <input type="text" value={pt.name ?? ''} onChange={e => set('name', e.target.value)}
+            style={{ width: '100%', padding: '4px 6px', fontSize: 11, border: '1px solid #d1d5db', borderRadius: 4 }} />
+        </div>
+        <div className="lp-field">
+          <label className="lp-label">Débit nominal <span className="lp-unit">(m³/h)</span></label>
+          <NumInput min={0} step={1} allowEmpty
+            value={pt.debit_nominal ?? null}
+            placeholder="saisie manuelle"
+            onChange={v => set('debit_nominal', v)} />
+        </div>
+        {totalQ > 0 && (
+          <div style={{ marginTop: 4, padding: '6px 10px', background: '#f9fafb',
+            border: '1px solid #e5e7eb', borderRadius: 5,
+            fontSize: 10, color: '#374151', fontFamily: 'ui-monospace, monospace' }}>
+            Q calculé : <strong>{totalQ.toFixed(0)} m³/h</strong>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Nœud extrémité air neuf ou air rejeté
+  if (activeCalcId === 'distribution-ventilation') {
+    const connSegs = allSegs.filter(s => s.startPointId === pt.id || s.endPointId === pt.id)
+    const airSeg   = connSegs.find((s: any) => s.pipeSubType === 'air-neuf' || s.pipeSubType === 'air-rejete')
+    if (airSeg && connSegs.length === 1 && pt.type !== 'cta') {
+      const isNeuf  = (airSeg as any).pipeSubType === 'air-neuf'
+      const color   = isNeuf ? '#0284c7' : '#64748b'
+      const label   = isNeuf ? 'Air neuf' : 'Air rejeté'
+      return (
+        <div className="rp-section">
+          <h3 className="rp-title">{label}</h3>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginBottom: 8,
+            padding: '3px 8px', background: color + '18', border: `1px solid ${color}44`,
+            borderRadius: 4, fontSize: 10, fontWeight: 700, color }}>
+            {isNeuf ? 'Entrée air extérieur' : 'Rejet air extérieur'}
+          </div>
+          <hr className="rp-divider" />
+          <div className="lp-field">
+            <label className="lp-label">Nom</label>
+            <input type="text" value={pt.name ?? ''} onChange={e => onUpdate(pt.id, 'point', { name: e.target.value })}
+              style={{ width: '100%', padding: '4px 6px', fontSize: 11, border: '1px solid #d1d5db', borderRadius: 4 }} />
+          </div>
+          <div className="lp-field">
+            <label className="lp-label">Débit <span className="lp-unit">(m³/h)</span></label>
+            <NumInput min={0} step={1} allowEmpty
+              value={(airSeg as any).flowRate ?? null}
+              placeholder="—"
+              onChange={v => onUpdate((airSeg as any).id, 'segment', { flowRate: v ?? undefined })} />
+          </div>
+          {ventilationResults?.get((airSeg as any).id)?.Q_m3h && (
+            <div style={{ marginTop: 4, padding: '6px 10px', background: '#f9fafb',
+              border: '1px solid #e5e7eb', borderRadius: 5,
+              fontSize: 10, color: '#374151', fontFamily: 'ui-monospace, monospace' }}>
+              Q calculé : <strong>{ventilationResults!.get((airSeg as any).id)!.Q_m3h.toFixed(0)} m³/h</strong>
+            </div>
+          )}
+        </div>
+      )
+    }
   }
 
   if (pt.type === 'pump') {
@@ -220,7 +377,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                 />
               )}
             </>)}
-            {showTemp && <TempBadge temp={nodeTemp} T_depart={T_depart} />}
+            {showTemp && <TempBadge temp={nodeTemp} T_depart={T_depart_eff} />}
           </div>
         )}
 
@@ -370,7 +527,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             </>
           )
         })()}
-        <TempBadge temp={isAlimECS ? null : nodeTemp} T_depart={T_depart} />
+        <TempBadge temp={isAlimECS ? null : nodeTemp} T_depart={T_depart_eff} />
 
         {isAlimMode && calcSubMode === 'pdc' && (() => {
           const segId = inSegs[0]?.id
@@ -809,8 +966,22 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
         <hr className="rp-divider" />
         <SectionLabel>Réseau</SectionLabel>
         {statRow('Nb terminaux froids', terminaux.length)}
-        {statRow('Puissance totale',
+        {statRow('Puissance terminaux',
           <>{(totalPuissance / 1000).toFixed(1)} <span style={{ fontSize: 10, fontWeight: 400 }}>kW</span></>)}
+        {(() => {
+          const totalApports = egApportsMap != null
+            ? Array.from(egApportsMap.values()).reduce((s, v) => s + v, 0)
+            : 0
+          const puissanceGroupe = totalPuissance + totalApports
+          return (<>
+            {totalApports > 0 && statRow('Apports réseau',
+              <span style={{ color: '#f97316', fontWeight: 700 }}>+{totalApports >= 1000 ? `${(totalApports / 1000).toFixed(2)} kW` : `${Math.round(totalApports)} W`}</span>
+            )}
+            {statRow('Puissance groupe froid',
+              <span style={{ fontWeight: 700 }}>{(puissanceGroupe / 1000).toFixed(2)} <span style={{ fontSize: 10, fontWeight: 400 }}>kW</span></span>
+            )}
+          </>)
+        })()}
         {totalQ != null && (() => {
           const unitDebit = (pdcParams as any)?.unitDebit ?? 'L/h'
           const qVal = unitDebit === 'L/h' ? (totalQ * 1000).toFixed(1) : totalQ.toFixed(3)
@@ -866,7 +1037,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
     const T_prod       = chauffageParams?.T_depart ?? 70
     const T_entree     = pt.T_entree_emetteur ?? emetteurDef?.T_entreeDefault ?? T_prod
     const T_sortie     = pt.T_sortie_emetteur ?? emetteurDef?.T_sortieDefault ?? (T_prod - 20)
-    const RHO_CP       = 1163
+    const RHO_CP       = calcConstants?.rho_cp ?? 1163
     const dT           = T_entree - T_sortie
     const flowRateLh   = puissanceW != null && dT > 0
       ? (puissanceW / (RHO_CP * dT)) * 1000
@@ -967,7 +1138,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
     const deltaT      = eauGlaceeParams?.deltaT_reseau ?? 5
     const T_entree    = pt.T_entree_emetteur ?? tfDef?.T_entreeDefault ?? T_prod
     const T_sortie    = pt.T_sortie_emetteur ?? tfDef?.T_sortieDefault ?? (T_prod + deltaT)
-    const RHO_CP      = 1163
+    const RHO_CP      = calcConstants?.rho_cp ?? 1163
     const dT          = Math.abs(T_entree - T_sortie)
     const flowRateLh  = puissanceW != null && dT > 0
       ? (puissanceW / (RHO_CP * dT)) * 1000
@@ -2340,7 +2511,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
   }
 
   // ── Nœud de jonction ────────────────────────────────────────────
-  const dT_depuis_depart = nodeTemp != null && T_depart != null ? nodeTemp - T_depart : null
+  const dT_depuis_depart = nodeTemp != null && T_depart_eff != null ? nodeTemp - T_depart_eff : null
 
   return (
     <div className="rp-section">
@@ -2352,7 +2523,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
 {nodeTemp != null && (
       <>
         {(() => {
-          const tsN = tAvalStyle(nodeTemp, T_depart ?? 60)
+          const tsN = tAvalStyle(nodeTemp, T_depart_eff ?? 60)
           return (
             <div style={{ padding: '9px 10px', background: tsN.background ?? '#fffbeb',
               border: `1px solid ${tsN.borderColor ?? '#fde68a'}`, borderRadius: 6, marginTop: 8 }}>
@@ -2374,7 +2545,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
             ΔT depuis départ :{' '}
             <span style={{ fontWeight: 700, color: '#374151' }}>{sf(dT_depuis_depart, 2)} K</span>
             <span style={{ color: '#9ca3af', marginLeft: 5 }}>
-              ({sf(T_depart, 0)} → {sf(nodeTemp, 2)} °C)
+              ({sf(T_depart_eff, 0)} → {sf(nodeTemp, 2)} °C)
             </span>
           </div>
         )}

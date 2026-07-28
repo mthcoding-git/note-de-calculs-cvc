@@ -464,6 +464,7 @@ interface RightPanelProps {
   selectedLocalGroupeFroidId?: string | null; onSelectedLocalGroupeFroidChange?: any
   chauffageFlows?: any; chauffageParams?: any; onChauffageParamsChange?: any; chauffageThermal?: any
   eauGlaceeFlows?: any; eauGlaceeParams?: any; onEauGlaceeParamsChange?: any; eauGlaceeThermal?: any
+  egApportsMap?: Map<string, number> | null
   customEmetteurTypes?: any[]; customTerminalFroidTypes?: any[]
   eauGlaceePumpHMT?: Map<string, any>
   eauGlaceeSplitCumDp?: any
@@ -473,6 +474,10 @@ interface RightPanelProps {
   onShowCriticalPath?: (segIds: string[]) => void
   pumpCriticalMap?: Map<string, { critDp: number | null; criticalSegIds: Set<string> }> | null
   criticalPathIds?: string[]
+  hrGlobalDefault?: number | null
+  calcConstants?: import('../types').CalcConstants
+  ventilationResults?: Map<string, any>
+  ventilationFlows?: Map<string, any>
 }
 
 export default function RightPanel({
@@ -498,12 +503,17 @@ export default function RightPanel({
   selectedLocalGroupeFroidId = null, onSelectedLocalGroupeFroidChange,
   chauffageFlows, chauffageParams, onChauffageParamsChange, chauffageThermal,
   eauGlaceeFlows, eauGlaceeParams, onEauGlaceeParamsChange, eauGlaceeThermal,
+  egApportsMap = null,
   eauGlaceePumpHMT, eauGlaceeSplitCumDp,
   mixingNodes, chauffagePumpHMT, chauffageSplitCumDp, onShowCriticalPath,
   pumpCriticalMap = null,
   criticalPathIds = [],
   customEmetteurTypes = [],
   customTerminalFroidTypes = [],
+  hrGlobalDefault = null,
+  calcConstants,
+  ventilationResults,
+  ventilationFlows,
 }: RightPanelProps) {
   const [resultsView, setResultsView] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
 
@@ -618,6 +628,7 @@ export default function RightPanel({
 
   if (seg) return (
     <SegmentPanel
+      key={seg.id}
       seg={seg} onUpdate={onUpdate} materials={materials} insulations={insulations}
       allSegs={segments} levels={levels} lineYs={lineYs}
       columns={columns} columnXs={columnXs} chaufferie={chaufferie}
@@ -627,6 +638,7 @@ export default function RightPanel({
       thermalData={thermalResults?.segResults.get(seg.id)}
       chauffageThermal={chauffageThermal}
       eauGlaceeThermal={eauGlaceeThermal}
+      egApportsMap={egApportsMap}
       roleMap={roleMap}
       drawMode={drawMode}
       onExitEditParams={onExitEditParams}
@@ -645,6 +657,10 @@ export default function RightPanel({
       chauffageSplitCumDp={chauffageSplitCumDp}
       eauGlaceeSplitCumDp={eauGlaceeSplitCumDp}
       eauGlaceeParams={eauGlaceeParams}
+      hrGlobalDefault={hrGlobalDefault}
+      calcConstants={calcConstants}
+      ventilationResult={ventilationResults?.get(seg.id)}
+      ventilationFlow={ventilationFlows?.get(seg.id)}
     />
   )
   if (pt) {
@@ -659,6 +675,7 @@ export default function RightPanel({
       }))
     return (
       <PointPanel
+        key={pt.id}
         pt={pt} onUpdate={onUpdate}
         nodeTemp={resultsView === 'pdc' || activeCalcId === 'alimentation-ecs' ? null : thermalResults?.nodeTemps.get(pt.id)}
         inSegs={inSegs}
@@ -694,6 +711,7 @@ export default function RightPanel({
         eauGlaceeParams={eauGlaceeParams}
         onEauGlaceeParamsChange={onEauGlaceeParamsChange}
         eauGlaceeThermal={eauGlaceeThermal}
+        egApportsMap={egApportsMap}
         eauGlaceePumpHMT={eauGlaceePumpHMT}
         eauGlaceeSplitCumDp={eauGlaceeSplitCumDp}
         networkFlows={networkFlows}
@@ -705,6 +723,8 @@ export default function RightPanel({
         criticalPathIds={criticalPathIds}
         customEmetteurTypes={customEmetteurTypes}
         customTerminalFroidTypes={customTerminalFroidTypes}
+        calcConstants={calcConstants}
+        ventilationResults={ventilationResults}
       />
     )
   }

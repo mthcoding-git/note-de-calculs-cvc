@@ -11,6 +11,7 @@ import { NumInput } from './NumInput'
 import { SegFittingsPanel, SegEquipPanel } from './segPanelShared'
 import { tAvalStyle, Field, SectionLabel, SegNameField, CoteSection, TempBadge, AntenneGroupesAval } from './rpShared'
 import PdcSegResults from './PdcSegResults'
+import VentPdcResults from './VentPdcResults'
 import { ABAQUE } from '../utils/alimentationCalc'
 
 
@@ -26,17 +27,43 @@ interface SegmentPanelProps {
   groupDisplayNames?: any
   chauffageThermal?: any
   eauGlaceeThermal?: any
+  egApportsMap?: Map<string, number> | null
   chauffageSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
   eauGlaceeSplitCumDp?: { segCumDp: Map<string, number>; secondarySegIds: Set<string>; segPostJunction: Map<string, boolean>; criticalSegIds: Set<string>; segJunctionWinner: Map<string, string> } | null
   eauGlaceeParams?: any
+  hrGlobalDefault?: number | null
+  calcConstants?: import('../types').CalcConstants
+  ventilationResult?: any
+  ventilationFlow?: any
 }
 
-export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null, chauffageThermal = null, eauGlaceeThermal = null, chauffageSplitCumDp = null, eauGlaceeSplitCumDp = null, eauGlaceeParams = null }: SegmentPanelProps) {
+export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null, chauffageThermal = null, eauGlaceeThermal = null, egApportsMap = null, chauffageSplitCumDp = null, eauGlaceeSplitCumDp = null, eauGlaceeParams = null, hrGlobalDefault = null, calcConstants, ventilationResult = null, ventilationFlow = null }: SegmentPanelProps) {
   const [tab, setTab]                       = useState('params')
   const [openDetailTherm, setOpenDetailTherm] = useState(false)
   const [openCondDetail, setOpenCondDetail]   = useState(false)
   const [openResDetail, setOpenResDetail]     = useState(false)
+  const [calcOpen, setCalcOpen]               = useState(false)
+  const [exprStr,  setExprStr]                = useState(() =>
+    seg.length_override != null ? `= ${seg.length_override}` : ''
+  )
   const set = (key, val) => onUpdate(seg.id, 'segment', { [key]: val })
+
+  useEffect(() => {
+    setCalcOpen(false)
+    setExprStr(seg.length_override != null ? `= ${seg.length_override}` : '')
+  }, [seg.id])
+
+  const evalExpr = (text: string) => {
+    const norm = text.replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').trim()
+    const safe = norm.replace(/[^0-9+\-*/.() ]/g, '').trim()
+    if (!safe) return
+    try {
+      // eslint-disable-next-line no-new-func
+      const result = new Function(`return (${safe})`)()
+      if (typeof result === 'number' && isFinite(result) && result > 0)
+        set('length_override', parseFloat(result.toFixed(3)))
+    } catch { /* expression invalide — valeur inchangée */ }
+  }
 
   const enabledMats = materials.filter(m => m.enabled)
   const enabledIns  = insulations.filter(i => i.enabled)
@@ -49,7 +76,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
 
   const uiValue = computeSegUI(seg, materials, insulations, 10)
 
-  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, isEauGlacee } = getModeFlags(activeCalcId as CalcMode | null)
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, isEauGlacee, isVentilation } = getModeFlags(activeCalcId as CalcMode | null)
 
   // ── Vue dédiée Alimentation ECS (dimensionnement) et Alimentation EF ──────────────────────
   if (isAlimEF || isAlimECS) {
@@ -203,12 +230,40 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
           <SectionLabel>Canalisation</SectionLabel>
 
           <Field label="Longueur" unit="m">
-            <NumInput min={0}
-              value={seg.length_override ?? null}
-              placeholder="saisie manuelle"
-              allowEmpty
-              onChange={v => set('length_override', v)} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flex: 1, minWidth: 0 }}>
+              <NumInput min={0}
+                value={seg.length_override ?? null}
+                placeholder="saisie manuelle"
+                allowEmpty
+                style={{ flex: 1, minWidth: 0 }}
+                onChange={v => { set('length_override', v); setExprStr(v != null ? `= ${v}` : '') }} />
+              <button
+                onClick={() => setCalcOpen(o => !o)}
+                title="Calculette"
+                style={{
+                  background: calcOpen ? '#eff6ff' : 'transparent',
+                  border: `1px solid ${calcOpen ? '#93c5fd' : '#d1d5db'}`,
+                  borderRadius: 5, cursor: 'pointer', padding: '3px 7px',
+                  fontSize: 15, lineHeight: 1, flexShrink: 0,
+                  color: calcOpen ? '#2563eb' : '#9ca3af',
+                }}
+              ><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#1a1a1a" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}><rect x="1" y="1" width="12" height="12" rx="1.5"/><rect x="2.5" y="2.5" width="9" height="2.5" rx="0.5"/><circle cx="4" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="7" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="10" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="4" cy="10.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="7" cy="10.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="10" cy="10.5" r="0.9" fill="#f97316" stroke="none"/></svg></button>
+            </div>
           </Field>
+          {calcOpen && (
+            <div style={{ margin: '2px 0 8px', padding: '8px 10px 10px', background: '#f0f7ff', border: '1px solid #bfdbfe', borderRadius: 8 }}>
+              <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 500, marginBottom: 6 }}>Calcul de longueur</div>
+              <input
+                type="text"
+                value={exprStr}
+                placeholder="Saisir un calcul"
+                autoFocus
+                onChange={e => { const v = e.target.value; setExprStr(v); evalExpr(v) }}
+                onKeyDown={e => { if (e.key === 'Escape') setCalcOpen(false) }}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+          )}
 
           <Field label="Matériau">
             {enabledMats.length === 0
@@ -228,11 +283,19 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                 <option value="">— Choisir —</option>
                 {selMat.dns.map(d => <option key={d.dn} value={d.dn}>{d.dn}</option>)}
               </select>
-              {seg.dn && dnDef && selMat.minDi != null && dnDef.di < selMat.minDi && (
-                <Alert level="error"
-                  msg={`di = ${dnDef.di} mm — diamètre intérieur inférieur au minimum prescrit par le NF DTU 60.11 (min. ${selMat.minDi} mm)`} />
-              )}
             </Field>
+            {seg.dn && dnDef && selMat.minDi != null && dnDef.di < selMat.minDi && (
+              <div style={{
+                margin: '2px 0 6px', padding: '7px 10px', background: '#fef2f2',
+                border: '1px solid #fecaca', borderRadius: 6,
+                display: 'flex', gap: 7, alignItems: 'flex-start',
+              }}>
+                <span style={{ color: '#dc2626', fontWeight: 700, flexShrink: 0, fontSize: 13, lineHeight: 1.3 }}>⚠</span>
+                <div style={{ color: '#b91c1c', fontWeight: 600, fontSize: 10.5, lineHeight: 1.5 }}>
+                  {`di = ${dnDef.di} mm — diamètre intérieur inférieur au minimum prescrit par le NF DTU 60.11 (min. ${selMat.minDi} mm)`}
+                </div>
+              </div>
+            )}
             {dnDef && (
               <Field label="Di" unit="mm">
                 <NumInput
@@ -259,7 +322,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
               <hr className="rp-divider" />
               <SectionLabel>Accessoires &amp; équipements</SectionLabel>
               {pdcParams.methodeSing === 'accessoires' && (
-                <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} />
+                <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} mode={activeCalcId} />
               )}
               {pdcParams.equipementsActifs && (
                 <SegEquipPanel seg={seg} set={set} pdcParams={pdcParams} mode={activeCalcId as string | null} />
@@ -515,6 +578,290 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
     )
   }
 
+  if (isVentilation) {
+    const vr = ventilationResult
+    const dRow = (label: string, value: string, color?: string) => (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+        padding: '5px 10px', borderBottom: '1px solid #f3f4f6', gap: 8 }}>
+        <span style={{ fontSize: 10, color: '#6b7280' }}>{label}</span>
+        <span style={{ fontSize: 10.5, fontWeight: color ? 700 : 500, color: color ?? '#374151',
+          fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{value}</span>
+      </div>
+    )
+    const role = roleMap?.get(seg.id) ?? (seg.type === 'retour' ? 'reprise' : 'soufflage')
+    const roleLabel = role === 'reprise' ? 'Air extrait' : role === 'air-neuf' ? 'Air neuf' : role === 'air-rejete' ? 'Air rejeté' : 'Air soufflé'
+    const roleColor = role === 'reprise' ? '#f472b6' : role === 'air-rejete' ? '#94a3b8' : role === 'air-neuf' ? '#38bdf8' : '#059669'
+
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title">Tronçon</h3>
+
+        <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
+          {[['params', 'Paramètres'], ['results', 'Résultats']].map(([key, label]) => (
+            <button key={key} onClick={() => {
+              setTab(key)
+              if (key === 'params' && drawMode === 'editParams') onExitEditParams?.()
+            }} style={{
+              flex: 1, padding: '5px 0', fontSize: 11, fontWeight: tab === key ? 700 : 500,
+              border: `1px solid ${tab === key ? '#6366f1' : '#e5e7eb'}`,
+              borderRadius: 5, cursor: 'pointer',
+              background: tab === key ? '#eef2ff' : '#f9fafb',
+              color: tab === key ? '#4338ca' : '#6b7280',
+            }}>{label}</button>
+          ))}
+        </div>
+
+        {tab === 'params' && (<>
+          <SectionLabel>Identification</SectionLabel>
+          <SegNameField displayName={displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginBottom: 8,
+            padding: '3px 8px', background: roleColor + '18', border: `1px solid ${roleColor}44`,
+            borderRadius: 4, fontSize: 10, fontWeight: 700, color: roleColor }}>
+            {roleLabel}
+          </div>
+          <hr className="rp-divider" />
+          <SectionLabel>Canalisation</SectionLabel>
+
+          {/* Longueur */}
+          <Field label="Longueur" unit="m">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flex: 1, minWidth: 0 }}>
+              <NumInput min={0}
+                value={seg.length_override ?? null}
+                placeholder="saisie manuelle"
+                allowEmpty style={{ flex: 1, minWidth: 0 }}
+                onChange={v => { set('length_override', v); setExprStr(v != null ? `= ${v}` : '') }} />
+              <button onClick={() => setCalcOpen(o => !o)} title="Calculette" style={{
+                background: calcOpen ? '#eff6ff' : 'transparent',
+                border: `1px solid ${calcOpen ? '#93c5fd' : '#d1d5db'}`,
+                borderRadius: 5, cursor: 'pointer', padding: '3px 7px',
+                fontSize: 15, lineHeight: 1, flexShrink: 0,
+                color: calcOpen ? '#2563eb' : '#9ca3af',
+              }}><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#1a1a1a" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}><rect x="1" y="1" width="12" height="12" rx="1.5"/><rect x="2.5" y="2.5" width="9" height="2.5" rx="0.5"/><circle cx="4" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="7" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="10" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="4" cy="10.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="7" cy="10.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="10" cy="10.5" r="0.9" fill="#f97316" stroke="none"/></svg></button>
+            </div>
+          </Field>
+          {calcOpen && (
+            <div style={{ margin: '2px 0 8px', padding: '8px 10px 10px', background: '#f0f7ff', border: '1px solid #bfdbfe', borderRadius: 8 }}>
+              <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 500, marginBottom: 6 }}>Calcul de longueur</div>
+              <input type="text" value={exprStr} placeholder="Saisir un calcul" autoFocus
+                onChange={e => { const v = e.target.value; setExprStr(v); evalExpr(v) }}
+                onKeyDown={e => { if (e.key === 'Escape') setCalcOpen(false) }}
+                style={{ width: '100%', boxSizing: 'border-box' }} />
+            </div>
+          )}
+
+          {/* Toggle Circulaire / Rectangulaire */}
+          {(() => {
+            const ductShape: 'circular' | 'rectangular' = (seg as any).ductShape ?? 'circular'
+            const circMats  = enabledMats.filter(m => !m.shapeType || m.shapeType === 'circular')
+            const rectMats  = enabledMats.filter(m => m.shapeType === 'rectangular')
+            const shapeMats = ductShape === 'rectangular' ? rectMats : circMats
+            const shapeMat  = materials.find(m => m.id === seg.materialId)
+            const shapeDnDef = shapeMat?.dns.find(d => d.dn === seg.dn) as any
+
+            const switchShape = (next: 'circular' | 'rectangular') => {
+              if (ductShape === next) return
+              const autoMat = next === 'rectangular' ? rectMats[0] : null
+              set('ductShape', next)
+              set('materialId', autoMat?.id ?? null)
+              set('dn', null)
+              set('di_override', null)
+            }
+
+            return (<>
+              {/* Pill toggle */}
+              <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: 7, padding: 2, marginBottom: 10, gap: 2 }}>
+                {([['circular', '◎  Circulaire'], ['rectangular', '▭  Rectangulaire']] as const).map(([val, label]) => (
+                  <button key={val} onClick={() => switchShape(val)} style={{
+                    flex: 1, padding: '5px 4px', fontSize: 10.5, fontWeight: ductShape === val ? 700 : 500,
+                    background: ductShape === val ? '#fff' : 'transparent',
+                    border: ductShape === val ? '1px solid #cbd5e1' : '1px solid transparent',
+                    borderRadius: 5, cursor: 'pointer',
+                    color: ductShape === val ? '#1e40af' : '#94a3b8',
+                    boxShadow: ductShape === val ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                    transition: 'all 0.15s',
+                  }}>{label}</button>
+                ))}
+              </div>
+
+              {/* Matériau */}
+              <Field label="Matériau">
+                {shapeMats.length === 0
+                  ? <p className="lp-hint">Aucun matériau activé.</p>
+                  : <select value={seg.materialId || ''}
+                      onChange={e => { set('materialId', e.target.value || null); set('dn', null); set('di_override', null) }}>
+                      <option value="">— Choisir —</option>
+                      {shapeMats.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>}
+              </Field>
+
+              {/* Circulaire : DN + Di */}
+              {ductShape === 'circular' && shapeMat && (<>
+                <Field label="DN">
+                  <select value={seg.dn || ''}
+                    onChange={e => { set('dn', e.target.value || null); set('di_override', null) }}>
+                    <option value="">— Choisir —</option>
+                    {shapeMat.dns.map(d => <option key={d.dn} value={d.dn}>{d.dn}</option>)}
+                  </select>
+                </Field>
+                {shapeDnDef && (
+                  <Field label="Di" unit="mm">
+                    <NumInput value={seg.di_override ?? null} placeholder={`${shapeDnDef.di} (par défaut)`}
+                      allowEmpty onChange={v => set('di_override', v)} />
+                  </Field>
+                )}
+              </>)}
+
+              {/* Rectangulaire : A×B + Dh affiché */}
+              {ductShape === 'rectangular' && shapeMat && (<>
+                <Field label="Dimensions">
+                  <select value={seg.dn || ''}
+                    onChange={e => { set('dn', e.target.value || null); set('di_override', null) }}>
+                    <option value="">— Choisir —</option>
+                    {shapeMat.dns.map(d => <option key={d.dn} value={d.dn}>{d.dn} mm</option>)}
+                  </select>
+                </Field>
+                {shapeDnDef && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '5px 8px', background: '#f8fafc', border: '1px solid #e2e8f0',
+                    borderRadius: 5, marginBottom: 6,
+                  }}>
+                    <span style={{ fontSize: 10, color: '#6b7280' }}>Dh (diamètre hydraulique)</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#334155', fontFamily: 'ui-monospace, monospace' }}>
+                      {shapeDnDef.dh ?? shapeDnDef.di} mm
+                    </span>
+                  </div>
+                )}
+                {shapeDnDef && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '5px 8px', background: '#f8fafc', border: '1px solid #e2e8f0',
+                    borderRadius: 5, marginBottom: 6,
+                  }}>
+                    <span style={{ fontSize: 10, color: '#6b7280' }}>Section</span>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: '#334155', fontFamily: 'ui-monospace, monospace' }}>
+                      {((shapeDnDef.a * shapeDnDef.b) / 1e6).toFixed(4)} m²
+                    </span>
+                  </div>
+                )}
+              </>)}
+            </>)
+          })()}
+
+          {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (<>
+            <hr className="rp-divider" />
+            <SectionLabel>Accessoires &amp; équipements</SectionLabel>
+            {pdcParams.methodeSing === 'accessoires' && (
+              <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} mode={activeCalcId} />
+            )}
+            {pdcParams.equipementsActifs && (
+              <SegEquipPanel seg={seg} set={set} pdcParams={pdcParams} mode={activeCalcId as string | null} />
+            )}
+          </>)}
+        </>)}
+
+        {tab === 'results' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+            {/* ── Sous-onglets Dimensionnement / Pertes de charge ── */}
+            <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', marginBottom: 4 }}>
+              {(['dimensionnement', 'pdc'] as const).map(key => (
+                <button key={key} onClick={() => onResultsViewChange(key)} style={{
+                  flex: 1, textAlign: 'center' as const,
+                  padding: '2px 4px 7px', fontSize: 10.5,
+                  fontWeight: resultsView === key ? 700 : 400,
+                  color: resultsView === key ? '#4338ca' : '#6b7280',
+                  border: 'none',
+                  borderBottom: resultsView === key ? '2px solid #6366f1' : '2px solid transparent',
+                  background: 'none', cursor: 'pointer', marginBottom: -1,
+                  whiteSpace: 'nowrap', transition: 'color 0.1s',
+                }}>
+                  {key === 'pdc' ? 'Pertes de charge' : 'Dimensionnement'}
+                </button>
+              ))}
+            </div>
+
+            {ventilationFlow?.hasError && (
+              <div style={{ padding: '7px 10px', background: '#fef2f2', border: '1px solid #fecaca',
+                borderRadius: 6, fontSize: 10, color: '#dc2626', fontWeight: 600 }}>
+                ⚠ Incohérence — vérifier les débits aux nœuds
+              </div>
+            )}
+
+            {/* ── Dimensionnement ── */}
+            {resultsView !== 'pdc' && (vr ? (<>
+              <div style={{ padding: '8px 12px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+                  <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
+                    textTransform: 'uppercase', letterSpacing: '0.05em' }}>Débit</div>
+                  {ventilationFlow?.source && (
+                    <span style={{ fontSize: 8, fontWeight: 600, padding: '1px 5px', borderRadius: 3,
+                      background: ventilationFlow.source === 'bouche' ? '#f0fdf4' : ventilationFlow.source === 'computed' ? '#eff6ff' : '#fdf4ff',
+                      color: ventilationFlow.source === 'bouche' ? '#16a34a' : ventilationFlow.source === 'computed' ? '#2563eb' : '#7c3aed',
+                      border: `1px solid ${ventilationFlow.source === 'bouche' ? '#bbf7d0' : ventilationFlow.source === 'computed' ? '#bfdbfe' : '#e9d5ff'}` }}>
+                      {ventilationFlow.source === 'bouche' ? 'bouche' : ventilationFlow.source === 'computed' ? 'calculé' : 'manuel'}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                  <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{vr.Q_m3h.toFixed(0)}</span>
+                  <span style={{ fontSize: 11, color: '#9ca3af' }}>m³/h</span>
+                </div>
+              </div>
+              <div style={{ padding: '8px 12px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
+                  textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Vitesse</div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                  <span style={{ fontSize: 20, fontWeight: 700,
+                    color: vr.v_ms > 8 ? '#ef4444' : vr.v_ms > 5 ? '#f97316' : '#111827' }}>
+                    {vr.v_ms.toFixed(2)}
+                  </span>
+                  <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
+                </div>
+                {vr.v_ms > 8 && <div style={{ fontSize: 9, fontWeight: 600, color: '#ef4444', marginTop: 2 }}>✗ v &gt; 8 m/s — bruit excessif</div>}
+                {vr.v_ms > 5 && vr.v_ms <= 8 && <div style={{ fontSize: 9, fontWeight: 600, color: '#f97316', marginTop: 2 }}>⚠ v &gt; 5 m/s — vérifier le bruit</div>}
+                {vr.v_ms <= 5 && <div style={{ fontSize: 9, fontWeight: 600, color: '#16a34a', marginTop: 2 }}>✓ v ≤ 5 m/s — conforme</div>}
+              </div>
+              <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
+                {dRow('Re', vr.Re.toFixed(0))}
+                {dRow('T air', `${vr.T_air.toFixed(0)} °C`)}
+                {dRow('ρ air', `${vr.rho.toFixed(3)} kg/m³`)}
+                {vr.shape === 'rectangular' && vr.a_mm && vr.b_mm
+                  ? (<>
+                      {dRow('Dimensions', `${vr.a_mm} × ${vr.b_mm} mm`)}
+                      {dRow('Dh', `${vr.di_mm.toFixed(0)} mm`)}
+                    </>)
+                  : dRow('di', `${vr.di_mm.toFixed(1)} mm`)}
+              </div>
+            </>) : (
+              <p className="lp-hint">
+                {enabledMats.length === 0
+                  ? 'Aucun matériau activé — configurez les matériaux ventilation.'
+                  : !seg.materialId ? 'Choisir un matériau.'
+                  : !seg.dn ? 'Choisir un DN / section.'
+                  : 'Débit non calculé — saisir les débits aux bouches ou nœuds d\'extrémité.'}
+              </p>
+            ))}
+
+            {/* ── Pertes de charge ── */}
+            {resultsView === 'pdc' && (vr
+              ? <VentPdcResults vr={vr} pdcParams={pdcParams} seg={seg} />
+              : (
+                <p className="lp-hint">
+                  {enabledMats.length === 0
+                    ? 'Aucun matériau activé — configurez les matériaux ventilation.'
+                    : !seg.materialId ? 'Choisir un matériau.'
+                    : !seg.dn ? 'Choisir un DN / section.'
+                    : 'Débit non calculé — saisir les débits aux bouches ou nœuds d\'extrémité.'}
+                </p>
+              )
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="rp-section">
       <h3 className="rp-title">Tronçon</h3>
@@ -620,10 +967,10 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             const T_from_cond   = thermalEntry?.T_from ?? null
             const T_fluid: number = T_from_cond ?? eauGlaceeParams?.T_depart ?? 7
             const T_amb_cond    = getSegAmbTemp(seg, levels, lineYs)
-            const HR            = getSegHR(seg, levels, lineYs)
+            const HR            = getSegHR(seg, levels, lineYs, hrGlobalDefault)
             const de_mm: number | null = seg.de_override ?? dnDef?.de ?? null
             const di_mm: number | null = seg.di_override ?? dnDef?.di ?? null
-            const lambda_tube: number | null = selMat?.lambda ?? null
+            const lambda_tube: number | null = seg.lambda_tube_override ?? selMat?.lambda ?? null
             const e_mm = typeof seg.thickness === 'number' && seg.thickness > 0 ? seg.thickness : null
             const hasInsul = selIns != null && e_mm != null
             const anyInsulEnabled = enabledIns.length > 0
@@ -645,6 +992,19 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
               )
             }
 
+            if (HR == null) {
+              return (
+                <div style={{ padding: '10px 12px', background: '#fffbeb',
+                  border: '1px solid #fde68a', borderRadius: 6, fontSize: 10.5, color: '#92400e' }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Humidité relative (HR) non renseignée</div>
+                  <div style={{ color: '#78350f' }}>
+                    Saisir la valeur globale dans le panneau <strong>Isolants</strong> (panneau gauche)
+                    ou la valeur propre à ce tronçon dans <strong>HR tronçon</strong> ci-dessous.
+                  </div>
+                </div>
+              )
+            }
+
             if (de_mm == null) {
               return (
                 <div style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic' }}>
@@ -653,28 +1013,23 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
               )
             }
 
-            const T_rosee = getDewPoint(T_amb_cond, HR)
-            let T_surf: number
-            let R_ins: number | null = null
-            let res: any = null
-
-            if (hasInsul) {
-              const lambda_ins = seg.lambda_insul_override ?? selIns!.lambda
-              res    = computeCondensationFromParams(T_fluid, T_amb_cond, HR, de_mm, e_mm!, lambda_ins, di_mm, lambda_tube)
-              T_surf = res.T_surf
-              R_ins  = res.R_ins
-            } else {
-              T_surf = T_fluid
-            }
-
-            const marge  = T_surf - T_rosee
-            const risque = marge < 0
-            const R_nec: number | null = risque
-              ? (res?.R_nec ?? getRequiredResistance(T_amb_cond, T_fluid, T_rosee, de_mm, di_mm, lambda_tube))
-              : null
+            const T_rosee    = getDewPoint(T_amb_cond, HR)
+            const lambda_ins = hasInsul ? (seg.lambda_insul_override ?? selIns!.lambda) : 0.04
+            const res        = computeCondensationFromParams(
+              T_fluid, T_amb_cond, HR, de_mm,
+              hasInsul ? e_mm! : 0,
+              lambda_ins, di_mm, lambda_tube,
+              calcConstants?.h_ext_eg ?? H_EXT_DEFAULT,
+              calcConstants?.h_int_eg ?? H_INT_DEFAULT,
+              calcConstants?.margin_cond ?? 1,
+            )
+            const T_surf = res.T_surf
+            const marge  = res.marge
+            const risque = res.risque
+            const R_nec  = res.R_nec
             const margeColor = risque ? '#ef4444' : '#16a34a'
 
-            // Résistances individuelles pour l'affichage dans données techniques
+            // Résistances individuelles
             const R_si_val   = (di_mm != null && di_mm > 0) ? getInternalResistance(di_mm) : 0
             const R_tube_val = (di_mm != null && di_mm > 0 && lambda_tube != null && lambda_tube > 0)
               ? getPipeWallResistance(di_mm, de_mm, lambda_tube) : 0
@@ -683,6 +1038,12 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
               ? getInsulationResistance(de_mm, e_mm!, lambda_ins_val) : 0
             const R_ext_val  = getExteriorResistance(de_mm, hasInsul ? e_mm! : 0)
 
+            // Résistance totale requise (R_si + R_tube + R_ins_nec + R_ext_bare)
+            const R_ext_bare   = getExteriorResistance(de_mm, 0)
+            const R_total_nec  = R_nec != null && isFinite(R_nec)
+              ? R_si_val + R_tube_val + R_nec + R_ext_bare
+              : null
+
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 
@@ -690,18 +1051,16 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                 <div style={{ padding: '8px 12px', background: '#fff',
                   border: `1px solid ${risque ? '#fecaca' : '#d1fae5'}`, borderRadius: 6 }}>
                   <div style={{ fontSize: 16, fontWeight: 700, color: risque ? '#ef4444' : '#16a34a' }}>
-                    {risque ? '⚠ Risque' : '✓ OK'}
+                    {risque ? '⚠ Condensation probable' : '✓ Pas de condensation'}
                   </div>
                   <div style={{ fontSize: 10.5, fontWeight: 600, color: margeColor, marginTop: 2 }}>
-                    {risque && R_nec != null
-                      ? `Rés. nécessaire = ${isFinite(R_nec) ? R_nec.toFixed(3) : '∞'} K·m/W`
-                      : `Marge = +${marge.toFixed(1)} °C`}
+                    {risque ? `Déficit = ${marge.toFixed(1)} °C` : `Marge = +${marge.toFixed(1)} °C`}
                   </div>
                 </div>
 
                 {/* Résultats */}
                 <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
-                  {/* Résistance totale avec détail inline */}
+                  {/* Résistance totale actuelle avec détail inline */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     padding: '5px 10px', borderBottom: '1px solid #f3f4f6', gap: 8 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -717,7 +1076,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                     </div>
                     <span style={{ fontSize: 10.5, fontWeight: 500, color: '#374151',
                       fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>
-                      {(R_si_val + R_tube_val + R_ins_val + R_ext_val).toFixed(4)} K·m/W
+                      {(R_si_val + R_tube_val + R_ins_val + R_ext_val).toFixed(3)} K·m/W
                     </span>
                   </div>
                   {openResDetail && (
@@ -725,23 +1084,28 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                       fontSize: 9, color: '#9ca3af', lineHeight: 2,
                       fontFamily: 'ui-monospace, monospace', padding: '2px 10px 6px 22px' }}>
                       {R_si_val > 0   && <div>R conv. intérieure  = {R_si_val.toFixed(4)} K·m/W</div>}
-                      {R_tube_val > 0 && <div>R canalisation      = {R_tube_val.toFixed(4)} K·m/W</div>}
+                      {R_tube_val > 0 && <div>R tube = {R_tube_val.toFixed(4)} K·m/W</div>}
                       {hasInsul       && <div>R isolant            = {R_ins_val.toFixed(4)} K·m/W</div>}
                       <div>R conv. extérieure  = {R_ext_val.toFixed(4)} K·m/W</div>
                     </div>
+                  )}
+                  {risque && R_total_nec != null && dRowC(
+                    'Résistance totale requise',
+                    `${R_total_nec.toFixed(3)} K·m/W`,
+                    '#ef4444'
                   )}
                   {dRowC(
                     hasInsul ? 'Température de surface' : 'Température de surface (nue)',
                     `${T_surf.toFixed(1)} °C`
                   )}
                   {dRowC('Température de rosée', `${T_rosee.toFixed(1)} °C`)}
-                  {dRowC('Marge', `${marge >= 0 ? '+' : ''}${marge.toFixed(1)} °C`, margeColor)}
-                  {risque && R_nec != null && dRowC('Résistance nécessaire', `${isFinite(R_nec) ? R_nec.toFixed(3) : '∞'} K·m/W`, '#ef4444')}
+                  {risque  && dRowC('Déficit', `${marge.toFixed(1)} °C`, '#ef4444')}
+                  {!risque && dRowC('Marge',   `+${marge.toFixed(1)} °C`, '#16a34a')}
                 </div>
 
-                {!hasInsul && risque && (
-                  <div style={{ fontSize: 9.5, color: '#9ca3af', fontStyle: 'italic' }}>
-                    Attribuez un isolant dont la résistance thermique atteint la résistance nécessaire.
+                {risque && R_nec != null && (
+                  <div style={{ fontSize: 9.5, color: '#6b7280' }}>
+                    Isolant requis : R isolant ≥ {isFinite(R_nec) ? R_nec.toFixed(3) : '∞'} K·m/W
                   </div>
                 )}
 
@@ -763,7 +1127,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                       <div>Humidité relative = {HR.toFixed(0)} %</div>
                       {di_mm != null && <div>Diamètre intérieur = {di_mm} mm</div>}
                       <div>Diamètre extérieur = {de_mm} mm</div>
-                      {lambda_tube != null && <div>λ canalisation = {lambda_tube.toFixed(3)} W/(m·K)</div>}
+                      {lambda_tube != null && <div>λ tube = {lambda_tube.toFixed(3)} W/(m·K)</div>}
                       {hasInsul
                         ? <>
                             <div>Isolant = {selIns!.name} — {e_mm} mm</div>
@@ -847,6 +1211,12 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                 <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
                   {flowRate    != null && dRow('Débit',               `${flowRate.toFixed(3)} m³/h`)}
                   {puissanceKW != null && puissanceKW > 0 && dRow('Puissance transportée', `${puissanceKW.toFixed(2)} kW`)}
+                  {isEauGlacee && (() => {
+                    const Q_apport = egApportsMap?.get(seg.id)
+                    if (Q_apport == null || Q_apport <= 0) return null
+                    const txt = Q_apport >= 1000 ? `${(Q_apport / 1000).toFixed(2)} kW` : `${Math.round(Q_apport)} W`
+                    return dRow('Apports thermiques', txt, '#f97316')
+                  })()}
                 </div>
 
                 {/* ── Données techniques ── */}
@@ -876,7 +1246,8 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             const { Q, deltaT, T_from, T_to, T_amb } = thermalData
             const velocity = flowData?.velocity
             const flowRate = flowData?.flowRate
-            const T_depart = globalParams?.T_depart ?? 60
+            const prodECS    = points?.find(p => p.type === 'productionECS')
+            const T_depart = prodECS?.T_depart_override ?? globalParams?.T_depart ?? 60
             const dT_depuis_depart = T_to - T_depart
 
             const de_mm       = seg.de_override ?? dnDef?.de
@@ -889,7 +1260,6 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
 
             const dtFromProd = T_depart - T_to
             const isRetour   = seg.type === 'retour'
-            const prodECS    = points?.find(p => p.type === 'productionECS')
             const isLinkedToProdECS = prodECS != null
               && (seg.startPointId === prodECS.id || seg.endPointId === prodECS.id)
             const isCollecteurRetour = roleMap?.get(seg.id) === 'collecteur-retour'
@@ -1176,12 +1546,40 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
       {/* Canalisation */}
       <SectionLabel>Canalisation</SectionLabel>
       <Field label="Longueur" unit="m">
-        <NumInput min={0}
-          value={seg.length_override ?? null}
-          placeholder="saisie manuelle"
-          allowEmpty
-          onChange={v => set('length_override', v)} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flex: 1, minWidth: 0 }}>
+          <NumInput min={0}
+            value={seg.length_override ?? null}
+            placeholder="saisie manuelle"
+            allowEmpty
+            style={{ flex: 1, minWidth: 0 }}
+            onChange={v => { set('length_override', v); setExprStr(v != null ? `= ${v}` : '') }} />
+          <button
+            onClick={() => setCalcOpen(o => !o)}
+            title="Calculette"
+            style={{
+              background: calcOpen ? '#eff6ff' : 'transparent',
+              border: `1px solid ${calcOpen ? '#93c5fd' : '#d1d5db'}`,
+              borderRadius: 5, cursor: 'pointer', padding: '3px 7px',
+              fontSize: 15, lineHeight: 1, flexShrink: 0,
+              color: calcOpen ? '#2563eb' : '#9ca3af',
+            }}
+          ><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#1a1a1a" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}><rect x="1" y="1" width="12" height="12" rx="1.5"/><rect x="2.5" y="2.5" width="9" height="2.5" rx="0.5"/><circle cx="4" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="7" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="10" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="4" cy="10.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="7" cy="10.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="10" cy="10.5" r="0.9" fill="#f97316" stroke="none"/></svg></button>
+        </div>
       </Field>
+      {calcOpen && (
+        <div style={{ margin: '2px 0 8px', padding: '8px 10px 10px', background: '#f0f7ff', border: '1px solid #bfdbfe', borderRadius: 8 }}>
+          <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 500, marginBottom: 6 }}>Calcul de longueur</div>
+          <input
+            type="text"
+            value={exprStr}
+            placeholder="Saisir un calcul"
+            autoFocus
+            onChange={e => { const v = e.target.value; setExprStr(v); evalExpr(v) }}
+            onKeyDown={e => { if (e.key === 'Escape') setCalcOpen(false) }}
+            style={{ width: '100%', boxSizing: 'border-box' }}
+          />
+        </div>
+      )}
 
       <Field label="Matériau">
         {enabledMats.length === 0
@@ -1204,17 +1602,19 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
               <option value="">— Choisir —</option>
               {selMat.dns.map(d => <option key={d.dn} value={d.dn}>{d.dn}</option>)}
             </select>
-            {seg.dn && dnDef && selMat.minDi != null && dnDef.di < selMat.minDi && (
-              <div style={{ marginTop: 4, padding: '4px 7px', background: '#fef2f2',
-                border: '1px solid #fecaca', borderRadius: 4, fontSize: 10,
-                display: 'flex', gap: 5, alignItems: 'flex-start' }}>
-                <span style={{ color: '#dc2626', fontWeight: 700, flexShrink: 0 }}>⚠</span>
-                <span style={{ color: '#b91c1c', fontWeight: 600 }}>
-                  {`di = ${dnDef.di} mm — diamètre intérieur inférieur au minimum prescrit par le NF DTU 60.11 (min. ${selMat.minDi} mm)`}
-                </span>
-              </div>
-            )}
           </Field>
+          {seg.dn && dnDef && selMat.minDi != null && dnDef.di < selMat.minDi && (
+            <div style={{
+              margin: '2px 0 6px', padding: '7px 10px', background: '#fef2f2',
+              border: '1px solid #fecaca', borderRadius: 6,
+              display: 'flex', gap: 7, alignItems: 'flex-start',
+            }}>
+              <span style={{ color: '#dc2626', fontWeight: 700, flexShrink: 0, fontSize: 13, lineHeight: 1.3 }}>⚠</span>
+              <div style={{ color: '#b91c1c', fontWeight: 600, fontSize: 10.5, lineHeight: 1.5 }}>
+                {`di = ${dnDef.di} mm — diamètre intérieur inférieur au minimum prescrit par le NF DTU 60.11 (min. ${selMat.minDi} mm)`}
+              </div>
+            </div>
+          )}
 
           {dnDef && (
             <>
@@ -1346,7 +1746,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                 <NumInput
                   min={0} max={100} step={1} allowEmpty
                   value={seg.hr_override ?? null}
-                  placeholder="défaut (niveau / 60%)"
+                  placeholder={(() => { const v = getSegHR({ ...seg, hr_override: null }, levels, lineYs, hrGlobalDefault); return v != null ? `${v} (par défaut)` : '— non définie' })()}
                   onChange={v => set('hr_override', v)}
                 />
               </Field>
@@ -1381,7 +1781,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
           <hr className="rp-divider" />
           <SectionLabel>Accessoires &amp; équipements</SectionLabel>
           {pdcParams.methodeSing === 'accessoires' && (
-            <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} />
+            <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} mode={activeCalcId} />
           )}
           {pdcParams.equipementsActifs && (
             <SegEquipPanel seg={seg} set={set} pdcParams={pdcParams} mode={activeCalcId as string | null} />

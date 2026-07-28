@@ -70,7 +70,8 @@ export function getSegAmbTemp(seg, levels, lineYs) {
 export function computeThermal(
   segments, points, materials, insulations,
   flowDirections, networkFlows,
-  levels, lineYs, globalParams
+  levels, lineYs, globalParams,
+  he_ecs?: number
 ) {
   const prodECS = points.find(p => p.type === 'productionECS')
   if (!prodECS) return { segResults: new Map(), nodeTemps: new Map() }
@@ -98,7 +99,7 @@ export function computeThermal(
       const T_from = nodeTemps.get(dir.fromId)
       if (T_from == null) continue
 
-      const UI     = computeSegUI(seg, materials, insulations, HE_DEFAULT)
+      const UI     = computeSegUI(seg, materials, insulations, he_ecs ?? HE_DEFAULT)
       const L      = seg.length_override
       const q      = networkFlows.get(seg.id)?.flowRate
 

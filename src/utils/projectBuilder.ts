@@ -6,9 +6,12 @@ export { DEFAULT_MATERIALS_EAU_GLACEE }
 import { DEFAULT_INSULATIONS } from '../data/insulations'
 import { DEFAULT_INSULATIONS_EAU_GLACEE } from '../data/insulationsEauGlacee'
 export { DEFAULT_INSULATIONS_EAU_GLACEE }
-import { DEFAULT_PDC_PARAMS, DEFAULT_PDC_PARAMS_ALIM_ECS, DEFAULT_PDC_PARAMS_ALIM_EF } from './pdcCalc'
+import { DEFAULT_PDC_PARAMS, DEFAULT_PDC_PARAMS_ALIM_ECS, DEFAULT_PDC_PARAMS_ALIM_EF, DEFAULT_PDC_PARAMS_VENTILATION } from './pdcCalc'
+export { DEFAULT_PDC_PARAMS_VENTILATION }
 import { uid } from './idGen'
-import type { DisplayPrefs } from '../types'
+import type { DisplayPrefs, CalcConstants, VentilationParams } from '../types'
+import { DEFAULT_MATERIALS_VENTILATION } from '../data/materialsVentilation'
+export { DEFAULT_MATERIALS_VENTILATION }
 import { LOCAL_GAP, COL_PIPE_W, COL_LOCAL_OFFSET } from './projectActions'
 const LOCAL_W = 50
 
@@ -27,8 +30,24 @@ export const DEFAULT_DISPLAY_PREFS: DisplayPrefs = {
   },
   eauglacee: {
     unitDebit: 'm3/h', unitDp: 'Pa', unitPuissance: 'W',
-    colorAller: '#60a5fa', colorRetour: '#1d4ed8', strokeWidth: 1.5,
+    colorAller: '#06b6d4', colorRetour: '#1d4ed8', strokeWidth: 1.5,
   },
+  ventilation: {
+    unitDebit: 'm3/h', unitDp: 'Pa',
+    colorAller:    '#059669',  // air soufflé — vert
+    colorRetour:   '#f472b6',  // air extrait — rose
+    colorAirNeuf:  '#38bdf8',  // air neuf — bleu ciel
+    colorAirRejete:'#94a3b8',  // air rejeté — gris
+    strokeWidth: 1.5,
+  },
+}
+
+export const DEFAULT_CALC_CONSTANTS: CalcConstants = {
+  he_ecs:      10,
+  rho_cp:      1163,
+  h_ext_eg:    10,
+  h_int_eg:    3000,
+  margin_cond: 1,
 }
 
 // ── Paramètres globaux ───────────────────────────────────────────────────────
@@ -45,6 +64,11 @@ export const DEFAULT_CHAUFFAGE_PARAMS = {
 export const DEFAULT_EAU_GLACEE_PARAMS = {
   T_depart: 7,
   deltaT_reseau: 5,
+}
+
+export const DEFAULT_VENTILATION_PARAMS: VentilationParams = {
+  T_soufflage: 18,
+  deltaT: 8,
 }
 
 export const DEFAULT_ALIMENTATION_PARAMS = {
@@ -210,7 +234,11 @@ export function initProject() {
     chaufferie:            DEFAULT_CHAUFFERIE,
     chauffageParams:       DEFAULT_CHAUFFAGE_PARAMS,
     eauGlaceeParams:       DEFAULT_EAU_GLACEE_PARAMS,
+    ventilationParams:     DEFAULT_VENTILATION_PARAMS,
+    pdcParamsVentilation:  DEFAULT_PDC_PARAMS_VENTILATION,
+    materialsVentilation:  DEFAULT_MATERIALS_VENTILATION,
     displayPrefs:          DEFAULT_DISPLAY_PREFS,
+    calcConstants:         DEFAULT_CALC_CONSTANTS,
     segments:              [],
     points:                [],
     valves:                [],

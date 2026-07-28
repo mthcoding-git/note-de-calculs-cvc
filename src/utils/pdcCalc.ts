@@ -3,19 +3,61 @@
  * Méthodes : Darcy-Weisbach + Colebrook-White itératif, ou formule DTU approchée.
  */
 
+// Modes hydrauliques (ECS, EF, Chauffage, EG)
+const HYD = ['bouclage-ecs', 'alimentation-ecs', 'alimentation-ef', 'distribution-chauffage', 'pdc-chauffage', 'distribution-eauglacee']
+// Mode ventilation
+const VENT = ['distribution-ventilation']
+
 export const FITTING_TYPES = [
-  { id: 'coude90_long',   label: 'Coude 90° soudé (R=1,5D)',              xi: 0.35 },
-  { id: 'coude90_soude',  label: 'Coude 90° soudé (R=1D)',                xi: 0.5  },
-  { id: 'coude90_press',  label: 'Coude 90° à sertir / press',            xi: 1.0  },
-  { id: 'coude90_court',  label: 'Coude 90° fileté (court rayon)',        xi: 1.5  },
-  { id: 'coude45_soude',  label: 'Coude 45° soudé',                       xi: 0.2  },
-  { id: 'coude45',        label: 'Coude 45° fileté / à raccord',          xi: 0.4  },
-  { id: 'te_passage',     label: 'Té — passage direct',                    xi: 0.3  },
-  { id: 'te_deviation',   label: 'Té — dérivation / branchement',         xi: 1.5  },
-  { id: 'boisseaux',      label: 'Robinet à boisseau sphérique (ouvert)', xi: 0.05 },
-  { id: 'clapet_ressort', label: 'Clapet anti-retour à ressort',           xi: 4.0  },
-  { id: 'clapet_battant', label: 'Clapet anti-retour à battant',           xi: 2.0  },
+  // ── Hydraulique ────────────────────────────────────────────────────────────
+  { id: 'coude90_long',   label: 'Coude 90° soudé (R=1,5D)',              xi: 0.35, modes: HYD },
+  { id: 'coude90_soude',  label: 'Coude 90° soudé (R=1D)',                xi: 0.5,  modes: HYD },
+  { id: 'coude90_press',  label: 'Coude 90° à sertir / press',            xi: 1.0,  modes: HYD },
+  { id: 'coude90_court',  label: 'Coude 90° fileté (court rayon)',        xi: 1.5,  modes: HYD },
+  { id: 'coude45_soude',  label: 'Coude 45° soudé',                       xi: 0.2,  modes: HYD },
+  { id: 'coude45',        label: 'Coude 45° fileté / à raccord',          xi: 0.4,  modes: HYD },
+  { id: 'te_passage',     label: 'Té — passage direct',                    xi: 0.3,  modes: HYD },
+  { id: 'te_deviation',   label: 'Té — dérivation / branchement',         xi: 1.5,  modes: HYD },
+  { id: 'boisseaux',      label: 'Robinet à boisseau sphérique (ouvert)', xi: 0.05, modes: HYD },
+  { id: 'clapet_ressort', label: 'Clapet anti-retour à ressort',           xi: 4.0,  modes: HYD },
+  { id: 'clapet_battant', label: 'Clapet anti-retour à battant',           xi: 2.0,  modes: HYD },
+
+  // ── Ventilation — Coudes ─────────────────────────────────────────────────
+  // Sources : ASHRAE Fundamentals 2021 ch.21, Carrier HVAC Design Manual,
+  //           Guide COSTIC « Dimensionnement des réseaux de ventilation »
+  { id: 'cv_coude90_r1d5',       label: 'Coude 90° circulaire  R/D = 1,5',        xi: 0.17, modes: VENT },
+  { id: 'cv_coude90_r1d0',       label: 'Coude 90° circulaire  R/D = 1,0',        xi: 0.22, modes: VENT },
+  { id: 'cv_coude90_r0d75',      label: 'Coude 90° circulaire  R/D = 0,75',       xi: 0.33, modes: VENT },
+  { id: 'cv_coude45_circ',       label: 'Coude 45° circulaire',                    xi: 0.09, modes: VENT },
+  { id: 'cv_coude90_rect',       label: 'Coude 90° rectangulaire (sans aubes)',    xi: 0.25, modes: VENT },
+  { id: 'cv_coude90_rect_aubes', label: 'Coude 90° rectangulaire avec aubes',      xi: 0.12, modes: VENT },
+
+  // ── Ventilation — Bifurcations ────────────────────────────────────────────
+  // Source : ASHRAE SR5-x (diverging tees, round duct), valeurs médiane retenues
+  { id: 'cv_te_branche',         label: 'Piquage en T — branchement',              xi: 0.90, modes: VENT },
+  { id: 'cv_te_passage',         label: 'Piquage en T — passage direct',            xi: 0.10, modes: VENT },
+  { id: 'cv_culotte',            label: 'Culotte / bifurcation symétrique',         xi: 0.50, modes: VENT },
+
+  // ── Ventilation — Transitions section ────────────────────────────────────
+  // Source : ASHRAE SR6-x (contractions/expansions)
+  { id: 'cv_reduction',          label: 'Réduction concentrique',                   xi: 0.05, modes: VENT },
+  { id: 'cv_expansion',          label: 'Expansion progressive (diffuseur)',        xi: 0.25, modes: VENT },
+
+  // ── Ventilation — Accessoires spécifiques ────────────────────────────────
+  // Sources : EN 15650 (coupe-feu), EN 13779, abaques fabricants TROX/FRANCE AIR
+  { id: 'cv_registre_reglage',   label: 'Registre de réglage (volet)',              xi: 0.50, modes: VENT },
+  { id: 'cv_registre_cf',        label: 'Registre coupe-feu (CF) ouvert',           xi: 0.90, modes: VENT },
+  { id: 'cv_clapet_arret',       label: "Clapet d'arrêt motorisé",                  xi: 1.50, modes: VENT },
+  { id: 'cv_grille_ext',         label: 'Grille extérieure anti-pluie',             xi: 1.50, modes: VENT },
+  { id: 'cv_grille_transfert',   label: 'Grille de transfert intérieure',           xi: 2.50, modes: VENT },
+  { id: 'cv_manchette',          label: 'Manchette souple anti-vibratoire',         xi: 0.10, modes: VENT },
+  { id: 'cv_silencieux',         label: 'Silencieux / atténuateur acoustique',      xi: 2.00, modes: VENT },
 ]
+
+export function getFittingsForMode(mode: string | null | undefined) {
+  if (!mode) return FITTING_TYPES
+  return FITTING_TYPES.filter(t => (t as any).modes?.includes(mode))
+}
 
 export const EQUIPMENT_TYPES = [
   // ── ECS bouclage / alimentation ECS ────────────────────────────────────────
@@ -40,6 +82,26 @@ export const EQUIPMENT_TYPES = [
   // Kv sources : Belimo B212/B215/B220 (DN15/20), Siemens VVG41/VXG44 (DN15/20)
   { id: 'vanne_2voies_eg',    label: 'Vanne 2 voies motorisée (terminal EG)', kvDefault: 1.6,  modes: ['distribution-eauglacee'] },
   { id: 'vanne_3voies_eg',    label: 'Vanne 3 voies motorisée (EG)',          kvDefault: 4,    modes: ['distribution-eauglacee'] },
+  // ── Ventilation — ΔP en Pa à débit nominal (EN 779, EN 1822, EUROVENT, ASHRAE) ──
+  // Filtres
+  { id: 'va_filtre_g4',        label: 'Filtre G4 / ISO Coarse (≥ 70 %)',       dpDefault: 40,  modes: ['distribution-ventilation'] },
+  { id: 'va_filtre_m5',        label: 'Filtre M5 / ISO ePM10 ≥ 50 %',          dpDefault: 70,  modes: ['distribution-ventilation'] },
+  { id: 'va_filtre_m6f7',      label: 'Filtre M6–F7 / ISO ePM2.5 ≥ 50 %',     dpDefault: 100, modes: ['distribution-ventilation'] },
+  { id: 'va_filtre_f8',        label: 'Filtre F8 / ISO ePM1 ≥ 50 %',           dpDefault: 150, modes: ['distribution-ventilation'] },
+  { id: 'va_filtre_f9',        label: 'Filtre F9 / ISO ePM1 ≥ 85 %',           dpDefault: 200, modes: ['distribution-ventilation'] },
+  { id: 'va_filtre_h13',       label: 'Filtre HEPA H13 (EN 1822)',              dpDefault: 280, modes: ['distribution-ventilation'] },
+  // Traitement d'air (côté air)
+  { id: 'va_recup_plaques',    label: 'Récupérateur chaleur à plaques',         dpDefault: 120, modes: ['distribution-ventilation'] },
+  { id: 'va_recup_rotatif',    label: 'Récupérateur chaleur rotatif',           dpDefault: 80,  modes: ['distribution-ventilation'] },
+  { id: 'va_batt_chaud',       label: 'Batterie de chauffe (eau chaude)',       dpDefault: 60,  modes: ['distribution-ventilation'] },
+  { id: 'va_batt_froid',       label: 'Batterie de froid (eau glacée)',         dpDefault: 80,  modes: ['distribution-ventilation'] },
+  { id: 'va_batt_elec',        label: 'Batterie électrique',                    dpDefault: 20,  modes: ['distribution-ventilation'] },
+  { id: 'va_humid_vapeur',     label: 'Humidificateur vapeur',                  dpDefault: 20,  modes: ['distribution-ventilation'] },
+  { id: 'va_humid_adiab',      label: 'Humidificateur adiabatique',             dpDefault: 60,  modes: ['distribution-ventilation'] },
+  // Terminaux
+  { id: 'va_diffuseur',        label: 'Diffuseur de soufflage',                 dpDefault: 30,  modes: ['distribution-ventilation'] },
+  { id: 'va_bouche_reprise',   label: 'Bouche de reprise / extraction',         dpDefault: 20,  modes: ['distribution-ventilation'] },
+  { id: 'va_boite_vav',        label: 'Boîte VAV (régulation de débit)',        dpDefault: 50,  modes: ['distribution-ventilation'] },
 ]
 
 export function getEquipmentForMode(mode: string | null | undefined) {
@@ -61,7 +123,7 @@ export const DEFAULT_PDC_PARAMS = {
   fittingOverrides:  {} as Record<string, number>,   // ξ par défaut modifiés dans la bibliothèque
   equipmentOverrides:{} as Record<string, number>,   // Kv par défaut modifiés dans la bibliothèque
   customFittings:   [] as { id: string; label: string; xi: number }[],
-  customEquipments: [] as { id: string; label: string; kvDefault: number | null }[],
+  customEquipments: [] as { id: string; label: string; kvDefault?: number | null; dpDefault?: number }[],
 }
 
 export interface TronconAmontEF {
@@ -113,7 +175,7 @@ export const DEFAULT_PDC_PARAMS_ALIM_EF = {
   fittingOverrides:  {} as Record<string, number>,
   equipmentOverrides:{} as Record<string, number>,
   customFittings:    [] as { id: string; label: string; xi: number }[],
-  customEquipments:  [] as { id: string; label: string; kvDefault: number | null }[],
+  customEquipments:  [] as { id: string; label: string; kvDefault?: number | null; dpDefault?: number }[],
   pressionEF:        null             as number | null,   // null → 3 bar par défaut
   T_ef:              null             as number | null,   // null → 10 °C par défaut
 }
@@ -132,7 +194,7 @@ export const DEFAULT_PDC_PARAMS_ALIM_ECS = {
   fittingOverrides:         {} as Record<string, number>,
   equipmentOverrides:       {} as Record<string, number>,
   customFittings:           [] as { id: string; label: string; xi: number }[],
-  customEquipments:         [] as { id: string; label: string; kvDefault: number | null }[],
+  customEquipments:         [] as { id: string; label: string; kvDefault?: number | null; dpDefault?: number }[],
   pressionSourceDisponible: null             as number | null,   // null → 3 bar par défaut
   modePresSource:           'depart-ecs'     as 'depart-ecs' | 'arrivee-ef',
   pressionArriveeEF:        null             as number | null,   // null → 3 bar par défaut
@@ -143,6 +205,13 @@ export const DEFAULT_PDC_PARAMS_ALIM_ECS = {
 export type PdcParams        = typeof DEFAULT_PDC_PARAMS
 export type PdcParamsAlimEF  = typeof DEFAULT_PDC_PARAMS_ALIM_EF
 export type PdcParamsAlimECS = typeof DEFAULT_PDC_PARAMS_ALIM_ECS
+
+/** Paramètres PDC ventilation : Darcy-Weisbach fixe, singulières accessoires uniquement. */
+export const DEFAULT_PDC_PARAMS_VENTILATION: PdcParams = {
+  ...DEFAULT_PDC_PARAMS,
+  methodeReg:  'darcy-colebrook',
+  methodeSing: 'accessoires',
+}
 
 /** Masse volumique de l'eau (kg/m³) — formule de Kell (0–100 °C). */
 export function waterDensity(T: number): number {

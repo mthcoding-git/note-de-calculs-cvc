@@ -11,7 +11,6 @@ import { findMidpointLevelIndexAt } from './levelUtils'
 
 export const H_EXT_DEFAULT = 10    // W/(m²·K) — convection extérieure air calme (valeur normalisée)
 export const H_INT_DEFAULT = 3000  // W/(m²·K) — convection intérieure eau (valeur conservative)
-const HR_DEFAULT    = 60    // % — HR par défaut si non renseignée
 const MARGIN_DEG    = 1     // °C — marge de sécurité sur T_surf > T_rosée
 
 /**
@@ -94,10 +93,11 @@ export function getSurfaceTemp(
 export function getRequiredResistance(
   T_amb: number, T_fluid: number, T_rosee: number,
   de_mm: number,
-  di_mm: number | null      = null,
+  di_mm: number | null       = null,
   lambda_tube: number | null = null,
-  h_ext = H_EXT_DEFAULT,
-  marge = MARGIN_DEG
+  h_ext  = H_EXT_DEFAULT,
+  marge  = MARGIN_DEG,
+  h_int  = H_INT_DEFAULT,
 ): number {
   const T_cible = T_rosee + marge
   if (T_amb <= T_fluid) return 0
@@ -105,11 +105,11 @@ export function getRequiredResistance(
   if (alpha <= 0) return 0
   if (alpha >= 1) return Infinity
 
-  const r_bare   = de_mm / 2000
+  const r_bare     = de_mm / 2000
   const R_ext_bare = 1 / (2 * Math.PI * r_bare * h_ext)
 
   const R_si   = (di_mm != null && di_mm > 0)
-    ? getInternalResistance(di_mm, H_INT_DEFAULT)
+    ? getInternalResistance(di_mm, h_int)
     : 0
   const R_tube = (di_mm != null && di_mm > 0 && lambda_tube != null && lambda_tube > 0)
     ? getPipeWallResistance(di_mm, de_mm, lambda_tube)
@@ -119,15 +119,15 @@ export function getRequiredResistance(
 }
 
 /**
- * HR du tronçon : override → niveau → défaut 60 %.
+ * HR du tronçon : override → niveau → global → null si non renseignée.
  */
-export function getSegHR(seg: any, levels: any[], lineYs: number[]): number {
+export function getSegHR(seg: any, levels: any[], lineYs: number[], hrGlobalDefault?: number | null): number | null {
   if (seg.hr_override != null) return seg.hr_override
-  if (!seg.vertices?.length) return HR_DEFAULT
+  if (!seg.vertices?.length) return hrGlobalDefault ?? null
   const midY = seg.vertices.reduce((s: number, v: any) => s + v.y, 0) / seg.vertices.length
   const li = findMidpointLevelIndexAt(midY, lineYs)
   if (li >= 0 && levels[li]?.hr_eg_default != null) return levels[li].hr_eg_default!
-  return HR_DEFAULT
+  return hrGlobalDefault ?? null
 }
 
 export interface CondensationResult {
@@ -155,12 +155,14 @@ export function computeCondensationFromParams(
   lambda_ins: number,
   di_mm: number | null       = null,
   lambda_tube: number | null = null,
-  h_ext = H_EXT_DEFAULT,
+  h_ext       = H_EXT_DEFAULT,
+  h_int       = H_INT_DEFAULT,
+  margin_cond = MARGIN_DEG,
 ): CondensationResult {
   const T_rosee = getDewPoint(T_amb, HR)
 
   const R_si   = (di_mm != null && di_mm > 0)
-    ? getInternalResistance(di_mm, H_INT_DEFAULT)
+    ? getInternalResistance(di_mm, h_int)
     : 0
   const R_tube = (di_mm != null && di_mm > 0 && lambda_tube != null && lambda_tube > 0)
     ? getPipeWallResistance(di_mm, de_mm, lambda_tube)
@@ -172,7 +174,7 @@ export function computeCondensationFromParams(
   const T_surf  = getSurfaceTemp(T_amb, T_fluid, R_inner, R_ext)
   const marge   = T_surf - T_rosee
   const R_nec   = marge < 0
-    ? getRequiredResistance(T_amb, T_fluid, T_rosee, de_mm, di_mm, lambda_tube, h_ext)
+    ? getRequiredResistance(T_amb, T_fluid, T_rosee, de_mm, di_mm, lambda_tube, h_ext, margin_cond, h_int)
     : null
 
   return { T_rosee, T_surf, marge, R_ins, R_nec, risque: marge < 0, hasInsul: true }

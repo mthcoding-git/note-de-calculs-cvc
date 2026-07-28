@@ -504,6 +504,21 @@ export function buildChauffageFlowRows(segments, points, flowDirections, columns
 
   const xOf = (nodeId: string) => (points.find((p: any) => p.id === nodeId) as any)?.x ?? Infinity
 
+  // Suit une branche antenne depuis nodeId jusqu'à l'émetteur (ou terminalFroid).
+  const findEmitterFromNode = (nodeId: string): string | null => {
+    let cur = nodeId
+    const seen = new Set<string>()
+    while (!seen.has(cur)) {
+      seen.add(cur)
+      const pt = points?.find((p: any) => p.id === cur)
+      if (pt?.type === 'emetteur' || pt?.type === 'terminalFroid') return cur
+      const out = allerSegs.filter((s: any) => flowDirections?.get(s.id)?.fromId === cur)
+      if (out.length !== 1) return null
+      cur = flowDirections!.get(out[0].id)!.toId
+    }
+    return null
+  }
+
   const processFrom = (startNodeId: string, isTopLevel = false) => {
     let cur = startNodeId
     let allerEmitted = 0
@@ -531,13 +546,21 @@ export function buildChauffageFlowRows(segments, points, flowDirections, columns
       }
 
       if (allerOut.length > 1) {
-        const sorted = [...allerOut].sort((a, b) =>
-          xOf(flowDirections.get(a.id).toId) - xOf(flowDirections.get(b.id).toId))
-        for (const branchSeg of sorted) {
+        // Antenne branches (→ émetteur sans sous-séparation) en premier, puis collecteur ; X croissant dans chaque groupe
+        const sorted = [...allerOut].sort((a, b) => {
+          const aAntenne = isAntenneAllerFrom(flowDirections.get(a.id)?.toId)
+          const bAntenne = isAntenneAllerFrom(flowDirections.get(b.id)?.toId)
+          if (aAntenne !== bAntenne) return aAntenne ? -1 : 1
+          return xOf(flowDirections.get(a.id).toId) - xOf(flowDirections.get(b.id).toId)
+        })
+        for (let bi = 0; bi < sorted.length; bi++) {
+          const branchSeg = sorted[bi]
           const branchToId = flowDirections.get(branchSeg.id).toId
           const branchIsAntenne = isAntenneAllerFrom(branchToId)
+          if (bi > 0) rows.push({ kind: 'separation', ptId: cur })
           if (branchIsAntenne) {
-            rows.push({ kind: 'col-header', name: findBranchColumn(branchSeg) ?? null })
+            const emitterId = findEmitterFromNode(branchToId)
+            rows.push({ kind: 'col-header', name: findBranchColumn(branchSeg) ?? null, emitterId })
           } else {
             rows.push({ kind: 'collecteur-header', role: 'collecteur-aller' })
           }
@@ -787,4 +810,167 @@ export function buildFlowRowsEF(segments, points, flowDirections, columns, colum
   }
 
   return result
+}
+
+/**
+ * Construit les lignes de tableau pour le mode Ventilation.
+ *
+ * Structure :
+ *   - Air neuf (nœud externe → CTA, 'aller' avec toId = CTA)
+ *   - flow-start
+ *   - Soufflage + Reprise (DFS depuis CTA, couplés)
+ *   - flow-end
+ *   - Retour Reprise arrivant à CTA
+ *   - Air rejeté (CTA → nœud externe non-bouche, 'aller')
+ *
+ * Rôles dans roleMap : 'soufflage' | 'reprise' | 'air-neuf' | 'air-rejete'
+ */
+export function buildVentilationFlowRows(segments, points, flowDirections?) {
+  if (!segments?.length) return { rows: [], roleMap: new Map() }
+  const cta = points?.find((p: any) => p.type === 'cta')
+  if (!cta) return { rows: [], roleMap: new Map() }
+
+  const ctaId = cta.id as string
+
+  const allerSegs  = segments.filter((s: any) => s.type === 'aller')
+  const retourSegs = segments.filter((s: any) => s.type === 'retour')
+
+  // Nombre de tronçons physiques (non-dirigés) par nœud — pour détecter les nœuds terminaux externes
+  const segCountPerNode = new Map<string, number>()
+  for (const seg of segments) {
+    segCountPerNode.set(seg.startPointId, (segCountPerNode.get(seg.startPointId) ?? 0) + 1)
+    segCountPerNode.set(seg.endPointId,   (segCountPerNode.get(seg.endPointId)   ?? 0) + 1)
+  }
+
+  const getRoleVent = (seg: any): string => {
+    if (seg.pipeSubType) return seg.pipeSubType
+    const fd     = flowDirections?.get(seg.id)
+    const fromId = fd?.fromId ?? seg.startPointId
+    const toId   = fd?.toId   ?? seg.endPointId
+    if (seg.type === 'aller') {
+      // Air neuf : aller depuis nœud externe (1 connexion) vers CTA
+      if (toId === ctaId && (segCountPerNode.get(fromId) ?? 0) === 1) return 'air-neuf'
+      // Air rejeté : aller depuis CTA vers nœud externe non-bouche (1 connexion)
+      if (fromId === ctaId && (segCountPerNode.get(toId) ?? 0) === 1) {
+        const toPt = points?.find((p: any) => p.id === toId)
+        if (!toPt || toPt.type !== 'boucheVentilation') return 'air-rejete'
+      }
+      return 'soufflage'
+    }
+    return 'reprise'
+  }
+
+  const roleMap = new Map<string, string>()
+  for (const seg of segments) roleMap.set(seg.id, getRoleVent(seg))
+
+  // Nombre de tronçons reprise arrivant à chaque nœud (hors CTA)
+  const repriseIn = new Map<string, number>()
+  for (const s of retourSegs) {
+    const fd   = flowDirections?.get(s.id)
+    const toId = fd?.toId ?? s.endPointId
+    if (toId !== ctaId) repriseIn.set(toId, (repriseIn.get(toId) ?? 0) + 1)
+  }
+
+  const junctionEmitted = new Map<string, number>()
+  const visited  = new Set<string>()
+  const rows: any[]     = []
+  const toCTARows: any[] = []
+
+  const xOf = (nodeId: string) => (points.find((p: any) => p.id === nodeId) as any)?.x ?? Infinity
+
+  const nextNodeOf = (seg: any, curNode: string): string => {
+    const fd = flowDirections?.get(seg.id)
+    if (fd) return seg.type === 'aller' ? fd.toId : fd.toId
+    return seg.startPointId === curNode ? seg.endPointId : seg.startPointId
+  }
+
+  const processFrom = (startNodeId: string) => {
+    let cur = startNodeId
+    while (true) {
+      // ── Phase soufflage (aller depuis cur) ──────────────────────────────
+      const soufflageOut = allerSegs.filter((s: any) => {
+        const fd     = flowDirections?.get(s.id)
+        const fromId = fd?.fromId ?? s.startPointId
+        return fromId === cur && !visited.has(s.id) && roleMap.get(s.id) === 'soufflage'
+      })
+
+      if (soufflageOut.length === 1) {
+        const seg = soufflageOut[0]; visited.add(seg.id)
+        rows.push({ kind: 'segment', seg, depth: 0, segType: 'aller' })
+        cur = nextNodeOf(seg, cur)
+        continue
+      }
+
+      if (soufflageOut.length > 1) {
+        const sorted = [...soufflageOut].sort((a: any, b: any) =>
+          xOf(nextNodeOf(a, cur)) - xOf(nextNodeOf(b, cur)))
+        for (let bi = 0; bi < sorted.length; bi++) {
+          if (bi > 0) rows.push({ kind: 'separation', ptId: cur })
+          const seg = sorted[bi]; visited.add(seg.id)
+          rows.push({ kind: 'segment', seg, depth: 0, segType: 'aller' })
+          processFrom(nextNodeOf(seg, cur))
+        }
+        return
+      }
+
+      // ── Phase reprise (retour depuis cur) ────────────────────────────────
+      while (true) {
+        const repriseOut = retourSegs.filter((s: any) => {
+          const fd     = flowDirections?.get(s.id)
+          const fromId = fd?.fromId ?? s.startPointId
+          return fromId === cur && !visited.has(s.id)
+        })
+        if (repriseOut.length === 0) return
+
+        const seg      = repriseOut[0]; visited.add(seg.id)
+        const nextNode = nextNodeOf(seg, cur)
+
+        if (nextNode === ctaId) {
+          toCTARows.push({ kind: 'segment', seg, depth: 0, segType: 'retour' })
+          return
+        }
+
+        rows.push({ kind: 'segment', seg, depth: 0, segType: 'retour' })
+
+        const totalIn = repriseIn.get(nextNode) ?? 0
+        if (totalIn > 1) {
+          const emitted = (junctionEmitted.get(nextNode) ?? 0) + 1
+          junctionEmitted.set(nextNode, emitted)
+          if (emitted < totalIn) return
+          rows.push({ kind: 'junction', ptId: nextNode, depth: 0, incomingCount: totalIn })
+        }
+        cur = nextNode
+      }
+    }
+  }
+
+  // Air neuf (entrant vers CTA) — avant le réseau principal
+  for (const seg of allerSegs.filter((s: any) => roleMap.get(s.id) === 'air-neuf')) {
+    visited.add(seg.id)
+    rows.push({ kind: 'segment', seg, depth: 0, segType: 'aller' })
+  }
+
+  rows.push({ kind: 'flow-start' })
+  processFrom(ctaId)
+
+  // Orphelins
+  for (const seg of segments) {
+    if (!visited.has(seg.id))
+      rows.push({ kind: 'segment', seg, depth: 0, segType: seg.type })
+  }
+
+  rows.push({ kind: 'flow-end' })
+  rows.push(...toCTARows)
+  if (toCTARows.length > 1)
+    rows.push({ kind: 'junction', ptId: ctaId, depth: 0, incomingCount: toCTARows.length })
+
+  // Air rejeté (sortant de CTA) — en dernier
+  for (const seg of allerSegs.filter((s: any) => roleMap.get(s.id) === 'air-rejete')) {
+    if (!visited.has(seg.id)) {
+      visited.add(seg.id)
+      rows.push({ kind: 'segment', seg, depth: 0, segType: 'aller' })
+    }
+  }
+
+  return { rows, roleMap }
 }

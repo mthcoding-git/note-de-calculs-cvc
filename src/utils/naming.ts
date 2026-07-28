@@ -71,12 +71,13 @@ function findAntenneColLoc(seg, allSegs, roleMap, allerDist, levels, lineYs, col
 
 // Nom par défaut d'un tronçon, sans disambiguation.
 export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist = null, retourDist = null, role = null, activeCalcId: CalcMode | null | string = null, allSegs = null, roleMap = null, flowDirections = null) {
-  const { isBouclage, isAlimECS, isAlimEF, isChauffage: isChauffageMode, isEauGlacee: isEauGlaceeMode } = getModeFlags(activeCalcId as CalcMode | null)
-  const isChaufSeg = seg.type === 'aller-ch' || seg.type === 'retour-ch'
+  const { isBouclage, isAlimECS, isAlimEF, isChauffage: isChauffageMode, isEauGlacee: isEauGlaceeMode, isVentilation: isVentilationMode } = getModeFlags(activeCalcId as CalcMode | null)
+  const isChaufSeg   = seg.type === 'aller-ch' || seg.type === 'retour-ch'
     || (isChauffageMode && (seg.type === 'aller' || seg.type === 'retour'))
-  const isEGSeg    = isEauGlaceeMode && (seg.type === 'aller' || seg.type === 'retour')
-  const isRetourCh = isChaufSeg && (seg.type === 'retour-ch' || seg.type === 'retour')
-  const isRetourEG = isEGSeg && seg.type === 'retour'
+  const isEGSeg      = isEauGlaceeMode  && (seg.type === 'aller' || seg.type === 'retour')
+  const isVentSeg    = isVentilationMode && (seg.type === 'aller' || seg.type === 'retour')
+  const isRetourCh   = isChaufSeg && (seg.type === 'retour-ch' || seg.type === 'retour')
+  const isRetourEG   = isEGSeg    && seg.type === 'retour'
   const ecsDistances = allerDist
   if (!seg.vertices?.length) return ''
   const verts    = seg.vertices
@@ -137,6 +138,10 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
     : isRetourEG  ? 'Retour EG'
     : isEGSeg     && role === 'collecteur-aller'  ? 'Collecteur Aller EG'
     : isEGSeg     ? 'Aller EG'
+    : role === 'air-neuf'   ? 'Air neuf'
+    : role === 'air-rejete' ? 'Air rejeté'
+    : role === 'reprise'    ? 'Air extrait'
+    : isVentSeg   ? 'Air soufflé'
     : role === 'collecteur-aller'  ? 'Collecteur aller ECS'
     : role === 'collecteur-retour' ? 'Collecteur retour ECS'
     : role === 'antenne'           ? 'Antenne ECS'
@@ -156,11 +161,13 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
   }
 
   const specialLabel = (ptId, v, hint) => {
-    const sp = specialPts?.find(p => p.id === ptId && (p.type === 'pump' || p.type === 'productionECS' || p.type === 'arriveeEF'))
+    const sp = specialPts?.find(p => p.id === ptId && (p.type === 'pump' || p.type === 'productionECS' || p.type === 'arriveeEF' || p.type === 'cta' || p.type === 'boucheVentilation'))
     if (!sp) return null
     const lvl = getLevelName(v, hint)
-    if (sp.type === 'pump')      return `${sp.name} (${lvl})`
-    if (sp.type === 'arriveeEF') return sp.name ? `${sp.name} (${lvl})` : `Arrivée EF (${lvl})`
+    if (sp.type === 'pump')              return `${sp.name} (${lvl})`
+    if (sp.type === 'arriveeEF')         return sp.name ? `${sp.name} (${lvl})` : `Arrivée EF (${lvl})`
+    if (sp.type === 'cta')               return sp.name ? `${sp.name} (${lvl})` : `CTA (${lvl})`
+    if (sp.type === 'boucheVentilation') return sp.name ? `${sp.name} (${lvl})` : `Bouche (${lvl})`
     return `Production ECS (${lvl})`
   }
 
@@ -196,7 +203,7 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
       return `${prefix} – ${firstL} → ${secondL}`
     }
   }
-  if (isChaufSeg || isEGSeg) {
+  if (isChaufSeg || isEGSeg || isVentSeg) {
     const fmtNode = (ptId: string, loc: string) => {
       const pt = specialPts?.find((p: any) => p.id === ptId)
       if (!pt) return loc
@@ -207,6 +214,9 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
       if (pt.type === 'terminalFroid') {
         const typeName = TERMINAL_FROID_TYPES.find(t => t.id === pt.terminalFroidType)?.label ?? 'Terminal froid'
         return `${typeName} (${loc})`
+      }
+      if (pt.type === 'boucheVentilation') {
+        return pt.name ? `${pt.name} (${loc})` : `Bouche (${loc})`
       }
       return loc
     }
@@ -294,11 +304,19 @@ export function getDisplayGroupNames(
   return result
 }
 
+// Pré-calcule allerDist et retourDist une seule fois pour les passer à getDisplayName.
+export function buildDisplayDists(allSegs: any[], specialPts: any[]) {
+  return {
+    allerDist:  buildECSDistances(allSegs, specialPts),
+    retourDist: buildRetourDistances(allSegs, specialPts),
+  }
+}
+
 // Nom d'affichage final (avec suffixe " - n°x" si doublons, triés par sens d'écoulement).
-export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts, role = null, activeCalcId: CalcMode | null | string = null, roleMap = null, flowDirections = null) {
+export function getDisplayName(seg, allSegs, levels, lineYs, columns, columnXs, chaufferie, specialPts, role = null, activeCalcId: CalcMode | null | string = null, roleMap = null, flowDirections = null, dists?: { allerDist: Map<string, number>; retourDist: Map<string, number> }) {
   if (seg.name) return seg.name
-  const allerDist  = buildECSDistances(allSegs, specialPts)
-  const retourDist = buildRetourDistances(allSegs, specialPts)
+  const allerDist  = dists?.allerDist  ?? buildECSDistances(allSegs, specialPts)
+  const retourDist = dists?.retourDist ?? buildRetourDistances(allSegs, specialPts)
   const { isAlimECS } = getModeFlags(activeCalcId as CalcMode | null)
   const base = getDefaultSegName(seg, levels, lineYs, columns, columnXs, chaufferie, specialPts, allerDist, retourDist, role, activeCalcId, allSegs, roleMap, flowDirections)
 

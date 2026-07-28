@@ -11,12 +11,14 @@ import NetworkSetupCard from './components/NetworkSetupCard'
 import { DEFAULT_MATERIALS } from './data/materials'
 import { computeFlowDirections, computeFlowDirectionsEF } from './utils/flowDirection'
 import { computeFlowDirectionsChauffage, computeChauffageFlows, computeChauffageThermalSimple, detectMixingNodes, recomputeRetourTemperatures, computeChauffagePumpHMT, computeChauffageSplitCumDp, type PumpHMTResult } from './utils/chauffageCalc'
-import { DEFAULT_CHAUFFAGE_PARAMS, DEFAULT_EAU_GLACEE_PARAMS } from './utils/projectBuilder'
-import { buildECSFlowRows, buildFlowRowsEF, buildChauffageFlowRows } from './utils/tableOrder'
+import { DEFAULT_CHAUFFAGE_PARAMS, DEFAULT_EAU_GLACEE_PARAMS, DEFAULT_CALC_CONSTANTS, DEFAULT_VENTILATION_PARAMS, DEFAULT_MATERIALS_VENTILATION, DEFAULT_PDC_PARAMS_VENTILATION } from './utils/projectBuilder'
+import { computeVentilationResults, computeVentilationFlows, computeFlowDirectionsVentilation, DEFAULT_CTA_TEMPS, type CtaTemps, type VentFlow } from './utils/ventilationCalc'
+import { buildECSFlowRows, buildFlowRowsEF, buildChauffageFlowRows, buildVentilationFlowRows } from './utils/tableOrder'
 import { buildECSDistances } from './utils/pointLocation'
 import { getDisplayGroupNames } from './utils/naming'
 import { computeNetworkFlows } from './utils/flowCalc'
-import { computeThermal } from './utils/thermalCalc'
+import { computeThermal, getSegAmbTemp, computeSegUI } from './utils/thermalCalc'
+import { getSegHR, computeCondensationFromParams, H_EXT_DEFAULT, H_INT_DEFAULT } from './utils/condensationCalc'
 import { computeAlimentationResults } from './utils/alimentationCalc'
 import { computeSegPdc, computePresSourceECS, computePresSourceECSStatic, computeAmontResults, DEFAULT_PDC_PARAMS, DEFAULT_PDC_PARAMS_ALIM_ECS, DEFAULT_PDC_PARAMS_ALIM_EF, waterDensity } from './utils/pdcCalc'
 import { DEFAULT_GLOBAL_PARAMS, DEFAULT_ALIMENTATION_PARAMS, DEFAULT_LEVELS, DEFAULT_LINE_YS, DEFAULT_COLUMNS, DEFAULT_COLUMN_XS, DEFAULT_CHAUFFERIE, DEFAULT_DISPLAY_PREFS, DEFAULT_MATERIALS_CHAUFFAGE, DEFAULT_MATERIALS_EAU_GLACEE, DEFAULT_INSULATIONS_EAU_GLACEE, resolveAlimentationParams, initProject, buildFluidSetupProject } from './utils/projectBuilder'
@@ -34,15 +36,16 @@ import { useVariantHistory } from './hooks/useProjectHistory'
 import './App.css'
 const snapG = v => Math.round(v / 10) * 10
 
-const CANVAS_DISPLAY_RESET = { nomTroncon: false, length: false, material: false, dn: false, insulation: false, debit: false, vitesse: false, temperatureNoeud: false, deltaT: false, equipment: false, dpTroncon: false, dpNoeud: false, pressionDispo: false, pressionStat: false }
+const CANVAS_DISPLAY_RESET = { nomTroncon: false, length: false, material: false, dn: false, insulation: false, debit: false, vitesse: false, temperatureNoeud: false, deltaT: false, equipment: false, dpTroncon: false, dpNoeud: false, pressionDispo: false, pressionStat: false, condensationRisque: false }
 
 // ── Undo/redo + variants store ─────────────────────────
 
 const FLUID_FALLBACKS: Record<FluidId, FluidId[]> = {
-  'ecs':       ['ef', 'chauffage', 'eauglacee'],
-  'ef':        ['ecs', 'chauffage', 'eauglacee'],
-  'chauffage': ['ecs', 'ef', 'eauglacee'],
-  'eauglacee': ['ecs', 'ef', 'chauffage'],
+  'ecs':         ['ef', 'chauffage', 'eauglacee'],
+  'ef':          ['ecs', 'chauffage', 'eauglacee'],
+  'chauffage':   ['ecs', 'ef', 'eauglacee'],
+  'eauglacee':   ['ecs', 'ef', 'chauffage'],
+  'ventilation': [],
 }
 
 export default function App() {
@@ -66,7 +69,7 @@ export default function App() {
 
   const [pendingSetup, setPendingSetup] = useState(true)
 
-  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, isEauGlacee, hasPdc } = getModeFlags(activeCalcId)
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, isEauGlacee, isVentilation, hasPdc } = getModeFlags(activeCalcId)
 
   const segIsSousSolMap = useMemo(() => {
     const map = new Map<string, boolean>()
@@ -119,6 +122,7 @@ export default function App() {
         th = computeThermal(
           part.segments, part.points, project.materialsECS, project.insulations,
           fd, nf, project.levels, project.lineYs, project.globalParams,
+          project.calcConstants?.he_ecs,
         )
       }
       if (isAlimECS) {
@@ -180,7 +184,7 @@ export default function App() {
     const perPartition = chauffagePartitionResult.partitions.map((part: any) => {
       const fd      = computeFlowDirectionsChauffage(part.segments, part.points)
       const mixing  = detectMixingNodes(part.points, part.segments, fd)
-      const flows   = computeChauffageFlows(part.segments, part.points, mats, chParams, fd, mixing)
+      const flows   = computeChauffageFlows(part.segments, part.points, mats, chParams, fd, mixing, project.calcConstants?.rho_cp)
       const thermal = computeChauffageThermalSimple(part.segments, part.points, chParams, fd, flows, mixing)
       recomputeRetourTemperatures(thermal, flows, part.segments, part.points, fd, chParams, mixing)
       const { rows, roleMap } = (() => {
@@ -219,7 +223,7 @@ export default function App() {
     const perPartition = eauGlaceePartitionResult.partitions.map((part: any) => {
       const fd      = computeFlowDirectionsChauffage(part.segments, part.points)
       const mixing  = detectMixingNodes(part.points, part.segments, fd)
-      const flows   = computeChauffageFlows(part.segments, part.points, mats, egParams, fd, mixing)
+      const flows   = computeChauffageFlows(part.segments, part.points, mats, egParams, fd, mixing, project.calcConstants?.rho_cp)
       const thermal = computeChauffageThermalSimple(part.segments, part.points, egParams, fd, flows, mixing)
       recomputeRetourTemperatures(thermal, flows, part.segments, part.points, fd, egParams, mixing)
       const { rows, roleMap } = (() => {
@@ -257,11 +261,13 @@ export default function App() {
       if (multiEauGlaceePreData) return multiEauGlaceePreData.mergedFD
       return (isChauffage || isEauGlacee)
         ? computeFlowDirectionsChauffage(project.segments, project.points)
-        : isAlimEF
-          ? computeFlowDirectionsEF(project.segments, project.points)
-          : computeFlowDirections(project.segments, project.points)
+        : isVentilation
+          ? computeFlowDirectionsVentilation(project.segments, project.points)
+          : isAlimEF
+            ? computeFlowDirectionsEF(project.segments, project.points)
+            : computeFlowDirections(project.segments, project.points)
     },
-    [multiECSPreData, multiChauffagePreData, multiEauGlaceePreData, isChauffage, isEauGlacee, isAlimEF, project.segments, project.points, activeCalcId]
+    [multiECSPreData, multiChauffagePreData, multiEauGlaceePreData, isChauffage, isEauGlacee, isVentilation, isAlimEF, project.segments, project.points, activeCalcId]
   )
 
   const mixingNodes = useMemo(
@@ -280,9 +286,11 @@ export default function App() {
     ? (project.materialsChauffage ?? DEFAULT_MATERIALS_CHAUFFAGE)
     : isEauGlacee
       ? (project.materialsEauGlacee ?? DEFAULT_MATERIALS_EAU_GLACEE)
-      : isAlimEF
-        ? (project.materialsEF ?? DEFAULT_MATERIALS)
-        : project.materialsECS
+      : isVentilation
+        ? (project.materialsVentilation ?? DEFAULT_MATERIALS_VENTILATION)
+        : isAlimEF
+          ? (project.materialsEF ?? DEFAULT_MATERIALS)
+          : project.materialsECS
 
   const activeInsulations = isEauGlacee
     ? (project.insulationsEauGlacee ?? DEFAULT_INSULATIONS_EAU_GLACEE)
@@ -294,7 +302,7 @@ export default function App() {
     const flows = computeChauffageFlows(
       project.segments, project.points, activeMaterials,
       project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS,
-      flowDirections, mixingNodes
+      flowDirections, mixingNodes, project.calcConstants?.rho_cp
     )
     const thermal = computeChauffageThermalSimple(
       project.segments, project.points,
@@ -311,7 +319,7 @@ export default function App() {
     if (multiEauGlaceePreData) return { eauGlaceeFlows: multiEauGlaceePreData.mergedFlows, eauGlaceeThermal: multiEauGlaceePreData.mergedThermal }
     const egParams = project.eauGlaceeParams ?? DEFAULT_EAU_GLACEE_PARAMS
     const flows = computeChauffageFlows(
-      project.segments, project.points, activeMaterials, egParams, flowDirections, mixingNodes
+      project.segments, project.points, activeMaterials, egParams, flowDirections, mixingNodes, project.calcConstants?.rho_cp
     )
     const thermal = computeChauffageThermalSimple(
       project.segments, project.points, egParams, flowDirections, flows, mixingNodes
@@ -320,6 +328,87 @@ export default function App() {
     return { eauGlaceeFlows: flows, eauGlaceeThermal: thermal }
   }, [isEauGlacee, multiEauGlaceePreData, project.segments, project.points, activeMaterials,
       project.eauGlaceeParams, flowDirections, mixingNodes])
+
+  const egCondensationMap = useMemo(() => {
+    if (!isEauGlacee || !eauGlaceeThermal) return null
+    const result = new Map<string, { marge: number; risque: boolean }>()
+    for (const seg of project.segments) {
+      const T_fluid = eauGlaceeThermal.segResults?.get(seg.id)?.T_from ?? null
+      if (T_fluid == null) continue
+      const mat = activeMaterials.find((m: any) => m.id === seg.materialId)
+      const dnDef = mat?.dns?.find((d: any) => d.dn === seg.dn)
+      const de_mm: number | null = seg.de_override ?? dnDef?.de ?? null
+      const di_mm: number | null = seg.di_override ?? dnDef?.di ?? null
+      const lambda_tube: number | null = seg.lambda_tube_override ?? mat?.lambda ?? null
+      if (de_mm == null || di_mm == null) continue
+      const T_amb = getSegAmbTemp(seg, project.levels, project.lineYs)
+      const HR = getSegHR(seg, project.levels, project.lineYs, project.hrGlobalDefault ?? null)
+      if (HR == null) continue
+      const ins = (activeInsulations ?? []).find((i: any) => i.id === seg.insulationId && i.enabled)
+      const hasInsul = ins != null && typeof seg.thickness === 'number' && seg.thickness > 0
+      const e_mm = hasInsul ? (seg.thickness as number) : 0
+      const lambda_ins = hasInsul ? (seg.lambda_insul_override ?? ins!.lambda) : 0.04
+      const res = computeCondensationFromParams(
+        T_fluid, T_amb, HR, de_mm, e_mm, lambda_ins, di_mm, lambda_tube,
+        project.calcConstants?.h_ext_eg ?? H_EXT_DEFAULT,
+        project.calcConstants?.h_int_eg ?? H_INT_DEFAULT,
+        project.calcConstants?.margin_cond ?? 1,
+      )
+      result.set(seg.id, { marge: res.marge, risque: res.risque })
+    }
+    return result
+  }, [isEauGlacee, eauGlaceeThermal, project.segments, activeMaterials, activeInsulations,
+      project.levels, project.lineYs, project.hrGlobalDefault, project.calcConstants])
+
+  const egApportsMap = useMemo(() => {
+    if (!isEauGlacee || !eauGlaceeThermal) return null
+    const result = new Map<string, number>()
+    for (const seg of project.segments) {
+      const T_fluid = eauGlaceeThermal.segResults?.get(seg.id)?.T_from ?? null
+      if (T_fluid == null) continue
+      const T_amb = getSegAmbTemp(seg, project.levels, project.lineYs)
+      const UI = computeSegUI(seg, activeMaterials, activeInsulations, project.calcConstants?.h_ext_eg ?? H_EXT_DEFAULT)
+      const L = seg.length_override
+      if (UI == null || L == null || L <= 0) continue
+      const Q = UI * L * (T_amb - T_fluid)
+      if (Q > 0) result.set(seg.id, Q)
+    }
+    return result
+  }, [isEauGlacee, eauGlaceeThermal, project.segments, activeMaterials, activeInsulations,
+      project.levels, project.lineYs, project.calcConstants])
+
+  const ctaTemps = useMemo((): CtaTemps => {
+    const cta = project.points.find((p: any) => p.type === 'cta') as any
+    return {
+      T_soufflage: cta?.T_soufflage ?? DEFAULT_CTA_TEMPS.T_soufflage,
+      T_reprise:   cta?.T_reprise   ?? DEFAULT_CTA_TEMPS.T_reprise,
+      T_airNeuf:   cta?.T_airNeuf   ?? DEFAULT_CTA_TEMPS.T_airNeuf,
+      T_airRejete: cta?.T_airRejete ?? DEFAULT_CTA_TEMPS.T_airRejete,
+    }
+  }, [project.points])
+
+  const ventilationFlows = useMemo(
+    (): Map<string, VentFlow> | null => !isVentilation ? null
+      : computeVentilationFlows(
+          project.segments,
+          project.points,
+          flowDirections,
+          project.materialsVentilation ?? DEFAULT_MATERIALS_VENTILATION,
+        ),
+    [isVentilation, project.segments, project.points, flowDirections, project.materialsVentilation]
+  )
+
+  const ventilationResults = useMemo(
+    () => !isVentilation ? null
+      : computeVentilationResults(
+          project.segments,
+          project.materialsVentilation ?? DEFAULT_MATERIALS_VENTILATION,
+          ctaTemps,
+          project.pdcParamsVentilation ?? DEFAULT_PDC_PARAMS_VENTILATION,
+          ventilationFlows ?? undefined,
+        ),
+    [isVentilation, project.segments, project.materialsVentilation, ctaTemps, project.pdcParamsVentilation, ventilationFlows]
+  )
 
   // Débits/vitesses résolus par loi des nœuds
   const networkFlows = useMemo(
@@ -336,10 +425,12 @@ export default function App() {
       : computeThermal(
           project.segments, project.points, project.materialsECS, project.insulations,
           flowDirections, networkFlows,
-          project.levels, project.lineYs, project.globalParams
+          project.levels, project.lineYs, project.globalParams,
+          project.calcConstants?.he_ecs,
         ),
     [multiECSPreData, project.segments, project.points, project.materialsECS, project.insulations,
-     flowDirections, networkFlows, project.levels, project.lineYs, project.globalParams]
+     flowDirections, networkFlows, project.levels, project.lineYs, project.globalParams,
+     project.calcConstants?.he_ecs]
   )
 
   const alimentationResultsECS = useMemo(
@@ -390,6 +481,36 @@ export default function App() {
       if (p.materialsEF == null) {
         next.materialsEF = DEFAULT_MATERIALS.map((m: any) => ({ ...m }))
         changed = true
+      }
+      return changed ? next : p
+    })
+  }, [activeCalcId])
+
+  // First-open initialisation for distribution-ventilation
+  useEffect(() => {
+    if (!isVentilation) return
+    setProject((p: any) => {
+      let next: any = { ...p }
+      let changed = false
+      if (!p.ventilationParams) {
+        next.ventilationParams = DEFAULT_VENTILATION_PARAMS
+        changed = true
+      }
+      if (!p.pdcParamsVentilation) {
+        next.pdcParamsVentilation = DEFAULT_PDC_PARAMS_VENTILATION
+        changed = true
+      }
+      if (!p.materialsVentilation) {
+        next.materialsVentilation = DEFAULT_MATERIALS_VENTILATION
+        changed = true
+      } else {
+        // Ajouter les matériaux ventilation manquants (migration)
+        const existingIds = new Set((p.materialsVentilation as any[]).map((m: any) => m.id))
+        const missing = DEFAULT_MATERIALS_VENTILATION.filter(m => !existingIds.has(m.id))
+        if (missing.length > 0) {
+          next.materialsVentilation = [...p.materialsVentilation, ...missing]
+          changed = true
+        }
       }
       return changed ? next : p
     })
@@ -515,6 +636,9 @@ export default function App() {
       thermalResults, alimentationResultsECS, alimentationResultsEF])
 
   const { rows: flowRows, roleMap } = useMemo(() => {
+    if (isVentilation) {
+      return buildVentilationFlowRows(project.segments, project.points, flowDirections) as any
+    }
     if (isChauffage) {
       if (multiChauffagePreData) {
         const allRows: any[] = []
@@ -553,7 +677,7 @@ export default function App() {
     return buildECSFlowRows(project.segments, project.points, flowDirections,
       project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId) as any
   }, [multiECSPreData, multiChauffagePreData, multiEauGlaceePreData, project.segments, project.points, flowDirections,
-      project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId, isChauffage, isEauGlacee, mixingNodes]
+      project.columns, project.columnXs, project.levels, project.lineYs, activeCalcId, isChauffage, isEauGlacee, isVentilation, mixingNodes]
   ) as { rows: any[], roleMap: Map<any, any> }
 
   const efFlowRowsArr = useMemo(
@@ -586,8 +710,8 @@ export default function App() {
       project.levels, project.lineYs, project.columns, project.columnXs])
 
   const errorCount = useMemo(() => {
-    // Emetteurs, terminaux froids et groupes sont des bouts fermés valides (pas une erreur de connectivité)
-    const isSpecialEndpoint = (t?: string) => t === 'groupe' || t === 'arriveeEF' || t === 'emetteur' || t === 'terminalFroid'
+    // Emetteurs, terminaux froids, groupes, CTA et bouches sont des bouts fermés valides
+    const isSpecialEndpoint = (t?: string) => t === 'groupe' || t === 'arriveeEF' || t === 'emetteur' || t === 'terminalFroid' || t === 'cta' || t === 'boucheVentilation'
     const ptCount = new Map()
     for (const s of project.segments) {
       if (s.startPointId) ptCount.set(s.startPointId, (ptCount.get(s.startPointId) ?? 0) + 1)
@@ -609,20 +733,23 @@ export default function App() {
     const hasArriveeEF       = project.points.some(p => p.type === 'arriveeEF')
     const hasProdChauffage   = project.points.some(p => p.type === 'productionChauffage')
     const hasProdEauGlacee   = project.points.some(p => p.type === 'productionEauGlacee')
-    const missingProd = isChauffage
-      ? (hasAllerRetour && !hasProdChauffage ? 1 : 0)
-      : isAlimEF
-        ? (hasAllerSegs && !hasArriveeEF ? 1 : 0)
-        : isEauGlacee
-          ? (hasAllerRetour && !hasProdEauGlacee ? 1 : 0)
-          : (hasAllerRetour && !hasProdECS ? 1 : 0)
+    const hasCTA             = project.points.some(p => p.type === 'cta')
+    const missingProd = isVentilation
+      ? (hasAllerSegs && !hasCTA ? 1 : 0)
+      : isChauffage
+        ? (hasAllerRetour && !hasProdChauffage ? 1 : 0)
+        : isAlimEF
+          ? (hasAllerSegs && !hasArriveeEF ? 1 : 0)
+          : isEauGlacee
+            ? (hasAllerRetour && !hasProdEauGlacee ? 1 : 0)
+            : (hasAllerRetour && !hasProdECS ? 1 : 0)
     const connectedProds = (
       ((isBouclage || isAlimECS) && ecsPartitionResult?.hasConnectedProductions) ||
       (isChauffage && chauffagePartitionResult?.hasConnectedProductions) ||
       (isEauGlacee && eauGlaceePartitionResult?.hasConnectedProductions)
     ) ? 1 : 0
     return conn + flow + missingProd + connectedProds
-  }, [project.segments, project.points, networkFlows, activeCalcId, isBouclage, isChauffage, isEauGlacee, isAlimEF, isAlimECS, ecsPartitionResult, chauffagePartitionResult, eauGlaceePartitionResult])
+  }, [project.segments, project.points, networkFlows, activeCalcId, isBouclage, isChauffage, isEauGlacee, isVentilation, isAlimEF, isAlimECS, ecsPartitionResult, chauffagePartitionResult, eauGlaceePartitionResult])
 
   const [selectedAmontId, setSelectedAmontId] = useState<string | null>(null)
 
@@ -1060,6 +1187,7 @@ export default function App() {
   const activeDisplayPrefs = isAlimEF ? displayPrefs.ef
     : isChauffage   ? displayPrefs.chauffage
     : isEauGlacee   ? displayPrefs.eauglacee
+    : isVentilation ? (displayPrefs.ventilation ?? DEFAULT_DISPLAY_PREFS.ventilation!)
     : displayPrefs.ecs
 
   // Injecte les préférences d'affichage dans activePdcParams pour que tous les composants
@@ -1178,6 +1306,7 @@ export default function App() {
     insulationId: null, thickness: null,
     length: null,
     flowVelocityMode: 'flowRate', flowVelocityValue: null,
+    ductShape: 'circular' as 'circular' | 'rectangular',
   })
 
   // Generic updater for any project key
@@ -1193,7 +1322,7 @@ export default function App() {
       if (editParam.paramType === 'material') {
         if (s.materialId === editParam.materialId && s.dn === editParam.dn)
           return { ...s, materialId: null, dn: null, di_override: null, de_override: null, lambda_tube_override: null }
-        return { ...s, materialId: editParam.materialId, dn: editParam.dn, di_override: null, de_override: null, lambda_tube_override: null }
+        return { ...s, materialId: editParam.materialId, dn: editParam.dn, ductShape: editParam.ductShape ?? 'circular', di_override: null, de_override: null, lambda_tube_override: null }
       }
       if (editParam.paramType === 'insulation') {
         if (s.insulationId === editParam.insulationId && s.thickness === editParam.thickness)
@@ -1427,6 +1556,54 @@ export default function App() {
     })
   }, [setProject])
 
+  // Applies a new columnXs array and moves PP-zone groups + their segment vertices accordingly.
+  const handleColumnXsApply = useCallback((newXs: number[]) => {
+    setProject(p => {
+      const oldXs = p.columnXs
+      if (newXs.length !== oldXs.length) return { ...p, columnXs: newXs }
+
+      const groupMoves = new Map<string, number>()
+      for (let i = 0; i < p.columns.length; i++) {
+        const col = p.columns[i]
+        if (!col.isPPZone) continue
+        const delta = newXs[i] - oldXs[i]
+        if (Math.abs(delta) < 0.5) continue
+        for (const pt of p.points) {
+          if (pt.type === 'groupe' && pt.colId === col.colId) groupMoves.set(pt.id, delta)
+        }
+      }
+
+      if (groupMoves.size === 0) return { ...p, columnXs: newXs }
+
+      const newPoints = p.points.map(pt =>
+        groupMoves.has(pt.id) ? { ...pt, x: pt.x + groupMoves.get(pt.id)! } : pt
+      )
+      const newSegments = p.segments.map(seg => {
+        const sd = groupMoves.get(seg.startPointId) ?? 0
+        const ed = groupMoves.get(seg.endPointId) ?? 0
+        if (!sd && !ed) return seg
+        const verts = [...seg.vertices]
+        if (sd) {
+          const origX = verts[0].x
+          for (let i = 0; i < verts.length - 1; i++) {
+            if (Math.abs(verts[i].x - origX) < 0.5) verts[i] = { x: verts[i].x + sd, y: verts[i].y }
+            else break
+          }
+        }
+        if (ed) {
+          const origX = verts[verts.length - 1].x
+          for (let i = verts.length - 1; i > 0; i--) {
+            if (Math.abs(verts[i].x - origX) < 0.5) verts[i] = { x: verts[i].x + ed, y: verts[i].y }
+            else break
+          }
+        }
+        return { ...seg, vertices: verts }
+      })
+
+      return { ...p, columnXs: newXs, points: newPoints, segments: newSegments }
+    })
+  }, [setProject])
+
   // Updates columnXs during column boundary drag (no content changes — PP zones have their own handler).
   const handleColumnXsChange = useCallback((updater) => {
     setProject(p => {
@@ -1438,7 +1615,7 @@ export default function App() {
 
   // Slides the PP zone gap column left/right, keeping its width fixed, and moves its groups.
   const handlePPZoneDrag = useCallback((ppZoneId, ppWidth, newXLeft) => {
-    setProject(p => {
+    patchProject(p => {
       const ppIdx = p.columns.findIndex(c => c.id === ppZoneId)
       if (ppIdx < 0) return p
       const minXLeft = p.columnXs[ppIdx - 1] !== undefined ? p.columnXs[ppIdx - 1] + 80 : -Infinity
@@ -1463,14 +1640,26 @@ export default function App() {
             const ed = groupMoves.has(seg.endPointId) ? delta : 0
             if (!sd && !ed) return seg
             const verts = [...seg.vertices]
-            if (sd) verts[0] = { x: verts[0].x + sd, y: verts[0].y }
-            if (ed) verts[verts.length - 1] = { x: verts[verts.length - 1].x + ed, y: verts[verts.length - 1].y }
+            if (sd) {
+              const origX = verts[0].x
+              for (let i = 0; i < verts.length - 1; i++) {
+                if (Math.abs(verts[i].x - origX) < 0.5) verts[i] = { x: verts[i].x + sd, y: verts[i].y }
+                else break
+              }
+            }
+            if (ed) {
+              const origX = verts[verts.length - 1].x
+              for (let i = verts.length - 1; i > 0; i--) {
+                if (Math.abs(verts[i].x - origX) < 0.5) verts[i] = { x: verts[i].x + ed, y: verts[i].y }
+                else break
+              }
+            }
             return { ...seg, vertices: verts }
           })
         : p.segments
       return { ...p, columnXs: newColumnXs, points: newPoints, segments: newSegments }
     })
-  }, [setProject])
+  }, [patchProject])
 
   // Moves a gaine column to a new left boundary position (called from LeftPanel ◀ ▶ buttons).
   const handleMoveGaine = useCallback((gapIdx, finalLeft) => {
@@ -1597,7 +1786,7 @@ export default function App() {
 
   const isSpecialPt = (pt) =>
     pt.type === 'productionECS' || pt.type === 'arriveeEF' || pt.type === 'groupe'
-    || pt.type === 'productionChauffage' || pt.isLocked
+    || pt.type === 'productionChauffage' || pt.type === 'cta' || pt.isLocked
 
   // Combined atomic update (single undo entry)
   // After every network change, points with 0 segment connections are auto-removed
@@ -1653,6 +1842,25 @@ export default function App() {
   const handleChaufferieStartDrag = useCallback(() => {
     setProject(p => ({ ...p }))
   }, [setProject])
+
+  const handleLineDragStart = useCallback(() => {
+    setProject(p => ({ ...p }))
+  }, [setProject])
+
+  const handleColumnDragStart = useCallback(() => {
+    setProject(p => ({ ...p }))
+  }, [setProject])
+
+  const handleLineYsPatch = useCallback((v: any) => {
+    patchProject(p => ({ ...p, lineYs: typeof v === 'function' ? v(p.lineYs) : v }))
+  }, [patchProject])
+
+  const handleColumnXsPatch = useCallback((updater: any) => {
+    patchProject(p => {
+      const newXs = typeof updater === 'function' ? updater(p.columnXs) : updater
+      return newXs === p.columnXs ? p : { ...p, columnXs: newXs }
+    })
+  }, [patchProject])
 
   // Patches the current undo entry for auto-corrections — does NOT create a new undo step
   const patchNetwork = useCallback((segsFnOrVal, ptsFnOrVal) => {
@@ -1756,6 +1964,14 @@ export default function App() {
 
   const handleAddProductionEauGlacee = () => {
     setPlacingEquipment({ type: 'productionEauGlacee', name: 'Groupe froid', size: { w: 52, h: 28 } })
+  }
+
+  const handleAddCTA = () => {
+    setPlacingEquipment({ type: 'cta', name: 'CTA', size: { w: 52, h: 28 } })
+  }
+
+  const handleAddBoucheVentilation = () => {
+    setPlacingEquipment({ type: 'boucheVentilation', name: 'Bouche', size: { w: 16, h: 16 } })
   }
 
   const handleAddTerminalFroid = (terminalFroidType: string, T_entree: number, T_sortie: number, puissance: number | null) => {
@@ -1893,6 +2109,8 @@ export default function App() {
         onAddProductionEauGlacee={handleAddProductionEauGlacee}
         hasProductionEauGlacee={false}
         onAddTerminalFroid={handleAddTerminalFroid}
+        onAddCTA={handleAddCTA}
+        onAddBoucheVentilation={handleAddBoucheVentilation}
         canvasDisplay={canvasDisplay}
         onCanvasDisplayToggle={key => setCanvasDisplay(d => ({ ...d, [key]: !d[key] }))}
         activeFluidId={activeFluidId}
@@ -1923,6 +2141,7 @@ export default function App() {
               if (isAlimEF && key === 'isolation') return false
               if (isChauffage && (key === 'isolation' || key === 'groupes' || key === 'equipements')) return false
               if (isEauGlacee && (key === 'groupes' || key === 'equipements')) return false
+              if (isVentilation && (key === 'isolation' || key === 'groupes' || key === 'equipements')) return false
               return true
             }).map(([key, label, icon]) => (
               <button
@@ -2002,10 +2221,13 @@ export default function App() {
               onInsulationsChange={v => update('insulations', typeof v === 'function' ? v(project.insulations) : v)}
               insulationsEauGlacee={project.insulationsEauGlacee ?? DEFAULT_INSULATIONS_EAU_GLACEE}
               onInsulationsEauGlaceeChange={v => update('insulationsEauGlacee', typeof v === 'function' ? v(project.insulationsEauGlacee ?? DEFAULT_INSULATIONS_EAU_GLACEE) : v)}
+              hrGlobalDefault={project.hrGlobalDefault ?? null}
+              onHrGlobalDefaultChange={v => update('hrGlobalDefault', v)}
               columns={project.columns}
               columnXs={project.columnXs}
               onColumnsChange={v => update('columns', v)}
               onColumnXsChange={handleColumnXsChange}
+              onColumnXsApply={handleColumnXsApply}
               onRemoveColumn={handleRemoveColumn}
               onAddColumn={handleAddColumn}
               onAddGap={handleAddGap}
@@ -2038,6 +2260,12 @@ export default function App() {
               placingLocalGroupeFroid={placingLocalGroupeFroid}
               editLocauxGroupeFroid={editLocauxGroupeFroid}
               onEditLocauxGroupeFroidChange={v => { setEditLocauxGroupeFroid(v); if (!v) setSelectedLocalGroupeFroidId(null) }}
+              ventilationParams={project.ventilationParams ?? DEFAULT_VENTILATION_PARAMS}
+              onVentilationParamsChange={v => update('ventilationParams', v)}
+              pdcParamsVentilation={project.pdcParamsVentilation ?? DEFAULT_PDC_PARAMS_VENTILATION}
+              onPdcParamsVentilationChange={v => update('pdcParamsVentilation', v)}
+              materialsVentilation={project.materialsVentilation ?? DEFAULT_MATERIALS_VENTILATION}
+              onMaterialsVentilationChange={v => update('materialsVentilation', typeof v === 'function' ? v(project.materialsVentilation ?? DEFAULT_MATERIALS_VENTILATION) : v)}
               segments={project.segments}
               points={project.points}
               networkFlows={networkFlows}
@@ -2068,6 +2296,8 @@ export default function App() {
             levels={project.levels}
             lineYs={project.lineYs}
             onLineYsChange={v => update('lineYs', typeof v === 'function' ? v(project.lineYs) : v)}
+            onLineDragStart={handleLineDragStart}
+            onLineYsPatch={handleLineYsPatch}
             segments={project.segments}
             onSegmentsChange={v => update('segments', typeof v === 'function' ? v(project.segments) : v)}
             points={project.points}
@@ -2083,6 +2313,8 @@ export default function App() {
             columns={project.columns}
             columnXs={project.columnXs}
             onColumnXsChange={handleColumnXsChange}
+            onColumnXsPatch={handleColumnXsPatch}
+            onColumnDragStart={handleColumnDragStart}
             onPPZoneDrag={handlePPZoneDrag}
             chaufferie={project.chaufferie}
             onChaufferieChange={v => update('chaufferie', v)}
@@ -2105,6 +2337,7 @@ export default function App() {
             eauGlaceeFlows={eauGlaceeFlows}
             chauffageParams={project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS}
             mixingNodes={mixingNodes}
+            egCondensationMap={egCondensationMap}
             displayPrefs={displayPrefs}
             groupesEditMode={groupesEditMode}
             onRemoveGroupeById={handleRemoveGroupeById}
@@ -2171,6 +2404,7 @@ export default function App() {
             onSelectedLocalGroupeFroidChange={id => { setSelectedLocalGroupeFroidId(id); if (id) setSelectedIds([]) }}
             customEmetteurTypes={project.customEmetteurTypes ?? []}
             customTerminalFroidTypes={project.customTerminalFroidTypes ?? []}
+            ventilationResults={ventilationResults ?? undefined}
           />
         </main>
 
@@ -2208,6 +2442,7 @@ export default function App() {
                   flowDirections={flowDirections}
                   networkFlows={networkFlows}
                   chauffageFlows={chauffageFlows}
+                  chauffageThermal={chauffageThermal}
                   chauffageParams={project.chauffageParams ?? DEFAULT_CHAUFFAGE_PARAMS}
                   eauGlaceeFlows={eauGlaceeFlows}
                   eauGlaceeSplitCumDp={eauGlaceeSplitCumDp}
@@ -2232,6 +2467,9 @@ export default function App() {
                   customTerminalFroidTypes={project.customTerminalFroidTypes ?? []}
                   eauGlaceeThermal={eauGlaceeThermal}
                   eauGlaceeParams={project.eauGlaceeParams}
+                  hrGlobalDefault={project.hrGlobalDefault ?? null}
+                  calcConstants={project.calcConstants ?? DEFAULT_CALC_CONSTANTS}
+                  ventilationResults={ventilationResults ?? undefined}
                 />
               )}
               <div className="rt-toggle-bar">
@@ -2321,12 +2559,15 @@ export default function App() {
             eauGlaceeThermal={eauGlaceeThermal}
             eauGlaceePumpHMT={eauGlaceePumpHMT}
             eauGlaceeSplitCumDp={eauGlaceeSplitCumDp}
+            egApportsMap={egApportsMap}
             mixingNodes={mixingNodes}
             chauffagePumpHMT={chauffagePumpHMT}
             chauffageSplitCumDp={chauffageSplitCumDp}
             onShowCriticalPath={setCriticalPathIds}
             criticalPathIds={criticalPathIds}
             pumpCriticalMap={pumpCriticalMap}
+            hrGlobalDefault={project.hrGlobalDefault ?? null}
+            calcConstants={project.calcConstants ?? DEFAULT_CALC_CONSTANTS}
             globalParams={project.globalParams}
             thermalResults={thermalResults}
             alimentationResults={isAlimEF ? alimentationResultsEF : alimentationResultsECS}
@@ -2357,6 +2598,8 @@ export default function App() {
             groupDisplayNames={groupDisplayNames}
             customEmetteurTypes={project.customEmetteurTypes ?? []}
             customTerminalFroidTypes={project.customTerminalFroidTypes ?? []}
+            ventilationResults={ventilationResults ?? undefined}
+            ventilationFlows={ventilationFlows ?? undefined}
           />
         </aside>
         </div>{/* content-area */}
@@ -2366,6 +2609,8 @@ export default function App() {
         <SettingsModal
           displayPrefs={displayPrefs}
           onChange={prefs => update('displayPrefs', prefs)}
+          calcConstants={project.calcConstants ?? DEFAULT_CALC_CONSTANTS}
+          onCalcConstantsChange={cc => update('calcConstants', cc)}
           onClose={() => setShowSettings(false)}
         />
       )}

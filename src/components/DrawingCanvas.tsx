@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import type { CalcMode, DisplayPrefs } from '../types'
 import { DEFAULT_DISPLAY_PREFS } from '../utils/projectBuilder'
-import { getDisplayName } from '../utils/naming'
+import { getDisplayName, buildDisplayDists } from '../utils/naming'
 import { getModeFlags } from '../utils/calcModeFlags'
 import { EMETTEUR_TYPES } from '../data/emetteurs'
 import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
@@ -63,7 +63,8 @@ interface DrawingCanvasProps {
   drawMode: string; pipeType: string
   selectedIds: string[]; onSelectIds: any
   editLevelsEnabled: boolean; editColumnsEnabled: boolean
-  columns: any[]; columnXs: number[]; onColumnXsChange: any; onPPZoneDrag: any
+  columns: any[]; columnXs: number[]; onColumnXsChange: any; onColumnXsPatch?: any; onPPZoneDrag: any
+  onLineDragStart?: () => void; onColumnDragStart?: () => void; onLineYsPatch?: any
   chaufferie: any; onChaufferieChange: any; onChaufferiePatch?: any; onChaufferieStartDrag?: any
   editChaufferie: boolean; onEditChaufferieChange: any
   placingChaufferie: boolean; onPlacingChaufferieDone: any
@@ -110,6 +111,8 @@ interface DrawingCanvasProps {
   displayPrefs?: DisplayPrefs
   customEmetteurTypes?: any[]
   customTerminalFroidTypes?: any[]
+  egCondensationMap?: Map<string, { marge: number; risque: boolean }> | null
+  ventilationResults?: Map<string, any>
 }
 
 export default function DrawingCanvas({
@@ -121,7 +124,8 @@ export default function DrawingCanvas({
   drawMode, pipeType,
   selectedIds, onSelectIds,
   editLevelsEnabled, editColumnsEnabled,
-  columns, columnXs, onColumnXsChange, onPPZoneDrag,
+  columns, columnXs, onColumnXsChange, onColumnXsPatch, onPPZoneDrag,
+  onLineDragStart, onColumnDragStart, onLineYsPatch,
   chaufferie, onChaufferieChange, onChaufferiePatch, onChaufferieStartDrag,
   editChaufferie, onEditChaufferieChange,
   placingChaufferie, onPlacingChaufferieDone,
@@ -201,8 +205,10 @@ export default function DrawingCanvas({
   displayPrefs,
   customEmetteurTypes = [],
   customTerminalFroidTypes = [],
+  egCondensationMap = null,
+  ventilationResults,
 }: DrawingCanvasProps) {
-  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
+  const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, isEauGlacee, isVentilation } = getModeFlags(activeCalcId)
   const activeTerminalFlows = isChauffage ? chauffageFlows : isEauGlacee ? eauGlaceeFlows : null
 
   const svgRef    = useRef(null)
@@ -255,19 +261,24 @@ export default function DrawingCanvas({
   const [accessoryDragT, setAccessoryDragT] = useState(null)  // { accessoryId, t, segmentId } live drag
   const justMovedGroupeIdsRef = useRef(new Set())
 
+  const canvasDisplayDists = useMemo(
+    () => buildDisplayDists(segments ?? [], points ?? []),
+    [segments, points]
+  )
+
   // ── Clear drawing on mode/type change ────────────────
   useEffect(() => { if (drawMode !== 'draw') setDrawing(null) }, [drawMode])
   useEffect(() => { if (pipeType === 'point') setDrawing(null) }, [pipeType])
 
   // ── Auto-split segments at frontier Ys ───────────────
   // Uses onNetworkPatch (not onNetworkChange) to avoid polluting the undo stack.
-  // Only for ECS modes: the frontier node separates thermal zones (T° ambiante différente
+  // ECS and EG: the frontier node separates thermal zones (T° ambiante / HR différentes
   // sous-sol vs hors-sol). EF and Chauffage are purely hydraulic — not needed.
   useEffect(() => {
-    if (isAlimEF || isChauffage || isEauGlacee) return
+    if (isAlimEF || isChauffage || isVentilation) return
     const result = applyFrontierSplits(segments, points, levels, lineYs)
     if (result) onNetworkPatch(result.segs, result.pts)
-  }, [segments, points, levels, lineYs, isAlimEF, isChauffage, isEauGlacee]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [segments, points, levels, lineYs, isAlimEF, isChauffage, isVentilation]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-connect Production ECS to network ───────────
   useEffect(() => {
@@ -359,16 +370,33 @@ export default function DrawingCanvas({
         newPts.push(p); endId = p.id
       }
     }
+    const segType = (drawing.type === 'air-neuf' || drawing.type === 'air-rejete') ? 'aller' : drawing.type
+    const pipeSubType = drawing.type === 'aller' ? 'soufflage'
+      : drawing.type === 'retour' ? 'reprise'
+      : drawing.type  // 'air-neuf' | 'air-rejete'
     const seg = {
-      id: uid('T'), name: null, showName: null, type: drawing.type, vertices: verts,
+      id: uid('T'), name: null, showName: null, type: segType, pipeSubType, vertices: verts,
       startPointId: startId, endPointId: endId,
       materialId: null, dn: null, di_override: null, de_override: null, lambda_tube_override: null,
       insulationId: null, thickness: null, lambda_insul_override: null,
       length_override: null, flowRate: null, velocity: null,
     }
+    if (isVentilation) {
+      const isNewNode = (id) => newPts.some(p => p.id === id)
+      for (const nodeId of [startId, endId]) {
+        if (isNewNode(nodeId)) continue
+        const node = points.find(p => p.id === nodeId)
+        if (!node || node.type === 'cta') continue
+        const connSegs = segments.filter(s => s.startPointId === nodeId || s.endPointId === nodeId)
+        if (connSegs.some(s => s.pipeSubType !== pipeSubType)) {
+          setDrawing(null)
+          return
+        }
+      }
+    }
     onNetworkChange(s => [...s, seg], p => [...p, ...newPts])
     setDrawing(null)
-  }, [drawing, onNetworkChange, points])
+  }, [drawing, onNetworkChange, points, segments, isVentilation])
 
   // ── Delete a point with smart segment merging ─────────
   const deletePoint = useCallback((ptId) => {
@@ -463,7 +491,7 @@ if (drawing) commitDrawing()
         const segMerges = {}
         for (const ptId of delPtIds) {
           const pt = newPts.find(p => p.id === ptId)
-          if (pt?.type === 'productionECS' || pt?.type === 'arriveeEF' || pt?.type === 'productionChauffage' || pt?.type === 'productionEauGlacee') {
+          if (pt?.type === 'productionECS' || pt?.type === 'arriveeEF' || pt?.type === 'productionChauffage' || pt?.type === 'productionEauGlacee' || pt?.type === 'cta') {
             newPts = newPts.map(p => p.id === ptId ? { id: p.id, name: p.name ?? '', x: p.x, y: p.y } : p)
             continue
           }
@@ -523,7 +551,7 @@ if (drawing) commitDrawing()
       const d = dist(p, pos)
       const r = p.type === 'pump'
         ? Math.max(PT_HIT, p.size ?? 15)
-        : p.type === 'productionECS' || p.type === 'arriveeEF' || p.type === 'productionChauffage' || p.type === 'productionEauGlacee'
+        : p.type === 'productionECS' || p.type === 'arriveeEF' || p.type === 'productionChauffage' || p.type === 'productionEauGlacee' || p.type === 'cta'
         ? Math.max(PT_HIT, Math.max((p.size?.w ?? 44) / 2, (p.size?.h ?? 28) / 2))
         : p.type === 'groupe'
         ? Math.max(PT_HIT, 30)
@@ -545,7 +573,7 @@ if (drawing) commitDrawing()
     }
     if (dragLine !== null) {
       const newY = dragLine.origY + (e.clientY - dragLine.screenY) / tf.k
-      onLineYsChange(ys => {
+      ;(onLineYsPatch ?? onLineYsChange)(ys => {
         const next = [...ys]
         const MIN_GAP = 60
         const maxY = dragLine.idx > 0             ? ys[dragLine.idx - 1] - MIN_GAP : Infinity
@@ -561,7 +589,7 @@ if (drawing) commitDrawing()
         onPPZoneDrag?.(dragCol.ppZoneId, dragCol.ppWidth, dragCol.origX + delta)
       } else {
         const newX = dragCol.origX + delta
-        onColumnXsChange(xs => {
+        ;(onColumnXsPatch ?? onColumnXsChange)(xs => {
           const next = [...xs]
           const MIN_GAP = 80
           const maxX = dragCol.idx < xs.length - 1 ? xs[dragCol.idx + 1] - MIN_GAP : Infinity
@@ -808,7 +836,7 @@ if (drawing) commitDrawing()
     } else if (previewAccessory) {
       setPreviewAccessory(null)
     }
-  }, [tf, panSt, dragLine, dragCol, dragCh, dragLEF, dragLECS, dragLCh, dragLGF, rectSt, onLineYsChange, onColumnXsChange, onPPZoneDrag, chaufferie, onChaufferieChange, onChaufferiePatch, onChaufferieStartDrag, levels, lineYs, drawMode, pipeType, segments, previewVanne, placingAccessoryType, previewAccessory, locauxEF, onLocauxEFChange, locauxECS, onLocauxECSChange, locauxChauffage, onLocauxChauffageChange, locauxGroupeFroid, onLocauxGroupeFroidChange])
+  }, [tf, panSt, dragLine, dragCol, dragCh, dragLEF, dragLECS, dragLCh, dragLGF, rectSt, onLineYsChange, onLineYsPatch, onColumnXsChange, onColumnXsPatch, onPPZoneDrag, chaufferie, onChaufferieChange, onChaufferiePatch, onChaufferieStartDrag, levels, lineYs, drawMode, pipeType, segments, previewVanne, placingAccessoryType, previewAccessory, locauxEF, onLocauxEFChange, locauxECS, onLocauxECSChange, locauxChauffage, onLocauxChauffageChange, locauxGroupeFroid, onLocauxGroupeFroidChange])
 
   // ── mouse down ───────────────────────────────────────
   const onMouseDown = useCallback(e => {
@@ -831,7 +859,7 @@ if (drawing) commitDrawing()
       const snapped = { x: snap(pos.x), y: snap(pos.y) }
 
       // productionECS / productionChauffage / émetteur : si un nœud existant est à portée, le convertir en priorité (avant onSeg)
-      if (placingEquipment.type === 'productionECS' || placingEquipment.type === 'productionChauffage' || placingEquipment.type === 'productionEauGlacee') {
+      if (placingEquipment.type === 'productionECS' || placingEquipment.type === 'productionChauffage' || placingEquipment.type === 'productionEauGlacee' || placingEquipment.type === 'cta') {
         const existingPt = points.find(p => dist(p, snapped) < PT_HIT)
         if (existingPt) {
           onNetworkChange(
@@ -866,6 +894,18 @@ if (drawing) commitDrawing()
             : x))
           return
         }
+      }
+
+      if (placingEquipment.type === 'boucheVentilation') {
+        const existingPt = points.find(p => dist(p, snapped) < PT_HIT)
+        if (!existingPt) return
+        const connectedSegs = segments.filter(s => s.startPointId === existingPt.id || s.endPointId === existingPt.id)
+        if (connectedSegs.length !== 1) return
+        const connSeg = connectedSegs[0]
+        if (connSeg.pipeSubType !== 'soufflage' && connSeg.pipeSubType !== 'reprise') return
+        onNetworkChange(s => s, p => p.map(x => x.id === existingPt.id ? { ...x, type: 'boucheVentilation' } : x))
+        onPlacingDone()
+        return
       }
 
       const onSeg = nearestOnSegments(snapped, hitSegs)
@@ -1016,6 +1056,7 @@ if (drawing) commitDrawing()
         ? ortho(drawing.vertices[drawing.vertices.length - 1], pos)
         : { x: snap(pos.x), y: snap(pos.y) }
 
+      const ventSubType = (t: string) => t === 'aller' ? 'soufflage' : t === 'retour' ? 'reprise' : t
       if (!drawing) {
         const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
         // Bloquer le démarrage depuis un émetteur déjà saturé (2 tronçons)
@@ -1023,8 +1064,16 @@ if (drawing) commitDrawing()
           const startPt = points.find(p => p.id === ptId)
           if ((startPt?.type === 'emetteur' || startPt?.type === 'terminalFroid') &&
               segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length >= 2) return
+          // Ventilation : bloquer si le nœud de départ a des tronçons d'un autre type
+          if (isVentilation && startPt?.type !== 'cta') {
+            const drawPST = ventSubType(pipeType)
+            const connSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
+            if (connSegs.some(s => s.pipeSubType !== drawPST)) return
+          }
         }
         if (onSeg && !ptId) {
+          // Ventilation : bloquer si le segment d'accroche a un type incompatible
+          if (isVentilation && onSeg.seg.pipeSubType !== ventSubType(pipeType)) return
           const newPt = splitSegment(onSeg, sp)
           setDrawing({ vertices: [{ x: newPt.x, y: newPt.y }], startPtId: newPt.id, type: pipeType })
         } else {
@@ -1038,17 +1087,29 @@ if (drawing) commitDrawing()
           if (d < rawNearD) { rawNearD = d; rawNearPt = p }
         }
         if (rawNearPt) {
-          const rawSegs = segments.filter(s => s.startPointId === rawNearPt.id || s.endPointId === rawNearPt.id).length
-          if ((rawNearPt.type === 'emetteur' || rawNearPt.type === 'terminalFroid') && rawSegs >= 2) return
+          const rawSegs = segments.filter(s => s.startPointId === rawNearPt.id || s.endPointId === rawNearPt.id)
+          if ((rawNearPt.type === 'emetteur' || rawNearPt.type === 'terminalFroid') && rawSegs.length >= 2) return
+          // Ventilation : bloquer si le nœud cible a des tronçons d'un autre type
+          if (isVentilation && rawNearPt.type !== 'cta') {
+            const drawPST = ventSubType(drawing.type)
+            if (rawSegs.some(s => s.pipeSubType !== drawPST)) return
+          }
           finalize({ x: rawNearPt.x, y: rawNearPt.y }, rawNearPt.id)
         } else {
           const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
           if (ptId) {
             const snapPt = points.find(p => p.id === ptId)
-            const snapSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length
-            if ((snapPt?.type === 'emetteur' || snapPt?.type === 'terminalFroid') && snapSegs >= 2) return
+            const snapSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
+            if ((snapPt?.type === 'emetteur' || snapPt?.type === 'terminalFroid') && snapSegs.length >= 2) return
+            // Ventilation : bloquer si le nœud cible a des tronçons d'un autre type
+            if (isVentilation && snapPt?.type !== 'cta') {
+              const drawPST = ventSubType(drawing.type)
+              if (snapSegs.some(s => s.pipeSubType !== drawPST)) return
+            }
             finalize(sp, ptId)
           } else if (onSeg) {
+            // Ventilation : bloquer si le segment d'accroche a un type incompatible
+            if (isVentilation && onSeg.seg.pipeSubType !== ventSubType(drawing.type)) return
             const newPt = splitSegment(onSeg, sp)
             finalize({ x: newPt.x, y: newPt.y }, newPt.id)
           } else {
@@ -1272,8 +1333,18 @@ if (drawing) commitDrawing()
         }
         return true
       })
+      if (isVentilation && overlap && dragged && dragged.type !== 'cta' && overlap.type !== 'cta') {
+        const segsA = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
+        const segsB = segments.filter(s => s.startPointId === overlap.id || s.endPointId === overlap.id)
+        const types = new Set([...segsA, ...segsB].map(s => s.pipeSubType).filter(Boolean))
+        if (types.size > 1) {
+          setPtDragPos(null)
+          ptDragRef.current = null
+          return
+        }
+      }
       if (overlap && dragged) {
-        const rank = p => (p?.type === 'productionECS' || p?.type === 'productionChauffage' || p?.type === 'productionEauGlacee') ? 3 : p?.type === 'groupe' ? 2 : (p?.type === 'pump' || p?.type === 'emetteur' || p?.type === 'terminalFroid') ? 1 : 0
+        const rank = p => (p?.type === 'productionECS' || p?.type === 'productionChauffage' || p?.type === 'productionEauGlacee' || p?.type === 'cta') ? 3 : p?.type === 'groupe' ? 2 : (p?.type === 'pump' || p?.type === 'emetteur' || p?.type === 'terminalFroid') ? 1 : 0
         const draggedWins = rank(dragged) > rank(overlap)
         const winner = draggedWins ? dragged : overlap
         const loser  = draggedWins ? overlap : dragged
@@ -1301,6 +1372,16 @@ if (drawing) commitDrawing()
           segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).map(s => s.id)
         )
         const hitSeg = nearestOnSegments(np, segments.filter(s => !exclude.has(s.id)))
+
+        // Ventilation : bloquer si le drop sur segment créerait une jonction de types mixtes
+        if (isVentilation && hitSeg && hitSeg.d < SNAP && dragged?.type !== 'cta' && dragged?.type !== 'groupe') {
+          const draggedSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
+          if (draggedSegs.some(s => s.pipeSubType && s.pipeSubType !== hitSeg.seg.pipeSubType)) {
+            setPtDragPos(null)
+            ptDragRef.current = null
+            return
+          }
+        }
 
         const segsOfDraggedForP2 = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length
         if (hitSeg && hitSeg.d < SNAP && dragged?.type !== 'groupe' && !(dragged?.type === 'emetteur' && segsOfDraggedForP2 >= 1)) {
@@ -1343,7 +1424,14 @@ if (drawing) commitDrawing()
           newPts.some(p => (p.type === 'emetteur' || p.type === 'terminalFroid') &&
             newSegs.filter(s => s.startPointId === p.id || s.endPointId === p.id).length > 2) ||
           [...emetteurIds].some(id => !newPts.find(p => p.id === id))
-        if (!hasInvalidEmetteur) onNetworkChange(newSegs, newPts)
+        // Ventilation : annuler si un nœud (hors CTA) se retrouve avec des tronçons de types mixtes
+        const hasVentMixedTypes = isVentilation && newPts.some(pt => {
+          if (pt.type === 'cta') return false
+          const conn = newSegs.filter(s => s.startPointId === pt.id || s.endPointId === pt.id)
+          const types = new Set(conn.map((s: any) => s.pipeSubType).filter(Boolean))
+          return types.size > 1
+        })
+        if (!hasInvalidEmetteur && !hasVentMixedTypes) onNetworkChange(newSegs, newPts)
       }
       setSegDragState(null)
       segDragRef.current = null
@@ -1396,20 +1484,38 @@ if (drawing) commitDrawing()
       const d = dist(p, pos)
       if (d < rawNearD) { rawNearD = d; rawNearPt = p }
     }
-    if (rawNearPt) { finalize({ x: rawNearPt.x, y: rawNearPt.y }, rawNearPt.id); return }
+    const ventSubTypeDbl = (t: string) => t === 'aller' ? 'soufflage' : t === 'retour' ? 'reprise' : t
+    if (rawNearPt) {
+      if (isVentilation && rawNearPt.type !== 'cta') {
+        const drawPST = ventSubTypeDbl(drawing.type)
+        const rawSegs = segments.filter(s => s.startPointId === rawNearPt.id || s.endPointId === rawNearPt.id)
+        if (rawSegs.some(s => s.pipeSubType !== drawPST)) return
+      }
+      finalize({ x: rawNearPt.x, y: rawNearPt.y }, rawNearPt.id)
+      return
+    }
     const snapped = drawing.vertices.length
       ? ortho(drawing.vertices[drawing.vertices.length - 1], pos)
       : { x: snap(pos.x), y: snap(pos.y) }
     const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
     if (ptId) {
+      if (isVentilation) {
+        const snapPt = points.find(p => p.id === ptId)
+        if (snapPt?.type !== 'cta') {
+          const drawPST = ventSubTypeDbl(drawing.type)
+          const snapSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
+          if (snapSegs.some(s => s.pipeSubType !== drawPST)) return
+        }
+      }
       finalize(sp, ptId)
     } else if (onSeg) {
+      if (isVentilation && onSeg.seg.pipeSubType !== ventSubTypeDbl(drawing.type)) return
       const newPt = splitSegment(onSeg, sp)
       finalize({ x: newPt.x, y: newPt.y }, newPt.id)
     } else {
       finalize(sp, null)
     }
-  }, [drawMode, drawing, pipeType, tf, finalize, splitSegment, resolveSnap, points])
+  }, [drawMode, drawing, pipeType, tf, finalize, splitSegment, resolveSnap, points, segments, isVentilation])
 
   // ── preview ───────────────────────────────────────────
   const previewTgt  = drawing && pipeType !== 'point'
@@ -1497,7 +1603,7 @@ if (drawing) commitDrawing()
           <rect x={0} y={z.yTop} width={contentW} height={z.yBot - z.yTop}
             fill={i % 2 === 0 ? '#ffffff' : '#f8fafc'} />
           <text x={14} y={(z.yTop + z.yBot) / 2 + 5}
-            fontSize={12} fill="#d1d8e0" fontWeight="700"
+            fontSize={18} fill="#d1d8e0" fontWeight="700"
             style={{ userSelect: 'none', pointerEvents: 'none' }}>
             {z.name}
           </text>
@@ -1537,7 +1643,7 @@ if (drawing) commitDrawing()
           <g key={col.id} style={{ pointerEvents: 'none' }}>
             <line x1={x1} y1={yTop} x2={x1} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />
             {drawRightBorder && <line x1={x2} y1={yTop} x2={x2} y2={yBot} stroke="#d1d9e6" strokeWidth={1} />}
-            <text x={(x1 + x2) / 2} y={yTop + 16} fontSize={12} fill="#b8c0cc" fontWeight="600"
+            <text x={(x1 + x2) / 2} y={yTop + 22} fontSize={18} fill="#b8c0cc" fontWeight="600"
               textAnchor="middle" style={{ userSelect: 'none' }}>
               {col.name}
             </text>
@@ -1559,17 +1665,17 @@ if (drawing) commitDrawing()
               strokeWidth={isToiture || isFrontier ? 1.5 : 1}
               strokeDasharray={isToiture ? '8,5' : 'none'} />
             {isToiture && (
-              <text x={14} y={y - 5} fontSize={10} fill="#94a3b8" fontWeight="600"
+              <text x={14} y={y - 5} fontSize={16} fill="#94a3b8" fontWeight="600"
                 style={{ userSelect: 'none', pointerEvents: 'none' }}>Toiture</text>
             )}
             {isFrontier && (
-              <text x={14} y={y - 5} fontSize={10} fill="#8899b0" fontWeight="600"
+              <text x={14} y={y - 5} fontSize={12} fill="#8899b0" fontWeight="600"
                 style={{ userSelect: 'none', pointerEvents: 'none' }}>Séparation sous-sol</text>
             )}
             {editLevelsEnabled && (
               <rect x={0} y={y - 6} width={contentW} height={12}
                 fill="transparent" style={{ cursor: 'ns-resize' }}
-                onMouseDown={ev => { ev.stopPropagation(); setDragLine({ idx: i, screenY: ev.clientY, origY: y }) }} />
+                onMouseDown={ev => { ev.stopPropagation(); onLineDragStart?.(); setDragLine({ idx: i, screenY: ev.clientY, origY: y }) }} />
             )}
           </g>
         )
@@ -1603,6 +1709,7 @@ if (drawing) commitDrawing()
               fill="transparent" style={{ cursor: 'ew-resize' }}
               onMouseDown={ev => {
                 ev.stopPropagation()
+                onColumnDragStart?.()
                 setDragCol({ idx: i, screenX: ev.clientX, origX: x, isPPZone: false })
               }} />
           )
@@ -1618,6 +1725,7 @@ if (drawing) commitDrawing()
           const yBase = lineYs[lineYs.length - 1]
           const startDrag = ev => {
             ev.stopPropagation()
+            onColumnDragStart?.()
             setDragCol({ idx: i, screenX: ev.clientX, origX: x1, isPPZone: true, ppZoneId: col.id, ppWidth })
           }
           return (
@@ -1866,10 +1974,24 @@ if (drawing) commitDrawing()
           const _dp  = isAlimEF   ? (displayPrefs?.ef        ?? DEFAULT_DISPLAY_PREFS.ef)
             : isChauffage ? (displayPrefs?.chauffage  ?? DEFAULT_DISPLAY_PREFS.chauffage)
             : isEauGlacee ? (displayPrefs?.eauglacee  ?? DEFAULT_DISPLAY_PREFS.eauglacee)
+            : isVentilation ? (displayPrefs?.ventilation ?? DEFAULT_DISPLAY_PREFS.ventilation)
             : (displayPrefs?.ecs ?? DEFAULT_DISPLAY_PREFS.ecs)
-          const col  = seg.type === 'retour' ? _dp.colorRetour : _dp.colorAller
+          let col: string
+          if (isVentilation) {
+            const role = (roleMap?.get ? roleMap.get(seg.id) : roleMap?.[seg.id])
+              ?? (seg as any).pipeSubType
+              ?? (seg.type === 'retour' ? 'reprise' : 'soufflage')
+            col = role === 'reprise'    ? (_dp as any).colorRetour
+              : role === 'air-rejete'  ? ((_dp as any).colorAirRejete ?? '#94a3b8')
+              : role === 'air-neuf'    ? ((_dp as any).colorAirNeuf   ?? '#38bdf8')
+              : (_dp as any).colorAller
+          } else {
+            col = seg.type === 'retour' ? _dp.colorRetour : _dp.colorAller
+          }
           const _sw  = _dp.strokeWidth
-          const dash = (seg.type === 'retour' && !isAlimEF) ? '10,6' : 'none'
+          const dash = isVentilation
+            ? 'none'
+            : (seg.type === 'retour' && !isAlimEF) ? '10,6' : 'none'
           const path = seg.vertices.map((v, i) => `${i ? 'L' : 'M'}${v.x},${v.y}`).join(' ')
 
           // Edit-params coloring
@@ -2052,7 +2174,7 @@ if (drawing) commitDrawing()
                 // lines: [{text, red?}]
                 const lines = []
                 if (canvasDisplay?.nomTroncon) {
-                  const name = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, roleMap?.get(seg.id), activeCalcId, roleMap, flowDirections)
+                  const name = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, roleMap?.get(seg.id), activeCalcId, roleMap, flowDirections, canvasDisplayDists)
                   if (name) lines.push({ text: name })
                 }
                 if (canvasDisplay?.length && seg.length_override != null) {
@@ -2073,7 +2195,11 @@ if (drawing) commitDrawing()
                   if (ins) lines.push({ text: seg.thickness != null ? `${ins.name} ${seg.thickness}mm` : ins.name })
                 }
                 if (canvasDisplay?.debit) {
-                  if (isAlimMode) {
+                  if (isVentilation) {
+                    const vr = ventilationResults?.get(seg.id)
+                    if (vr?.Q_m3h != null && vr.Q_m3h > 0)
+                      lines.push({ text: `${vr.Q_m3h.toFixed(0)} m³/h` })
+                  } else if (isAlimMode) {
                     const ar = alimentationResults?.get(seg.id)
                     if (ar?.flowRateForPdc != null && ar.flowRateForPdc > 0)
                       lines.push({ text: `${ar.flowRateForPdc.toFixed(2)} l/s` })
@@ -2087,7 +2213,13 @@ if (drawing) commitDrawing()
                   }
                 }
                 if (canvasDisplay?.vitesse) {
-                  if (isAlimMode) {
+                  if (isVentilation) {
+                    const vr = ventilationResults?.get(seg.id)
+                    if (vr?.v_ms != null) {
+                      const v = vr.v_ms
+                      lines.push({ text: `${sf(v, 2)} m/s`, orange: v > 5 && v <= 8, red: v > 8 })
+                    }
+                  } else if (isAlimMode) {
                     const ar = alimentationResults?.get(seg.id)
                     const flowLs = ar?.flowRateForPdc ?? null
                     const dnDef = (() => {
@@ -2111,7 +2243,7 @@ if (drawing) commitDrawing()
                       const segRole = roleMap?.get(seg.id)
                       const vMax = segRole === 'collecteur-retour' ? 1.0 : 0.5
                       const isRedMin    = seg.type === 'retour' && v < 0.2
-                      const isOrangeMax = v > vMax
+                      const isOrangeMax = seg.type === 'retour' && v > vMax
                       lines.push({ text: `${sf(v, 2)} m/s`, red: isRedMin, orange: isOrangeMax && !isRedMin })
                     }
                   }
@@ -2120,25 +2252,45 @@ if (drawing) commitDrawing()
                   const sr = thermalResults?.segResults?.get(seg.id)
                   if (sr?.deltaT != null) lines.push({ text: `ΔT ${sf(sr.deltaT, 2)} °C` })
                 }
-                if (canvasDisplay?.dpTroncon && (isBouclage || isChauffage || isEauGlacee)) {
-                  const dp = pdcResults?.get(seg.id)?.dpTotal
-                  if (dp != null) {
-                    const u = pdcParams?.uniteAffichage ?? 'Pa'
-                    const txt = u === 'mmCE' ? `ΔP ${(dp / 9.81).toFixed(0)} mmCE`
-                      : `ΔP ${Math.round(dp)} Pa`
-                    lines.push({ text: txt })
+                if (canvasDisplay?.dpTroncon && (isBouclage || isChauffage || isEauGlacee || isVentilation)) {
+                  if (isVentilation) {
+                    const vr = ventilationResults?.get(seg.id)
+                    if (vr?.dp_Pa != null)
+                      lines.push({ text: `ΔP ${Math.round(vr.dp_Pa)} Pa` })
+                  } else {
+                    const dp = pdcResults?.get(seg.id)?.dpTotal
+                    if (dp != null) {
+                      const u = pdcParams?.uniteAffichage ?? 'Pa'
+                      const txt = u === 'mmCE' ? `ΔP ${(dp / 9.81).toFixed(0)} mmCE`
+                        : `ΔP ${Math.round(dp)} Pa`
+                      lines.push({ text: txt })
+                    }
                   }
                 }
-                if (canvasDisplay?.rLinear && (isChauffage || isEauGlacee)) {
-                  const J = pdcResults?.get(seg.id)?.J
-                  if (J != null)
-                    lines.push({ text: `R ${J.toFixed(1)} Pa/m`, orange: J > 150 })
+                if (canvasDisplay?.rLinear && (isChauffage || isEauGlacee || isVentilation)) {
+                  if (isVentilation) {
+                    const vr = ventilationResults?.get(seg.id)
+                    if (vr?.dp_Pa_m != null)
+                      lines.push({ text: `J ${vr.dp_Pa_m.toFixed(1)} Pa/m`, orange: vr.dp_Pa_m > 1.5 })
+                  } else {
+                    const J = pdcResults?.get(seg.id)?.J
+                    if (J != null)
+                      lines.push({ text: `R ${J.toFixed(1)} Pa/m`, orange: J > 150 })
+                  }
                 }
                 if (canvasDisplay?.puissanceTroncon && (isChauffage || isEauGlacee)) {
                   const P = activeTerminalFlows?.get(seg.id)?.puissanceAmont
                   if (P != null && P > 0) {
                     const txt = P >= 1000 ? `${(P / 1000).toFixed(1)} kW` : `${Math.round(P)} W`
                     lines.push({ text: txt })
+                  }
+                }
+                if (canvasDisplay?.condensationRisque && isEauGlacee) {
+                  const cond = egCondensationMap?.get(seg.id)
+                  if (cond != null) {
+                    const sign = cond.marge >= 0 ? '+' : ''
+                    const txt = `${cond.risque ? '⚠' : '✓'} ${sign}${cond.marge.toFixed(1)} °C`
+                    lines.push({ text: txt, red: cond.risque, green: !cond.risque })
                   }
                 }
                 if (!lines.length) return null
@@ -2171,14 +2323,14 @@ if (drawing) commitDrawing()
                     {lines.map((line, i) => (
                       <text key={i} x={bx + PAD} y={by + PAD + (i + 1) * LH - 1}
                         fontSize={8.5}
-                        fill={line.red ? '#dc2626' : line.orange ? '#f97316' : '#0f172a'}
+                        fill={line.red ? '#dc2626' : line.orange ? '#f97316' : line.green ? '#16a34a' : '#0f172a'}
                         fontWeight="600">{line.text}</text>
                     ))}
                   </g>
                 )
               })()}
               {seg.showName && (() => {
-                const label = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, null, activeCalcId, null, flowDirections)
+                const label = getDisplayName(seg, renderSegs, levels, lineYs, columns, columnXs, chaufferie, renderPts, null, activeCalcId, null, flowDirections, canvasDisplayDists)
                 if (!label) return null
                 const raw = label.split(' → ')
                 const lines = raw.length >= 2
@@ -2865,6 +3017,58 @@ if (drawing) commitDrawing()
             )
           }
 
+          if (pt.type === 'cta') {
+            const w = pt.size?.w ?? 52, h = pt.size?.h ?? 28
+            const col = sel || dragged ? '#2563eb' : '#000'
+            const bg  = sel || dragged ? '#dbeafe' : '#fff'
+            const fs = Math.max(6, Math.min(9, h * 0.28))
+            return (
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+                <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
+                <g style={{ pointerEvents: 'none' }}>
+                  <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
+                    fill={bg} stroke={col} strokeWidth={1.5} rx={3} />
+                  <text x={pt.x} y={pt.y + fs * 0.35}
+                    fontSize={fs} fill={col} textAnchor="middle" fontWeight="700"
+                    style={{ userSelect: 'none' }}>CTA</text>
+                </g>
+                {pt.name && pt.name !== 'CTA' && (
+                  <text x={pt.x} y={pt.y - h/2 - 3}
+                    fontSize={6} fill={col} textAnchor="middle"
+                    style={{ userSelect: 'none', pointerEvents: 'none' }}>{pt.name}</text>
+                )}
+              </g>
+            )
+          }
+
+          if (pt.type === 'boucheVentilation') {
+            const connectedSegs = renderSegs.filter(s => s.startPointId === pt.id || s.endPointId === pt.id)
+            const isReprise = connectedSegs.some(s => {
+              const role = (roleMap?.get ? roleMap.get(s.id) : roleMap?.[s.id]) ?? (s as any).pipeSubType
+              return role === 'reprise'
+            })
+            const col = sel || dragged ? '#2563eb' : isReprise ? '#f472b6' : '#059669'
+            const bg  = sel || dragged ? '#dbeafe' : isReprise ? '#fdf2f8' : '#f0fdf4'
+            const r = 8
+            return (
+              <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
+                <circle cx={pt.x} cy={pt.y} r={r + 4} fill="transparent" />
+                <g style={{ pointerEvents: 'none' }}>
+                  <circle cx={pt.x} cy={pt.y} r={r} fill={bg} stroke={col} strokeWidth={1.2} />
+                  <line x1={pt.x - r * 0.5} y1={pt.y} x2={pt.x + r * 0.5} y2={pt.y}
+                    stroke={col} strokeWidth={1} />
+                  <line x1={pt.x} y1={pt.y - r * 0.5} x2={pt.x} y2={pt.y + r * 0.5}
+                    stroke={col} strokeWidth={1} />
+                </g>
+                {pt.name && (
+                  <text x={pt.x} y={pt.y - r - 3}
+                    fontSize={6} fill={col} textAnchor="middle"
+                    style={{ userSelect: 'none', pointerEvents: 'none' }}>{pt.name}</text>
+                )}
+              </g>
+            )
+          }
+
           if (pt.type === 'productionECS') {
             const w = pt.size?.w ?? 44, h = pt.size?.h ?? 28
             const fs = Math.max(6, Math.min(9, h * 0.28))
@@ -3037,13 +3241,22 @@ if (drawing) commitDrawing()
               const _pp = isAlimEF ? (displayPrefs?.ef ?? DEFAULT_DISPLAY_PREFS.ef)
                 : isChauffage ? (displayPrefs?.chauffage ?? DEFAULT_DISPLAY_PREFS.chauffage)
                 : isEauGlacee ? (displayPrefs?.eauglacee ?? DEFAULT_DISPLAY_PREFS.eauglacee)
+                : isVentilation ? (displayPrefs?.ventilation ?? DEFAULT_DISPLAY_PREFS.ventilation)
                 : (displayPrefs?.ecs ?? DEFAULT_DISPLAY_PREFS.ecs)
-              const previewCol = pipeType === 'retour' ? _pp.colorRetour : _pp.colorAller
+              const previewCol = isVentilation
+                ? (pipeType === 'retour'      ? (_pp as any).colorRetour
+                  : pipeType === 'air-neuf'   ? ((_pp as any).colorAirNeuf   ?? '#38bdf8')
+                  : pipeType === 'air-rejete' ? ((_pp as any).colorAirRejete ?? '#94a3b8')
+                  : _pp.colorAller)
+                : (pipeType === 'retour' ? _pp.colorRetour : _pp.colorAller)
+              const previewDash = isVentilation
+                ? '5,3'
+                : (!isAlimEF && pipeType === 'retour' ? '10,6' : '5,3')
               return (
                 <>
                   <path d={previewPath}
                     stroke={previewCol} strokeWidth={_pp.strokeWidth}
-                    strokeDasharray={!isAlimEF && pipeType === 'retour' ? '10,6' : '5,3'}
+                    strokeDasharray={previewDash}
                     fill="none" opacity={0.6} style={{ pointerEvents: 'none' }} />
                   {drawing.vertices.map((v, i) =>
                     <rect key={i} x={v.x - 2.5} y={v.y - 2.5} width={5} height={5}
@@ -3115,6 +3328,35 @@ if (drawing) commitDrawing()
                   fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
                 <text x={gx} y={gy - h * 0.15} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">Groupe</text>
                 <text x={gx} y={gy + h * 0.28} fontSize={fs} fill="rgba(0,0,0,0.45)" fontWeight="700" textAnchor="middle">froid</text>
+              </g>
+            )
+          }
+          if (placingEquipment.type === 'cta') {
+            const w = placingEquipment.size?.w ?? 52, h = placingEquipment.size?.h ?? 28
+            const fs = Math.max(6, Math.min(9, h * 0.28))
+            return (
+              <g style={{ pointerEvents: 'none' }}>
+                <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
+                  fill="rgba(240,253,244,0.6)" stroke="rgba(5,150,105,0.5)" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
+                <text x={gx} y={gy + fs * 0.35}
+                  fontSize={fs} fill="rgba(5,150,105,0.7)" fontWeight="700" textAnchor="middle">CTA</text>
+              </g>
+            )
+          }
+          if (placingEquipment.type === 'boucheVentilation') {
+            const nearPt = points.find(p => dist(p, { x: gx, y: gy }) < PT_HIT)
+            const nearSegs = nearPt ? segments.filter(s => s.startPointId === nearPt.id || s.endPointId === nearPt.id) : []
+            const validConnSeg = nearSegs.length === 1 && (nearSegs[0].pipeSubType === 'soufflage' || nearSegs[0].pipeSubType === 'reprise') ? nearSegs[0] : null
+            const previewCol = validConnSeg
+              ? validConnSeg.pipeSubType === 'reprise' ? 'rgba(244,114,182,0.8)' : 'rgba(5,150,105,0.8)'
+              : 'rgba(148,163,184,0.5)'
+            const r = 8
+            return (
+              <g style={{ pointerEvents: 'none' }}>
+                <circle cx={gx} cy={gy} r={r}
+                  fill="rgba(255,255,255,0.6)" stroke={previewCol} strokeWidth={1.2} strokeDasharray={validConnSeg ? 'none' : '3,2'} />
+                <line x1={gx - r * 0.5} y1={gy} x2={gx + r * 0.5} y2={gy} stroke={previewCol} strokeWidth={1} />
+                <line x1={gx} y1={gy - r * 0.5} x2={gx} y2={gy + r * 0.5} stroke={previewCol} strokeWidth={1} />
               </g>
             )
           }

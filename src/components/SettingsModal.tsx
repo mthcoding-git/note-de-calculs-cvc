@@ -1,11 +1,23 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import type { DisplayPrefs } from '../types'
+import type { DisplayPrefs, CalcConstants } from '../types'
 import { DEFAULT_DISPLAY_PREFS } from '../utils/projectBuilder'
 
 const PT_R = 4
 
-type Mode = 'ecs' | 'ef' | 'chauffage'
+const DEFAULT_CC: Required<CalcConstants> = {
+  he_ecs:      10,
+  rho_cp:      1163,
+  h_ext_eg:    10,
+  h_int_eg:    3000,
+  margin_cond: 1,
+}
+
+type Mode = 'ecs' | 'ef' | 'chauffage' | 'eauglacee'
+
+const TAB_LABELS: Record<Mode, string> = {
+  ecs: 'ECS', ef: 'EF', chauffage: 'Chauffage', eauglacee: 'Eau glacée',
+}
 
 const COLOR_PALETTE = [
   '#dc2626', '#ef4444', '#f97316', '#fb923c', '#fbbf24',
@@ -17,6 +29,8 @@ const COLOR_PALETTE = [
 interface Props {
   displayPrefs: DisplayPrefs
   onChange: (prefs: DisplayPrefs) => void
+  calcConstants: CalcConstants
+  onCalcConstantsChange: (cc: CalcConstants) => void
   onClose: () => void
 }
 
@@ -64,6 +78,34 @@ function ResetBtn({ onClick }: { onClick: () => void }) {
     >
       ↺
     </button>
+  )
+}
+
+function NumConst({
+  label, unit, value, defaultValue, onChange, step = 1, min = 0,
+}: {
+  label: string; unit: string; value: number | undefined; defaultValue: number
+  onChange: (v: number) => void; step?: number; min?: number
+}) {
+  const v = value ?? defaultValue
+  return (
+    <Row label={label}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <input
+          type="number" value={v} min={min} step={step}
+          onChange={e => { const n = parseFloat(e.target.value); if (!isNaN(n)) onChange(n) }}
+          style={{
+            width: 72, padding: '3px 6px', fontSize: 12,
+            border: '1px solid #d1d5db', borderRadius: 5,
+            background: '#f9fafb', color: '#374151',
+            fontFamily: 'ui-monospace, monospace',
+            textAlign: 'right', outline: 'none',
+          }}
+        />
+        <span style={{ fontSize: 10.5, color: '#94a3b8', minWidth: 60 }}>{unit}</span>
+        <ResetBtn onClick={() => onChange(defaultValue)} />
+      </div>
+    </Row>
   )
 }
 
@@ -149,14 +191,17 @@ function ColorSwatch({
   )
 }
 
-export function SettingsModal({ displayPrefs, onChange, onClose }: Props) {
+export function SettingsModal({ displayPrefs, onChange, calcConstants, onCalcConstantsChange, onClose }: Props) {
   const [mode, setMode] = useState<Mode>('ecs')
 
-  const prefs = displayPrefs[mode]
-  const def = DEFAULT_DISPLAY_PREFS[mode]
+  const prefs = displayPrefs[mode] as any
+  const def   = DEFAULT_DISPLAY_PREFS[mode] as any
 
-  const patch = (p: Partial<typeof prefs>) =>
+  const patch = (p: Record<string, any>) =>
     onChange({ ...displayPrefs, [mode]: { ...prefs, ...p } })
+
+  const patchCC = (p: Partial<CalcConstants>) =>
+    onCalcConstantsChange({ ...calcConstants, ...p })
 
   return (
     <div
@@ -168,7 +213,7 @@ export function SettingsModal({ displayPrefs, onChange, onClose }: Props) {
     >
       <div style={{
         background: '#fff', borderRadius: 10, boxShadow: '0 12px 40px rgba(15,23,42,0.18)',
-        width: 330, maxHeight: '90vh', overflow: 'auto',
+        width: 370, maxHeight: '90vh', overflow: 'auto',
       }}>
         {/* En-tête */}
         <div style={{
@@ -176,7 +221,7 @@ export function SettingsModal({ displayPrefs, onChange, onClose }: Props) {
           padding: '13px 16px 10px', borderBottom: '1px solid #f1f5f9',
         }}>
           <span style={{ fontWeight: 600, fontSize: 13.5, color: '#0f172a', letterSpacing: '-0.01em' }}>
-            Paramètres d'affichage
+            Paramètres
           </span>
           <button onClick={onClose} style={{
             background: 'none', border: 'none', cursor: 'pointer',
@@ -193,16 +238,16 @@ export function SettingsModal({ displayPrefs, onChange, onClose }: Props) {
           display: 'flex', padding: '0 16px', borderBottom: '1px solid #f1f5f9',
           background: '#fafafa',
         }}>
-          {(['ecs', 'ef', 'chauffage'] as Mode[]).map(m => (
+          {(['ecs', 'ef', 'chauffage', 'eauglacee'] as Mode[]).map(m => (
             <button key={m} onClick={() => setMode(m)} style={{
-              padding: '8px 11px', fontSize: 12, fontWeight: mode === m ? 600 : 400,
+              padding: '8px 10px', fontSize: 12, fontWeight: mode === m ? 600 : 400,
               border: 'none', borderBottom: mode === m ? '2px solid #3b82f6' : '2px solid transparent',
               background: 'none', cursor: 'pointer',
               color: mode === m ? '#2563eb' : '#64748b',
-              marginRight: 2, letterSpacing: mode === m ? '-0.01em' : 'normal',
+              marginRight: 1, letterSpacing: mode === m ? '-0.01em' : 'normal',
               transition: 'color 0.12s',
             }}>
-              {m === 'ecs' ? 'ECS' : m === 'ef' ? 'EF' : 'Chauffage'}
+              {TAB_LABELS[m]}
             </button>
           ))}
         </div>
@@ -213,26 +258,23 @@ export function SettingsModal({ displayPrefs, onChange, onClose }: Props) {
           <SectionLabel>Unités</SectionLabel>
 
           <Row label="Débit">
-            <Sel value={prefs.unitDebit} onChange={v => patch({ unitDebit: v as any })}>
+            <Sel value={prefs.unitDebit} onChange={v => patch({ unitDebit: v })}>
               <option value="L/h">L/h</option>
               <option value="m3/h">m³/h</option>
             </Sel>
           </Row>
 
           <Row label="Pertes de charge">
-            <Sel value={prefs.unitDp} onChange={v => patch({ unitDp: v as any })}>
+            <Sel value={prefs.unitDp} onChange={v => patch({ unitDp: v })}>
               <option value="Pa">Pa</option>
               <option value="mmCE">mmCE</option>
               <option value="both">Pa / mmCE</option>
             </Sel>
           </Row>
 
-          {mode === 'chauffage' && (
+          {(mode === 'chauffage' || mode === 'eauglacee') && (
             <Row label="Puissance">
-              <Sel
-                value={(prefs as any).unitPuissance ?? 'W'}
-                onChange={v => patch({ unitPuissance: v } as any)}
-              >
+              <Sel value={prefs.unitPuissance ?? 'W'} onChange={v => patch({ unitPuissance: v })}>
                 <option value="W">W</option>
                 <option value="kW">kW</option>
               </Sel>
@@ -274,6 +316,66 @@ export function SettingsModal({ displayPrefs, onChange, onClose }: Props) {
               <ResetBtn onClick={() => patch({ strokeWidth: def.strokeWidth })} />
             </div>
           </Row>
+
+          {/* ── Constantes de calcul (par mode) ── */}
+          {mode === 'ecs' && (
+            <>
+              <SectionLabel>Constantes de calcul</SectionLabel>
+              <NumConst
+                label="Convection extérieure"
+                unit="W/(m²·K)"
+                value={calcConstants.he_ecs}
+                defaultValue={DEFAULT_CC.he_ecs}
+                onChange={v => patchCC({ he_ecs: v })}
+                step={0.5}
+              />
+            </>
+          )}
+
+          {mode === 'chauffage' && (
+            <>
+              <SectionLabel>Constantes de calcul</SectionLabel>
+              <NumConst
+                label="ρ·cp eau"
+                unit="Wh/(m³·K)"
+                value={calcConstants.rho_cp}
+                defaultValue={DEFAULT_CC.rho_cp}
+                onChange={v => patchCC({ rho_cp: v })}
+                step={10}
+              />
+            </>
+          )}
+
+          {mode === 'eauglacee' && (
+            <>
+              <SectionLabel>Constantes de calcul</SectionLabel>
+              <NumConst
+                label="Convection extérieure"
+                unit="W/(m²·K)"
+                value={calcConstants.h_ext_eg}
+                defaultValue={DEFAULT_CC.h_ext_eg}
+                onChange={v => patchCC({ h_ext_eg: v })}
+                step={0.5}
+              />
+              <NumConst
+                label="Convection intérieure"
+                unit="W/(m²·K)"
+                value={calcConstants.h_int_eg}
+                defaultValue={DEFAULT_CC.h_int_eg}
+                onChange={v => patchCC({ h_int_eg: v })}
+                step={100}
+              />
+              <NumConst
+                label="Marge condensation"
+                unit="°C"
+                value={calcConstants.margin_cond}
+                defaultValue={DEFAULT_CC.margin_cond}
+                onChange={v => patchCC({ margin_cond: v })}
+                step={0.5}
+                min={0}
+              />
+            </>
+          )}
 
         </div>
       </div>

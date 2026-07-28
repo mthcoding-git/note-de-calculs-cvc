@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import type { CalcMode } from '../types'
 import { getDisplayName } from '../utils/naming'
-import { EQUIPMENT_TYPES, FITTING_TYPES, getEquipmentForMode } from '../utils/pdcCalc'
+import { EQUIPMENT_TYPES, FITTING_TYPES, getEquipmentForMode, getFittingsForMode } from '../utils/pdcCalc'
 import { NumInput } from './NumInput'
 import { uid } from '../utils/idGen'
 import { getModeFlags } from '../utils/calcModeFlags'
@@ -142,20 +143,6 @@ function LevelsSection({ levels, lineYs, onLevelsChange, onLineYsChange, chauffe
                       onChange={v => setTAmb(lvl.id, v)}
                     />
                     <span className="lp-level-expanded-unit">°C</span>
-                  </div>
-                  )}
-                  {isEauGlacee && (
-                  <div className="lp-level-expanded-row">
-                    <span className="lp-level-expanded-label">HR (EG)</span>
-                    <NumInput
-                      min={0} max={100} step={1}
-                      className="lp-level-exp-input"
-                      value={lvl.hr_eg_default ?? null}
-                      placeholder="60 (par défaut)"
-                      allowEmpty
-                      onChange={v => setHrEg(lvl.id, v)}
-                    />
-                    <span className="lp-level-expanded-unit">%</span>
                   </div>
                   )}
                   {/* ── Chaufferie / Production ECS — bouton Modifier uniquement si déjà posée ── */}
@@ -718,7 +705,10 @@ function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon 
 }
 
 // ── Insulations ────────────────────────────────────────
-function InsulationsSection({ insulations, onChange }) {
+function InsulationsSection({ insulations, onChange, isEauGlacee = false, hrGlobalDefault = null, onHrGlobalDefaultChange = null }: {
+  insulations: any[]; onChange: any
+  isEauGlacee?: boolean; hrGlobalDefault?: number | null; onHrGlobalDefaultChange?: ((v: number | null) => void) | null
+}) {
   const [expanded, setExpanded] = useState(null)
   const toggle      = id      => onChange(ins => ins.map(x => x.id === id ? { ...x, enabled: !x.enabled } : x))
   const setLambda   = (id, v) => onChange(ins => ins.map(x => x.id === id ? { ...x, lambda: v } : x))
@@ -737,6 +727,26 @@ function InsulationsSection({ insulations, onChange }) {
 
   return (
     <Section>
+      {isEauGlacee && (
+        <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '2px solid #e5e7eb' }}>
+          <div className="lp-mat-lambda">
+            <span style={{ flex: 1, fontWeight: 500, color: '#374151' }}>Humidité relative (HR)</span>
+            <NumInput min={0} max={100} step={1} allowEmpty
+              value={hrGlobalDefault}
+              placeholder="—"
+              onChange={onHrGlobalDefaultChange ?? undefined}
+            />
+            <span className="lp-unit">%</span>
+          </div>
+          <p className="lp-hint" style={{ marginTop: 2, marginBottom: 0 }}>Défaut global — affinable par tronçon.</p>
+        </div>
+      )}
+      {isEauGlacee && (
+        <div style={{ marginBottom: 8 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
+            textTransform: 'uppercase', color: '#9ca3af' }}>Isolants (calorifugeage)</span>
+        </div>
+      )}
       {insulations.map(ins => (
         <div key={ins.id} className="lp-mat-block">
           <div className="lp-mat-header">
@@ -787,6 +797,7 @@ function InsulationsSection({ insulations, onChange }) {
         </div>
       ))}
       <button className="lp-add-btn" onClick={addCustom}>+ Ajouter isolant personnalisé</button>
+
     </Section>
   )
 }
@@ -868,16 +879,84 @@ function computeGroups(paramType, segments, materials, insulations, isChauffage 
   return { rows: [], missing: [] }
 }
 
+/** Dropdown qui s'ouvre toujours vers le bas via un portal (évite le flip natif du select). */
+function LpDropdown({ value, onChange, options, placeholder = '— Choisir —' }: {
+  value: string; onChange: (v: string) => void
+  options: { value: string; label: string }[]
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const trigRef = useRef<HTMLDivElement>(null)
+  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null)
+
+  const toggle = () => {
+    if (trigRef.current) {
+      const r = trigRef.current.getBoundingClientRect()
+      setRect({ top: r.bottom + 2, left: r.left, width: r.width })
+    }
+    setOpen(o => !o)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  const selLabel = options.find(o => o.value === value)?.label
+
+  return (
+    <>
+      <div ref={trigRef} onMouseDown={e => { e.preventDefault(); toggle() }} style={{
+        cursor: 'pointer', border: '1px solid #d1d5db', borderRadius: 4,
+        padding: '3px 22px 3px 7px', fontSize: 12, background: '#fff',
+        display: 'flex', alignItems: 'center', minHeight: 26,
+        userSelect: 'none', position: 'relative',
+        color: value ? '#1f2937' : '#9ca3af',
+      }}>
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selLabel ?? placeholder}
+        </span>
+        <span style={{ position: 'absolute', right: 6, color: '#9ca3af', fontSize: 9, pointerEvents: 'none' }}>▾</span>
+      </div>
+      {open && rect && createPortal(
+        <div onMouseDown={e => e.stopPropagation()} style={{
+          position: 'fixed', top: rect.top, left: rect.left, width: rect.width,
+          background: '#fff', border: '1px solid #d1d5db', borderRadius: 4,
+          zIndex: 99999, maxHeight: 220, overflowY: 'auto',
+          boxShadow: '0 6px 16px rgba(0,0,0,0.13)', fontSize: 12,
+        }}>
+          <div onMouseDown={() => { onChange(''); setOpen(false) }}
+            style={{ padding: '5px 8px', color: '#9ca3af', cursor: 'pointer' }}>
+            {placeholder}
+          </div>
+          {options.map(o => (
+            <div key={o.value} onMouseDown={() => { onChange(o.value); setOpen(false) }} style={{
+              padding: '5px 8px', cursor: 'pointer',
+              background: o.value === value ? '#eff6ff' : 'transparent',
+              color: o.value === value ? '#1e40af' : '#1f2937',
+            }}>{o.label}</div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
+  )
+}
+
 function EditParamsPanel({
   segments, points, materials, insulations,
   levels, lineYs, columns, columnXs, chaufferie,
   editParam, onEditParamChange,
   activeCalcId, alimentationParams,
 }) {
-  const { isAlimEF: isEF, isAlimMode: isAlim, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
+  const { isAlimEF: isEF, isAlimMode: isAlim, isChauffage, isEauGlacee, isVentilation } = getModeFlags(activeCalcId)
   const set = patch => onEditParamChange({ ...editParam, ...patch })
   const { paramType, segType, materialId, dn, insulationId, thickness,
-          length, flowVelocityMode, flowVelocityValue } = editParam
+          length, flowVelocityMode, flowVelocityValue,
+          ductShape: rawDuctShape } = editParam
+  const ductShape: 'circular' | 'rectangular' = rawDuctShape ?? 'circular'
 
   const isBouclageECS = !isEF && !isAlim && !isChauffage && !isEauGlacee
   const validTypes = isEF ? ['material', 'length']
@@ -889,9 +968,41 @@ function EditParamsPanel({
     if (!validTypes.includes(paramType)) set({ paramType: 'material' })
   }, [isAlim, isChauffage, paramType])
 
+  const [lpCalcOpen, setLpCalcOpen] = useState(false)
+  const [lpExprStr,  setLpExprStr]  = useState('')
+  useEffect(() => {
+    setLpCalcOpen(false)
+    setLpExprStr(length != null ? `= ${length}` : '')
+  }, [paramType])
+  const lpEvalExpr = (text: string) => {
+    const norm = text.replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').trim()
+    const safe = norm.replace(/[^0-9+\-*/.() ]/g, '').trim()
+    if (!safe) return
+    try {
+      // eslint-disable-next-line no-new-func
+      const result = new Function(`return (${safe})`)()
+      if (typeof result === 'number' && isFinite(result) && result > 0)
+        set({ length: parseFloat(result.toFixed(3)) })
+    } catch { /* expression invalide */ }
+  }
+
   const enabledMats = materials.filter(m => m.enabled)
   const enabledIns  = insulations.filter(i => i.enabled)
-  const selMat = enabledMats.find(m => m.id === materialId)
+
+  // Ventilation : matériaux filtrés par forme
+  const ventCircMats = enabledMats.filter(m => !m.shapeType || m.shapeType === 'circular')
+  const ventRectMats = enabledMats.filter(m => m.shapeType === 'rectangular')
+  const ventShapeMats = ductShape === 'rectangular' ? ventRectMats : ventCircMats
+
+  // Auto-sélection du premier matériau activé quand on entre en mode material (ventilation)
+  useEffect(() => {
+    if (!isVentilation || paramType !== 'material' || materialId != null) return
+    const mats = ductShape === 'rectangular' ? ventRectMats : ventCircMats
+    if (mats.length > 0) set({ materialId: mats[0].id })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVentilation, paramType, materialId])
+
+  const selMat = (isVentilation ? ventShapeMats : enabledMats).find(m => m.id === materialId)
   const selIns = enabledIns.find(i => i.id === insulationId)
 
   const { rows: groups, missing } = useMemo(
@@ -912,16 +1023,68 @@ function EditParamsPanel({
       {/* Param type */}
       <div className="lp-field">
         <label className="lp-label">Paramètre</label>
-        <select value={paramType} onChange={e => set({ paramType: e.target.value, materialId: null, dn: null, insulationId: null, thickness: null, length: null, flowVelocityValue: null })}>
-          <option value="material">Matériau & DN</option>
-          {!isAlim && !isChauffage && <option value="insulation">Isolant & épaisseur</option>}
+        <select value={paramType} onChange={e => {
+          const newType = e.target.value
+          const base = { paramType: newType, materialId: null, dn: null, insulationId: null, thickness: null, length: null, flowVelocityValue: null }
+          if (newType === 'material' && isVentilation) {
+            const mats = ductShape === 'rectangular' ? ventRectMats : ventCircMats
+            set({ ...base, materialId: mats[0]?.id ?? null })
+          } else {
+            set(base)
+          }
+        }}>
+          <option value="material">Matériau et Section</option>
+          {!isAlim && !isChauffage && !isVentilation && <option value="insulation">Isolant & épaisseur</option>}
           <option value="length">Longueur</option>
           {isBouclageECS && <option value="flowVelocity">Débit / vitesse</option>}
         </select>
       </div>
 
       {/* Value selector */}
-      {paramType === 'material' && (<>
+      {paramType === 'material' && (isVentilation ? (<>
+        {/* Toggle Circulaire / Rectangulaire */}
+        <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: 7, padding: 2, marginBottom: 8, gap: 2 }}>
+          {(['circular', 'rectangular'] as const).map(val => (
+            <button key={val} onClick={() => {
+              if (ductShape === val) return
+              const mats = val === 'rectangular' ? ventRectMats : ventCircMats
+              set({ ductShape: val, materialId: mats[0]?.id ?? null, dn: null })
+            }} style={{
+              flex: 1, padding: '5px 4px', fontSize: 10.5, fontWeight: ductShape === val ? 700 : 500,
+              background: ductShape === val ? '#fff' : 'transparent',
+              border: ductShape === val ? '1px solid #cbd5e1' : '1px solid transparent',
+              borderRadius: 5, cursor: 'pointer',
+              color: ductShape === val ? '#1e40af' : '#94a3b8',
+              boxShadow: ductShape === val ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              transition: 'all 0.15s',
+            }}>{val === 'circular' ? '◎  Circulaire' : '▭  Rectangulaire'}</button>
+          ))}
+        </div>
+
+        {/* Matériau filtré par forme */}
+        <div className="lp-field">
+          <label className="lp-label">Matériau</label>
+          {ventShapeMats.length === 0
+            ? <p className="lp-hint">Aucun matériau activé.</p>
+            : <select value={materialId ?? ''} onChange={e => set({ materialId: e.target.value || null, dn: null })}>
+                <option value="">— Choisir —</option>
+                {ventShapeMats.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+          }
+        </div>
+
+        {/* Section : DN circulaire ou A×B rectangulaire */}
+        {selMat && (
+          <div className="lp-field">
+            <label className="lp-label">{ductShape === 'rectangular' ? 'Section (A×B)' : 'Diamètre (DN)'}</label>
+            <LpDropdown
+              value={dn ?? ''}
+              onChange={v => set({ dn: v || null })}
+              options={selMat.dns.map((d: any) => ({ value: d.dn, label: d.dn }))}
+            />
+          </div>
+        )}
+      </>) : (<>
         <div className="lp-field">
           <label className="lp-label">Matériau</label>
           <select value={materialId ?? ''} onChange={e => set({ materialId: e.target.value || null, dn: null })}>
@@ -938,7 +1101,7 @@ function EditParamsPanel({
             </select>
           </div>
         )}
-      </>)}
+      </>))}
       {paramType === 'insulation' && (<>
         <div className="lp-field">
           <label className="lp-label">Isolant</label>
@@ -966,12 +1129,37 @@ function EditParamsPanel({
       {paramType === 'length' && (
         <div className="lp-field">
           <label className="lp-label">Valeur à appliquer</label>
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <NumInput min={0} step={0.1} style={{ flex: 1 }}
-              value={length ?? null} placeholder="m" allowEmpty
-              onChange={v => set({ length: v })} />
-            <span style={{ fontSize: 11, color: '#6b7280' }}>m</span>
+          <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+            <NumInput min={0} step={0.1} style={{ flex: 1, minWidth: 0 }}
+              value={length ?? null} placeholder="saisie manuelle" allowEmpty
+              onChange={v => { set({ length: v }); setLpExprStr(v != null ? `= ${v}` : '') }} />
+            <button
+              onClick={() => setLpCalcOpen(o => !o)}
+              title="Calculette"
+              style={{
+                background: lpCalcOpen ? '#eff6ff' : 'transparent',
+                border: `1px solid ${lpCalcOpen ? '#93c5fd' : '#d1d5db'}`,
+                borderRadius: 5, cursor: 'pointer', padding: '3px 7px',
+                fontSize: 15, lineHeight: 1, flexShrink: 0,
+                color: lpCalcOpen ? '#2563eb' : '#9ca3af',
+              }}
+            ><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#1a1a1a" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}><rect x="1" y="1" width="12" height="12" rx="1.5"/><rect x="2.5" y="2.5" width="9" height="2.5" rx="0.5"/><circle cx="4" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="7" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="10" cy="7.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="4" cy="10.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="7" cy="10.5" r="0.9" fill="#f97316" stroke="none"/><circle cx="10" cy="10.5" r="0.9" fill="#f97316" stroke="none"/></svg></button>
+            <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0 }}>m</span>
           </div>
+          {lpCalcOpen && (
+            <div style={{ marginTop: 6, padding: '8px 10px 10px', background: '#f0f7ff', border: '1px solid #bfdbfe', borderRadius: 8 }}>
+              <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 500, marginBottom: 6 }}>Calcul de longueur</div>
+              <input
+                type="text"
+                value={lpExprStr}
+                placeholder="Saisir un calcul"
+                autoFocus
+                onChange={e => { const v = e.target.value; setLpExprStr(v); lpEvalExpr(v) }}
+                onKeyDown={e => { if (e.key === 'Escape') setLpCalcOpen(false) }}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -1312,6 +1500,7 @@ function PdcParamsSection({ params, onChange,
   isAlimECS = false,
   isAlimEF = false,
   isChauffage = false,
+  isVentilation = false,
   totalQpAlimM3h = 0,
   selectedAmontId = null, onSelectAmontId, amontTronconResults,
   pressionSourceAlimECSStatic = null,
@@ -1320,6 +1509,7 @@ function PdcParamsSection({ params, onChange,
   isAlimECS?: boolean,
   isAlimEF?: boolean,
   isChauffage?: boolean,
+  isVentilation?: boolean,
   totalQpAlimM3h?: number,
   selectedAmontId?: string | null, onSelectAmontId?: (id: string | null) => void,
   amontTronconResults?: Map<string, any>,
@@ -1489,10 +1679,13 @@ function PdcParamsSection({ params, onChange,
           <BlockTitle color="#1d4ed8">Pertes de charge linéaires</BlockTitle>
           <div className="lp-field" style={{ marginBottom: 0 }}>
             <label className="lp-label">Méthode de calcul</label>
-            {isChauffage ? (
+            {(isChauffage || isVentilation) ? (
               <FormulaHint>
                 <span style={{ fontFamily: 'ui-monospace, monospace', color: '#1e40af' }}>J = λ/D × ρV²/2</span>
                 <br /><span style={{ color: '#94a3b8' }}>Darcy-Weisbach — λ par Colebrook-White itératif</span>
+                {isVentilation && (
+                  <><br /><span style={{ color: '#94a3b8' }}>ρ et ν variables selon la température (CTA)</span></>
+                )}
               </FormulaHint>
             ) : (
               <>
@@ -1555,30 +1748,37 @@ function PdcParamsSection({ params, onChange,
         <Block color="#c2562d">
           <BlockTitle color="#c2562d">Pertes de charge singulières</BlockTitle>
           <div className="lp-field" style={{ marginBottom: 0 }}>
-            <label className="lp-label">Méthode de calcul</label>
-            <BtnRow
-              value={params.methodeSing}
-              onSelect={v => set('methodeSing', v)}
-              activeColor="#c2562d" activeBg="#fef0ea" activeBorder="#fbd5c5"
-              options={[
-                { value: 'pourcentage', label: 'Forfaitaire (%)' },
-                { value: 'accessoires', label: 'Accessoires (ξ)' },
-              ]}
-            />
-            {params.methodeSing === 'pourcentage' && (
-              <FormulaHint>
-                <span style={{ fontFamily: 'ui-monospace, monospace', color: '#c2562d' }}>ΔP_sing = ΔP_rég × x %</span>
-                <br />Majoration forfaitaire appliquée sur les ΔP régulières
-              </FormulaHint>
-            )}
-            {params.methodeSing === 'accessoires' && (
+            {isVentilation ? (
               <FormulaHint>
                 <span style={{ fontFamily: 'ui-monospace, monospace', color: '#c2562d' }}>ΔP = Σ ξ × ρV²/2</span>
                 <br />Accessoires renseignés tronçon par tronçon
               </FormulaHint>
-            )}
+            ) : (<>
+              <label className="lp-label">Méthode de calcul</label>
+              <BtnRow
+                value={params.methodeSing}
+                onSelect={v => set('methodeSing', v)}
+                activeColor="#c2562d" activeBg="#fef0ea" activeBorder="#fbd5c5"
+                options={[
+                  { value: 'pourcentage', label: 'Forfaitaire (%)' },
+                  { value: 'accessoires', label: 'Accessoires (ξ)' },
+                ]}
+              />
+              {params.methodeSing === 'pourcentage' && (
+                <FormulaHint>
+                  <span style={{ fontFamily: 'ui-monospace, monospace', color: '#c2562d' }}>ΔP_sing = ΔP_rég × x %</span>
+                  <br />Majoration forfaitaire appliquée sur les ΔP régulières
+                </FormulaHint>
+              )}
+              {params.methodeSing === 'accessoires' && (
+                <FormulaHint>
+                  <span style={{ fontFamily: 'ui-monospace, monospace', color: '#c2562d' }}>ΔP = Σ ξ × ρV²/2</span>
+                  <br />Accessoires renseignés tronçon par tronçon
+                </FormulaHint>
+              )}
+            </>)}
           </div>
-          {params.methodeSing === 'pourcentage' && (
+          {!isVentilation && params.methodeSing === 'pourcentage' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 8, marginBottom: 0 }}>
               <span style={{ fontSize: 11, color: '#6b7280' }}>Majoration</span>
               <NumInput min={0} max={100} step={1}
@@ -1704,6 +1904,7 @@ function FittingLibrarySection({ pdcParams, onChange, mode = null }: { pdcParams
   const eOverrides = pdcParams?.equipmentOverrides ?? {}
   const customF    = pdcParams?.customFittings    ?? []
   const customE    = pdcParams?.customEquipments  ?? []
+  const isVent     = mode === 'distribution-ventilation'
 
   const showF = pdcParams?.methodeSing === 'accessoires'
   const showE = !!pdcParams?.equipementsActifs
@@ -1738,10 +1939,12 @@ function FittingLibrarySection({ pdcParams, onChange, mode = null }: { pdcParams
   }
   const addCustomE = () => {
     const id = `custom_e_${Date.now()}`
-    onChange({ ...pdcParams, customEquipments: [...customE, { id, label: '', kvDefault: null }] })
+    const entry = isVent ? { id, label: '', dpDefault: undefined } : { id, label: '', kvDefault: null }
+    onChange({ ...pdcParams, customEquipments: [...customE, entry] })
   }
   const updateCustomE = (id: string, field: string, val: string) => {
-    const parsed = field === 'kvDefault' ? (val === '' ? null : parseFloat(val)) : val
+    const isNumField = field === 'kvDefault' || field === 'dpDefault'
+    const parsed = isNumField ? (val === '' ? (field === 'kvDefault' ? null : undefined) : parseFloat(val)) : val
     onChange({ ...pdcParams, customEquipments: customE.map((e: any) =>
       e.id === id ? { ...e, [field]: parsed } : e
     )})
@@ -1771,7 +1974,7 @@ function FittingLibrarySection({ pdcParams, onChange, mode = null }: { pdcParams
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 3 }}>
               <span style={{ width: 50, fontSize: 9, color: '#9ca3af', textAlign: 'center', fontWeight: 600 }}>ξ</span>
             </div>
-            {FITTING_TYPES.map(t => {
+            {getFittingsForMode(mode).map(t => {
               const ov  = fOverrides[t.id]
               const val = ov ?? t.xi
               return (
@@ -1824,22 +2027,25 @@ function FittingLibrarySection({ pdcParams, onChange, mode = null }: { pdcParams
           <>
             {showF && subHeader('Équipements', '#7c3aed')}
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 3 }}>
-              <span style={{ width: 50, fontSize: 9, color: '#9ca3af', textAlign: 'center', fontWeight: 600 }}>Kv</span>
+              <span style={{ width: 50, fontSize: 9, color: '#9ca3af', textAlign: 'center', fontWeight: 600 }}>
+                {isVent ? 'ΔP (Pa)' : 'Kv'}
+              </span>
             </div>
-            {getEquipmentForMode(mode).map(t => {
+            {getEquipmentForMode(mode).map((t: any) => {
               const ov  = eOverrides[t.id]
-              const val = ov ?? t.kvDefault
+              const val = isVent ? (ov ?? t.dpDefault) : (ov ?? t.kvDefault)
+              const defVal = isVent ? t.dpDefault : t.kvDefault
               return (
                 <div key={t.id} style={row}>
                   <span style={{ flex: 1, fontSize: 10, color: '#374151', lineHeight: 1.3 }}>{t.label}</span>
-                  <NumInput min={0} step={0.1} value={val ?? null} allowEmpty
-                    placeholder={t.kvDefault == null ? 'à saisir' : undefined}
+                  <NumInput min={0} step={isVent ? 1 : 0.1} value={val ?? null} allowEmpty
+                    placeholder={defVal == null ? 'à saisir' : undefined}
                     onChange={v => setEkv(t.id, v)}
                     style={{ width: 50, fontSize: 10, padding: '2px 4px', textAlign: 'center', borderRadius: 4,
                              border: `1px solid ${ov != null ? '#ddd6fe' : '#e5e7eb'}`,
                              color: ov != null ? '#7c3aed' : '#374151' }} />
                   {ov != null && (
-                    <button onClick={() => setEkv(t.id, null)} title={`Rétablir (${t.kvDefault ?? '—'})`}
+                    <button onClick={() => setEkv(t.id, null)} title={`Rétablir (${defVal ?? '—'}${isVent ? ' Pa' : ''})`}
                       style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11, padding: 0 }}>
                       ↺
                     </button>
@@ -1847,25 +2053,28 @@ function FittingLibrarySection({ pdcParams, onChange, mode = null }: { pdcParams
                 </div>
               )
             })}
-            {customE.map((t: any) => (
-              <div key={t.id} style={{ ...row, background: '#faf8ff', border: '1px solid #ddd6fe',
-                                       borderRadius: 5, padding: '4px 6px', marginBottom: 5 }}>
-                <input value={t.label} placeholder="Nom…"
-                  onChange={e => updateCustomE(t.id, 'label', e.target.value)}
-                  style={{ flex: 1, fontSize: 10, padding: '2px 4px', border: '1px solid #e5e7eb',
-                           borderRadius: 4, minWidth: 0 }} />
-                <input type="number" min="0" step="0.1"
-                  key={t.id + '_kv'}
-                  defaultValue={t.kvDefault ?? ''}
-                  placeholder="Kv"
-                  onBlur={e => updateCustomE(t.id, 'kvDefault', e.target.value)}
-                  style={{ width: 50, fontSize: 10, padding: '2px 4px', textAlign: 'center',
-                           borderRadius: 4, border: '1px solid #ddd6fe', color: '#7c3aed' }} />
-                <button onClick={() => removeCustomE(t.id)}
-                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer',
-                           fontSize: 15, padding: '0 2px', lineHeight: 1 }}>×</button>
-              </div>
-            ))}
+            {customE.map((t: any) => {
+              const fieldKey = isVent ? 'dpDefault' : 'kvDefault'
+              return (
+                <div key={t.id} style={{ ...row, background: '#faf8ff', border: '1px solid #ddd6fe',
+                                         borderRadius: 5, padding: '4px 6px', marginBottom: 5 }}>
+                  <input value={t.label} placeholder="Nom…"
+                    onChange={e => updateCustomE(t.id, 'label', e.target.value)}
+                    style={{ flex: 1, fontSize: 10, padding: '2px 4px', border: '1px solid #e5e7eb',
+                             borderRadius: 4, minWidth: 0 }} />
+                  <input type="number" min="0" step={isVent ? '1' : '0.1'}
+                    key={t.id + '_val'}
+                    defaultValue={t[fieldKey] ?? ''}
+                    placeholder={isVent ? 'Pa' : 'Kv'}
+                    onBlur={e => updateCustomE(t.id, fieldKey, e.target.value)}
+                    style={{ width: 50, fontSize: 10, padding: '2px 4px', textAlign: 'center',
+                             borderRadius: 4, border: '1px solid #ddd6fe', color: '#7c3aed' }} />
+                  <button onClick={() => removeCustomE(t.id)}
+                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer',
+                             fontSize: 15, padding: '0 2px', lineHeight: 1 }}>×</button>
+                </div>
+              )
+            })}
             <button onClick={addCustomE}
               style={{ fontSize: 10, padding: '3px 10px', border: '1px dashed #7c3aed', borderRadius: 5,
                        color: '#7c3aed', background: 'transparent', cursor: 'pointer', fontWeight: 600,
@@ -1879,6 +2088,48 @@ function FittingLibrarySection({ pdcParams, onChange, mode = null }: { pdcParams
   )
 }
 
+
+// ── Paramètres ventilation ─────────────────────────────────────────────────
+function VentilationParamsSection({ params, onChange }: { params: any; onChange?: any }) {
+  const set = (k, v) => onChange?.({ ...(params ?? {}), [k]: v })
+  return (
+    <Section title="Paramètres ventilation">
+      <Block color="#38bdf8">
+        <BlockTitle color="#0284c7">Pertes de charge linéaires</BlockTitle>
+        <FormulaHint>
+          <span style={{ fontFamily: 'ui-monospace, monospace', color: '#0284c7' }}>J = λ/D × ρV²/2</span>
+          <br /><span style={{ color: '#94a3b8' }}>Darcy-Weisbach — λ par Swamee-Jain (Colebrook-White)</span>
+        </FormulaHint>
+        <div style={{ marginTop: 8, fontSize: 10, color: '#374151', lineHeight: 1.8, borderTop: '1px solid #e0f2fe', paddingTop: 8 }}>
+          <div>ρ = 1,204 kg/m³ — air à 20°C, pression std</div>
+          <div>ν = 1,504×10⁻⁵ m²/s — viscosité cinématique</div>
+        </div>
+      </Block>
+      <Block color="#059669">
+        <BlockTitle color="#059669">Températures de projet</BlockTitle>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div className="lp-field" style={{ flex: 1, marginBottom: 0 }}>
+            <label className="lp-label">T° soufflage <span className="lp-unit">(°C)</span></label>
+            <NumInput step={0.5} min={-10} max={40}
+              value={params?.T_soufflage ?? null}
+              placeholder="18 (par défaut)"
+              allowEmpty
+              onChange={v => set('T_soufflage', v ?? 18)} />
+          </div>
+          <div className="lp-field" style={{ flex: 1, marginBottom: 0 }}>
+            <label className="lp-label">ΔT <span className="lp-unit">(K)</span></label>
+            <NumInput step={0.5} min={0}
+              value={params?.deltaT ?? null}
+              placeholder="8 (par défaut)"
+              allowEmpty
+              onChange={v => set('deltaT', v ?? 8)} />
+          </div>
+        </div>
+        <FormulaHint>ΔT = T° ambiante − T° soufflage</FormulaHint>
+      </Block>
+    </Section>
+  )
+}
 
 interface LeftPanelProps {
   activeSection: string
@@ -1897,8 +2148,9 @@ interface LeftPanelProps {
   materialsEF: any[]; onMaterialsEFChange: any
   insulations: any[]; onInsulationsChange: any
   insulationsEauGlacee?: any[]; onInsulationsEauGlaceeChange?: any
+  hrGlobalDefault?: number | null; onHrGlobalDefaultChange?: (v: number | null) => void
   columns: any[]; columnXs: number[]
-  onColumnsChange: any; onColumnXsChange: any; onRemoveColumn: any; onAddColumn: any
+  onColumnsChange: any; onColumnXsChange: any; onColumnXsApply?: (newXs: number[]) => void; onRemoveColumn: any; onAddColumn: any
   onAddGap: any; onMoveGaine: any
   chaufferie: any; onChaufferieChange: any; onAddChaufferie: any
   editChaufferie: boolean; onEditChaufferieChange: any; placingChaufferie: boolean
@@ -1913,6 +2165,9 @@ interface LeftPanelProps {
   chauffageParams?: any; onChauffageParamsChange?: any
   pdcParamsEauGlacee?: any; onPdcParamsEauGlaceeChange?: any
   materialsEauGlacee?: any[]; onMaterialsEauGlaceeChange?: any
+  ventilationParams?: any; onVentilationParamsChange?: any
+  pdcParamsVentilation?: any; onPdcParamsVentilationChange?: any
+  materialsVentilation?: any[]; onMaterialsVentilationChange?: any
   segments: any[]; points: any[]; networkFlows: any
   flowDirections?: any; roleMap?: any
   hasConnectedProductions?: boolean
@@ -1940,7 +2195,8 @@ export default function LeftPanel({
   materialsEF, onMaterialsEFChange,
   insulations, onInsulationsChange,
   insulationsEauGlacee, onInsulationsEauGlaceeChange,
-  columns, columnXs, onColumnsChange, onColumnXsChange, onRemoveColumn, onAddColumn, onAddGap, onMoveGaine,
+  hrGlobalDefault = null, onHrGlobalDefaultChange,
+  columns, columnXs, onColumnsChange, onColumnXsChange, onColumnXsApply, onRemoveColumn, onAddColumn, onAddGap, onMoveGaine,
   chaufferie, onChaufferieChange, onAddChaufferie, editChaufferie, onEditChaufferieChange, placingChaufferie,
   locauxEF, onAddLocalEF, placingLocalEF, editLocauxEF, onEditLocauxEFChange,
   locauxECS, onAddLocalECS, placingLocalECS, editLocauxECS, onEditLocauxECSChange,
@@ -1949,6 +2205,9 @@ export default function LeftPanel({
   chauffageParams, onChauffageParamsChange,
   pdcParamsEauGlacee, onPdcParamsEauGlaceeChange,
   materialsEauGlacee, onMaterialsEauGlaceeChange,
+  ventilationParams, onVentilationParamsChange,
+  pdcParamsVentilation, onPdcParamsVentilationChange,
+  materialsVentilation, onMaterialsVentilationChange,
   segments, points, networkFlows,
   flowDirections, roleMap,
   hasConnectedProductions = false,
@@ -1958,7 +2217,16 @@ export default function LeftPanel({
   onAddGroupe, onRemoveGroupe,
   selectedIds, onUpdateSegment,
 }: LeftPanelProps) {
-  const { isBouclage, isAlimECS, isAlimEF, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
+  const { isBouclage, isAlimECS, isAlimEF, isChauffage, isEauGlacee, isVentilation } = getModeFlags(activeCalcId)
+
+  const [colSpacing,   setColSpacing]   = useState<number | null>(null)
+  const [levelHeight,  setLevelHeight]  = useState<number | null>(null)
+  useEffect(() => {
+    if (editLinesEnabled) {
+      setColSpacing(columnXs.length >= 2 ? Math.round(columnXs[1] - columnXs[0]) : null)
+      setLevelHeight(lineYs.length >= 2 ? Math.round(lineYs[0] - lineYs[1]) : null)
+    }
+  }, [editLinesEnabled]) // intentionnellement stable — ne suit pas les drags
 
   const activeInsulations       = isEauGlacee ? (insulationsEauGlacee ?? insulations) : insulations
   const activeInsulationsChange = isEauGlacee ? (onInsulationsEauGlaceeChange ?? onInsulationsChange) : onInsulationsChange
@@ -2049,7 +2317,61 @@ export default function LeftPanel({
             <span>Modifier les lignes de niveaux / colonnes</span>
           </label>
           {editLinesEnabled && (
-            <p className="lp-hint">Glissez les lignes sur le plan pour ajuster les hauteurs et largeurs.</p>
+            <>
+              <p className="lp-hint" style={{ marginBottom: 6 }}>Glissez les lignes sur le plan pour ajuster les hauteurs et largeurs.</p>
+              <p className="lp-hint" style={{ marginBottom: 10, color: '#6b7280' }}>Saisir une valeur puis cliquer ✓ pour uniformiser toutes les colonnes ou tous les niveaux.</p>
+              <div className="lp-mat-lambda" style={{ marginBottom: 6 }}>
+                <span style={{ flex: 1, fontSize: 12, color: '#374151' }}>Espacement colonnes</span>
+                <NumInput
+                  min={80} max={2000} step={10}
+                  value={colSpacing}
+                  placeholder="—"
+                  allowEmpty
+                  onChange={v => setColSpacing(v)}
+                />
+                <span className="lp-unit">px</span>
+                <button
+                  onClick={() => {
+                    if (colSpacing == null || colSpacing <= 0) return
+                    // Gaines et colonnes PP zone gardent leur largeur ; seules les colonnes normales prennent colSpacing
+                    const newXs: number[] = []
+                    let x = columnXs[0]
+                    for (let i = 0; i < columnXs.length; i++) {
+                      newXs.push(x)
+                      if (i < columnXs.length - 1) {
+                        const col = columns[i]
+                        const origWidth = columnXs[i + 1] - columnXs[i]
+                        x += (col && !col.isGap && !col.isPPZone) ? colSpacing : origWidth
+                      }
+                    }
+                    ;(onColumnXsApply ?? onColumnXsChange)(newXs)
+                  }}
+                  title="Appliquer à toutes les colonnes"
+                  style={{ background: 'transparent', border: '1px solid #d1d5db', borderRadius: 5, cursor: 'pointer', padding: '2px 7px', fontSize: 13, lineHeight: 1, flexShrink: 0, color: '#6b7280' }}
+                >✓</button>
+              </div>
+              <div className="lp-mat-lambda">
+                <span style={{ flex: 1, fontSize: 12, color: '#374151' }}>Hauteur niveaux</span>
+                <NumInput
+                  min={80} max={2000} step={10}
+                  value={levelHeight}
+                  placeholder="—"
+                  allowEmpty
+                  onChange={v => setLevelHeight(v)}
+                />
+                <span className="lp-unit">px</span>
+                <button
+                  onClick={() => {
+                    if (levelHeight == null || levelHeight <= 0) return
+                    const top = lineYs[lineYs.length - 1]
+                    const newYs = lineYs.map((_, i) => top + (lineYs.length - 1 - i) * levelHeight)
+                    onLineYsChange(newYs)
+                  }}
+                  title="Appliquer à tous les niveaux"
+                  style={{ background: 'transparent', border: '1px solid #d1d5db', borderRadius: 5, cursor: 'pointer', padding: '2px 7px', fontSize: 13, lineHeight: 1, flexShrink: 0, color: '#6b7280' }}
+                >✓</button>
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -2063,8 +2385,14 @@ export default function LeftPanel({
     : isAlimEF ? onPdcParamsAlimEFChange
     : onPdcParamsChange
 
-  const activeMaterials = isAlimEF ? materialsEF : isEauGlacee ? (materialsEauGlacee ?? materials) : materials
-  const activeMaterialsChange = isAlimEF ? onMaterialsEFChange : isEauGlacee ? (onMaterialsEauGlaceeChange ?? onMaterialsChange) : onMaterialsChange
+  const activeMaterials = isVentilation ? (materialsVentilation ?? [])
+    : isAlimEF ? materialsEF
+    : isEauGlacee ? (materialsEauGlacee ?? materials)
+    : materials
+  const activeMaterialsChange = isVentilation ? (onMaterialsVentilationChange ?? (() => {}))
+    : isAlimEF ? onMaterialsEFChange
+    : isEauGlacee ? (onMaterialsEauGlaceeChange ?? onMaterialsChange)
+    : onMaterialsChange
 
   let content: React.ReactNode = null
   switch (activeSection) {
@@ -2080,13 +2408,14 @@ export default function LeftPanel({
       />
       break
     case 'materiaux':
-      content = <MaterialsSection materials={activeMaterials} onChange={activeMaterialsChange} showEpsilon={true} isChauffage={isChauffage || isEauGlacee} />
+      content = <MaterialsSection materials={activeMaterials} onChange={activeMaterialsChange} showEpsilon={true} showLambda={!isVentilation} isChauffage={isChauffage || isEauGlacee || isVentilation} />
       break
     case 'isolation':
       if (isAlimEF) {
         content = null
       } else {
-        content = <InsulationsSection insulations={activeInsulations} onChange={activeInsulationsChange} />
+        content = <InsulationsSection insulations={activeInsulations} onChange={activeInsulationsChange}
+          isEauGlacee={isEauGlacee} hrGlobalDefault={hrGlobalDefault} onHrGlobalDefaultChange={onHrGlobalDefaultChange} />
       }
       break
     case 'equipements':
@@ -2101,7 +2430,12 @@ export default function LeftPanel({
       </>
       break
     case 'pdc':
-      if (isChauffage) {
+      if (isVentilation) {
+        content = <>
+          <PdcParamsSection params={pdcParamsVentilation} onChange={onPdcParamsVentilationChange} isVentilation />
+          <FittingLibrarySection pdcParams={pdcParamsVentilation} onChange={onPdcParamsVentilationChange} mode={activeCalcId} />
+        </>
+      } else if (isChauffage) {
         content = <>
           <PdcParamsSection params={pdcParamsChauffage} onChange={onPdcParamsChauffageChange} isChauffage />
           <FittingLibrarySection pdcParams={pdcParamsChauffage} onChange={onPdcParamsChauffageChange} mode={activeCalcId} />
