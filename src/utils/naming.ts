@@ -203,7 +203,34 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
       return `${prefix} – ${firstL} → ${secondL}`
     }
   }
-  if (isChaufSeg || isEGSeg || isVentSeg) {
+  if (isVentSeg) {
+    // Nommage ventilation : évite le double-wrapping bouche, affiche la CTA, distingue soufflage/extraction
+    const ventNodeLabel = (ptId: string, v: any, hint: any): string => {
+      const pt = specialPts?.find((p: any) => p.id === ptId)
+      if (pt?.type === 'cta') return (pt as any).name ? (pt as any).name : 'CTA'
+      if (pt?.type === 'ctaPort') {
+        const cta = specialPts?.find((p: any) => p.id === (pt as any).parentCtaId)
+        return (cta as any)?.name ? (cta as any).name : 'CTA'
+      }
+      const loc = getNodeLocation(v, levels, lineYs, columns, columnXs, chaufferie, hint, specialPts)
+      if (pt?.type === 'boucheVentilation') {
+        const bType = role === 'reprise' ? 'extraction' : 'soufflage'
+        return `Bouche ${bType} (${loc})`
+      }
+      return loc
+    }
+    if (flowDirections) {
+      const fd = (flowDirections as Map<string, { fromId: string; toId: string }>).get(seg.id)
+      if (fd) {
+        const [fromV, fromH, toV, toH] = seg.startPointId === fd.fromId
+          ? [startV, startHint, endV, endHint]
+          : [endV, endHint, startV, startHint]
+        return `${prefix} – ${ventNodeLabel(fd.fromId, fromV, fromH)} → ${ventNodeLabel(fd.toId, toV, toH)}`
+      }
+    }
+    return `${prefix} – ${ventNodeLabel(seg.startPointId, startV, startHint)} → ${ventNodeLabel(seg.endPointId, endV, endHint)}`
+  }
+  if (isChaufSeg || isEGSeg) {
     const fmtNode = (ptId: string, loc: string) => {
       const pt = specialPts?.find((p: any) => p.id === ptId)
       if (!pt) return loc
@@ -214,9 +241,6 @@ export function getDefaultSegName(seg, levels, lineYs, columns, columnXs, chauff
       if (pt.type === 'terminalFroid') {
         const typeName = TERMINAL_FROID_TYPES.find(t => t.id === pt.terminalFroidType)?.label ?? 'Terminal froid'
         return `${typeName} (${loc})`
-      }
-      if (pt.type === 'boucheVentilation') {
-        return pt.name ? `${pt.name} (${loc})` : `Bouche (${loc})`
       }
       return loc
     }

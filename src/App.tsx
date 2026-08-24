@@ -12,7 +12,7 @@ import { DEFAULT_MATERIALS } from './data/materials'
 import { computeFlowDirections, computeFlowDirectionsEF } from './utils/flowDirection'
 import { computeFlowDirectionsChauffage, computeChauffageFlows, computeChauffageThermalSimple, detectMixingNodes, recomputeRetourTemperatures, computeChauffagePumpHMT, computeChauffageSplitCumDp, type PumpHMTResult } from './utils/chauffageCalc'
 import { DEFAULT_CHAUFFAGE_PARAMS, DEFAULT_EAU_GLACEE_PARAMS, DEFAULT_CALC_CONSTANTS, DEFAULT_VENTILATION_PARAMS, DEFAULT_MATERIALS_VENTILATION, DEFAULT_PDC_PARAMS_VENTILATION } from './utils/projectBuilder'
-import { computeVentilationResults, computeVentilationFlows, computeFlowDirectionsVentilation, DEFAULT_CTA_TEMPS, type CtaTemps, type VentFlow } from './utils/ventilationCalc'
+import { computeVentilationResults, computeVentilationFlows, computeFlowDirectionsVentilation, computeNodeTransitionDp, computeNodeJunctionDp, DEFAULT_CTA_TEMPS, type CtaTemps, type VentFlow } from './utils/ventilationCalc'
 import { buildECSFlowRows, buildFlowRowsEF, buildChauffageFlowRows, buildVentilationFlowRows } from './utils/tableOrder'
 import { buildECSDistances } from './utils/pointLocation'
 import { getDisplayGroupNames } from './utils/naming'
@@ -408,6 +408,18 @@ export default function App() {
           ventilationFlows ?? undefined,
         ),
     [isVentilation, project.segments, project.materialsVentilation, ctaTemps, project.pdcParamsVentilation, ventilationFlows]
+  )
+
+  const ventilationNodeTransitionDp = useMemo(
+    () => !isVentilation || !ventilationResults || !flowDirections ? null
+      : computeNodeTransitionDp(project.points, project.segments, flowDirections, ventilationResults),
+    [isVentilation, project.points, project.segments, flowDirections, ventilationResults]
+  )
+
+  const ventilationNodeJunctionDp = useMemo(
+    () => !isVentilation || !ventilationResults || !flowDirections ? null
+      : computeNodeJunctionDp(project.points, project.segments, flowDirections, ventilationResults),
+    [isVentilation, project.points, project.segments, flowDirections, ventilationResults]
   )
 
   // Débits/vitesses résolus par loi des nœuds
@@ -1181,7 +1193,9 @@ export default function App() {
         ? (project.pdcParamsChauffage ?? DEFAULT_PDC_PARAMS)
         : isEauGlacee
           ? (project.pdcParamsEauGlacee ?? DEFAULT_PDC_PARAMS)
-          : (project.pdcParamsBouclageECS ?? DEFAULT_PDC_PARAMS)
+          : isVentilation
+            ? (project.pdcParamsVentilation ?? DEFAULT_PDC_PARAMS_VENTILATION)
+            : (project.pdcParamsBouclageECS ?? DEFAULT_PDC_PARAMS)
 
   const displayPrefs = project.displayPrefs ?? DEFAULT_DISPLAY_PREFS
   const activeDisplayPrefs = isAlimEF ? displayPrefs.ef
@@ -1299,6 +1313,7 @@ export default function App() {
   const [placingLocalGroupeFroid,   setPlacingLocalGroupeFroid]   = useState(false)
   const [selectedLocalGroupeFroidId,setSelectedLocalGroupeFroidId]= useState<string | null>(null)
   const [placingEquipment,     setPlacingEquipment]     = useState(null)  // null | { type, name, rotation?, size }
+  const [boucheDebit,          setBoucheDebit]          = useState<number | null>(null)
   const [placingAccessoryType, setPlacingAccessoryType] = useState<string | null>(null)  // accessoire visuel en cours de pose (ACCESSORY_TYPES id)
   const [editParam, setEditParam] = useState({
     paramType: 'material', segType: 'aller',
@@ -1786,7 +1801,7 @@ export default function App() {
 
   const isSpecialPt = (pt) =>
     pt.type === 'productionECS' || pt.type === 'arriveeEF' || pt.type === 'groupe'
-    || pt.type === 'productionChauffage' || pt.type === 'cta' || pt.isLocked
+    || pt.type === 'productionChauffage' || pt.type === 'cta' || pt.type === 'ctaPort' || pt.isLocked
 
   // Combined atomic update (single undo entry)
   // After every network change, points with 0 segment connections are auto-removed
@@ -1967,7 +1982,7 @@ export default function App() {
   }
 
   const handleAddCTA = () => {
-    setPlacingEquipment({ type: 'cta', name: 'CTA', size: { w: 52, h: 28 } })
+    setPlacingEquipment({ type: 'cta', name: 'CTA' })
   }
 
   const handleAddBoucheVentilation = () => {
@@ -2111,6 +2126,8 @@ export default function App() {
         onAddTerminalFroid={handleAddTerminalFroid}
         onAddCTA={handleAddCTA}
         onAddBoucheVentilation={handleAddBoucheVentilation}
+        boucheDebit={boucheDebit}
+        onBoucheDebitChange={setBoucheDebit}
         canvasDisplay={canvasDisplay}
         onCanvasDisplayToggle={key => setCanvasDisplay(d => ({ ...d, [key]: !d[key] }))}
         activeFluidId={activeFluidId}
@@ -2405,6 +2422,7 @@ export default function App() {
             customEmetteurTypes={project.customEmetteurTypes ?? []}
             customTerminalFroidTypes={project.customTerminalFroidTypes ?? []}
             ventilationResults={ventilationResults ?? undefined}
+            boucheDebit={boucheDebit}
           />
         </main>
 
@@ -2414,7 +2432,7 @@ export default function App() {
           return (
             <div style={{
               marginLeft: leftOpen ? 280 : 0,
-              marginRight: rightOpen ? 250 : 0,
+              marginRight: rightOpen ? 280 : 0,
               transition: 'margin-left 0.2s ease, margin-right 0.15s ease',
               flexShrink: 0,
             }}>
@@ -2470,6 +2488,8 @@ export default function App() {
                   hrGlobalDefault={project.hrGlobalDefault ?? null}
                   calcConstants={project.calcConstants ?? DEFAULT_CALC_CONSTANTS}
                   ventilationResults={ventilationResults ?? undefined}
+                  ventilationNodeTransitionDp={ventilationNodeTransitionDp ?? undefined}
+                  ventilationNodeJunctionDp={ventilationNodeJunctionDp ?? undefined}
                 />
               )}
               <div className="rt-toggle-bar">
@@ -2600,6 +2620,9 @@ export default function App() {
             customTerminalFroidTypes={project.customTerminalFroidTypes ?? []}
             ventilationResults={ventilationResults ?? undefined}
             ventilationFlows={ventilationFlows ?? undefined}
+            ventilationNodeTransitionDp={ventilationNodeTransitionDp ?? undefined}
+            ventilationNodeJunctionDp={ventilationNodeJunctionDp ?? undefined}
+            displayPrefs={displayPrefs}
           />
         </aside>
         </div>{/* content-area */}

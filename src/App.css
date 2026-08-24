@@ -586,7 +586,7 @@
   right: 0;
   top: 0;
   bottom: 0;
-  width: 250px;
+  width: 280px;
   background: #fff;
   overflow-y: auto;
   overflow-x: hidden;
@@ -770,6 +770,43 @@
 .rt-empty { padding: 10px; color: #9ca3af; font-style: italic; text-align: center; }
 .rt-cell-sm { color: #64748b; font-size: 10px; min-width: 54px; }
 .rt-depth { color: #cbd5e1; font-size: 9px; margin-right: 3px; }
+
+/* ── Ventilation : en-têtes de réseau et séparateurs ──── */
+.rt-vent-net-header td {
+  padding: 5px 10px 4px;
+  font-size: 11px;
+  border-top:    2px solid #e2e8f0 !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+.rt-vent-net-spacer td {
+  height: 12px;
+  background: transparent;
+  border: none !important;
+  padding: 0;
+}
+.rt-vent-net-label {
+  font-weight: 700; font-size: 11px; margin-right: 10px;
+}
+.rt-vent-net-arrow {
+  font-size: 10px; opacity: 0.6; font-weight: 400;
+}
+.rt-vent-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 8px; font-weight: 800;
+  border-radius: 3px; padding: 1px 4px;
+  letter-spacing: 0.4px;
+}
+.rt-vent-cta-tag {
+  font-size: 9.5px; font-weight: 600; opacity: 0.8;
+}
+.rt-vent-separation td {
+  padding: 0; height: 5px;
+  background: #f8fafc;
+  border-top:    1px dashed #e2e8f0 !important;
+  border-bottom: none !important;
+  border-left:   none !important;
+  border-right:  none !important;
+}
 
 /* ── Tableau flux : lignes spéciales ──────────────────── */
 .rt-flow-banner td {

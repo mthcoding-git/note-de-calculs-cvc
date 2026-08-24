@@ -24,6 +24,18 @@ const PT_HIT     = 10    // point click/snap radius
 const DRAW_SNAP  = 14    // snap-to-point radius during drawing
 const ZOOM_F     = 1.12
 
+const CTA_DEFAULT_SIZE = { w: 60, h: 40 }
+const CTA_PORT_HIT = 10  // hit radius for ctaPort squares
+
+function getCtaPortOffsets(w: number, h: number) {
+  return [
+    { x: -w/2, y: -h/4 },  // 0: left top
+    { x: -w/2, y:  h/4 },  // 1: left bottom
+    { x:  w/2, y: -h/4 },  // 2: right top
+    { x:  w/2, y:  h/4 },  // 3: right bottom
+  ]
+}
+
 const EQUIP_ABBR = {
   evier: 'EV', lavabo: 'LB', bidet: 'BD', baignoire: 'BG', douche: 'DU',
   poste_12: 'R½', poste_34: 'R¾', wc_reservoir: 'WC', wc_robinet: 'WCR',
@@ -113,6 +125,7 @@ interface DrawingCanvasProps {
   customTerminalFroidTypes?: any[]
   egCondensationMap?: Map<string, { marge: number; risque: boolean }> | null
   ventilationResults?: Map<string, any>
+  boucheDebit?: number | null
 }
 
 export default function DrawingCanvas({
@@ -207,6 +220,7 @@ export default function DrawingCanvas({
   customTerminalFroidTypes = [],
   egCondensationMap = null,
   ventilationResults,
+  boucheDebit = null,
 }: DrawingCanvasProps) {
   const { isBouclage, isAlimECS, isAlimEF, isAlimMode, isChauffage, isEauGlacee, isVentilation } = getModeFlags(activeCalcId)
   const activeTerminalFlows = isChauffage ? chauffageFlows : isEauGlacee ? eauGlaceeFlows : null
@@ -292,7 +306,7 @@ export default function DrawingCanvas({
   const splitSegment = useCallback((hitInfo, splitPos) => {
     const { seg, subIdx } = hitInfo
     const sp = { x: snap(splitPos.x), y: snap(splitPos.y) }
-    const existing = points.find(p => dist(p, sp) < SNAP)
+    const existing = points.find(p => dist(p, sp) < SNAP && p.type !== 'cta')
     const junctionPt = existing ?? { id: uid('P'), name: '', x: sp.x, y: sp.y }
     const vs = seg.vertices
     const seg1 = { ...seg, id: uid('T'), vertices: [...vs.slice(0, subIdx + 1), sp], endPointId: junctionPt.id }
@@ -318,8 +332,9 @@ export default function DrawingCanvas({
       const p = { id: uid('P'), name: '', x: verts[0].x, y: verts[0].y }
       newPts.push(p); startId = p.id
     }
+    if (points.find(p => p.id === startId)?.type === 'cta') { setDrawing(null); return }
     const endPos = verts[verts.length - 1]
-    const existing = points.find(p => dist(p, endPos) < SNAP)
+    const existing = points.find(p => dist(p, endPos) < SNAP && p.type !== 'cta')
     let endId = existing?.id ?? null
     if (!endId) {
       const p = { id: uid('P'), name: '', x: endPos.x, y: endPos.y }
@@ -362,7 +377,7 @@ export default function DrawingCanvas({
       }
     }
     if (!endId) {
-      const existing = points.find(p => dist(p, endPos) < SNAP)
+      const existing = points.find(p => dist(p, endPos) < SNAP && p.type !== 'cta')
       if (existing) {
         endId = existing.id
       } else {
@@ -370,6 +385,7 @@ export default function DrawingCanvas({
         newPts.push(p); endId = p.id
       }
     }
+    if (points.find(p => p.id === endId)?.type === 'cta') { setDrawing(null); return }
     const segType = (drawing.type === 'air-neuf' || drawing.type === 'air-rejete') ? 'aller' : drawing.type
     const pipeSubType = drawing.type === 'aller' ? 'soufflage'
       : drawing.type === 'retour' ? 'reprise'
@@ -386,7 +402,8 @@ export default function DrawingCanvas({
       for (const nodeId of [startId, endId]) {
         if (isNewNode(nodeId)) continue
         const node = points.find(p => p.id === nodeId)
-        if (!node || node.type === 'cta') continue
+        if (!node || node.type === 'ctaPort') continue
+        if (node.type === 'cta') { setDrawing(null); return }
         const connSegs = segments.filter(s => s.startPointId === nodeId || s.endPointId === nodeId)
         if (connSegs.some(s => s.pipeSubType !== pipeSubType)) {
           setDrawing(null)
@@ -408,9 +425,10 @@ export default function DrawingCanvas({
 
 
   // ── Resolve snap target for drawing ──────────────────
-  const resolveSnap = useCallback((snapped) => {
+  const resolveSnap = useCallback((snapped, excludeTypes?: string[]) => {
     let nearestPt = null, nearestDist = DRAW_SNAP
     for (const p of points) {
+      if (excludeTypes?.includes(p.type)) continue
       const d = dist(p, snapped)
       if (d < nearestDist) { nearestDist = d; nearestPt = p }
     }
@@ -491,10 +509,17 @@ if (drawing) commitDrawing()
         const segMerges = {}
         for (const ptId of delPtIds) {
           const pt = newPts.find(p => p.id === ptId)
-          if (pt?.type === 'productionECS' || pt?.type === 'arriveeEF' || pt?.type === 'productionChauffage' || pt?.type === 'productionEauGlacee' || pt?.type === 'cta') {
+          if (pt?.type === 'productionECS' || pt?.type === 'arriveeEF' || pt?.type === 'productionChauffage' || pt?.type === 'productionEauGlacee') {
             newPts = newPts.map(p => p.id === ptId ? { id: p.id, name: p.name ?? '', x: p.x, y: p.y } : p)
             continue
           }
+          if (pt?.type === 'cta') {
+            newPts = newPts
+              .filter(p => (p as any).parentCtaId !== ptId)
+              .map(p => p.id === ptId ? { id: p.id, name: p.name ?? '', x: p.x, y: p.y } : p)
+            continue
+          }
+          if (pt?.type === 'ctaPort') continue  // ports are managed by the parent CTA
           if (pt?.type === 'pump') {
             const result = deleteNodeFromNetwork(ptId, newSegs, newPts)
             if (result) {
@@ -549,7 +574,9 @@ if (drawing) commitDrawing()
     let best = null, bestD = Infinity
     for (const p of points) {
       const d = dist(p, pos)
-      const r = p.type === 'pump'
+      const r = p.type === 'ctaPort'
+        ? CTA_PORT_HIT
+        : p.type === 'pump'
         ? Math.max(PT_HIT, p.size ?? 15)
         : p.type === 'productionECS' || p.type === 'arriveeEF' || p.type === 'productionChauffage' || p.type === 'productionEauGlacee' || p.type === 'cta'
         ? Math.max(PT_HIT, Math.max((p.size?.w ?? 44) / 2, (p.size?.h ?? 28) / 2))
@@ -858,8 +885,39 @@ if (drawing) commitDrawing()
     if (placingEquipment !== null) {
       const snapped = { x: snap(pos.x), y: snap(pos.y) }
 
-      // productionECS / productionChauffage / émetteur : si un nœud existant est à portée, le convertir en priorité (avant onSeg)
-      if (placingEquipment.type === 'productionECS' || placingEquipment.type === 'productionChauffage' || placingEquipment.type === 'productionEauGlacee' || placingEquipment.type === 'cta') {
+      // CTA: placement spécial avec création des 4 ports
+      if (placingEquipment.type === 'cta') {
+        const existingPt = points.find(p => dist(p, snapped) < PT_HIT)
+        const offsets = getCtaPortOffsets(CTA_DEFAULT_SIZE.w, CTA_DEFAULT_SIZE.h)
+        const existingHasSegs = existingPt
+          ? segments.some(s => s.startPointId === existingPt.id || s.endPointId === existingPt.id)
+          : false
+        if (existingPt && !existingHasSegs) {
+          const ports = offsets.map((off, i) => ({
+            id: uid('ctaPort'), type: 'ctaPort' as const, parentCtaId: existingPt.id, portIndex: i,
+            name: '', x: existingPt.x + off.x, y: existingPt.y + off.y,
+          }))
+          onNetworkChange(s => s, p => [
+            ...p.map(x => x.id === existingPt.id
+              ? { ...x, type: 'cta', name: placingEquipment.name ?? x.name }
+              : x),
+            ...ports,
+          ])
+        } else {
+          const ctaId = uid('eq')
+          const ctaNode = { id: ctaId, name: placingEquipment.name ?? 'CTA', x: snapped.x, y: snapped.y, type: 'cta' as const }
+          const ports = offsets.map((off, i) => ({
+            id: uid('ctaPort'), type: 'ctaPort' as const, parentCtaId: ctaId, portIndex: i,
+            name: '', x: snapped.x + off.x, y: snapped.y + off.y,
+          }))
+          onNetworkChange(s => s, p => [...p, ctaNode, ...ports])
+        }
+        onPlacingDone()
+        return
+      }
+
+      // productionECS / productionChauffage : si un nœud existant est à portée, le convertir en priorité (avant onSeg)
+      if (placingEquipment.type === 'productionECS' || placingEquipment.type === 'productionChauffage' || placingEquipment.type === 'productionEauGlacee') {
         const existingPt = points.find(p => dist(p, snapped) < PT_HIT)
         if (existingPt) {
           onNetworkChange(
@@ -903,8 +961,9 @@ if (drawing) commitDrawing()
         if (connectedSegs.length !== 1) return
         const connSeg = connectedSegs[0]
         if (connSeg.pipeSubType !== 'soufflage' && connSeg.pipeSubType !== 'reprise') return
-        onNetworkChange(s => s, p => p.map(x => x.id === existingPt.id ? { ...x, type: 'boucheVentilation' } : x))
-        onPlacingDone()
+        onNetworkChange(s => s, p => p.map(x => x.id === existingPt.id
+          ? { ...x, type: 'boucheVentilation', ...(boucheDebit != null && boucheDebit > 0 ? { debit_nominal: boucheDebit } : {}) }
+          : x))
         return
       }
 
@@ -1057,15 +1116,17 @@ if (drawing) commitDrawing()
         : { x: snap(pos.x), y: snap(pos.y) }
 
       const ventSubType = (t: string) => t === 'aller' ? 'soufflage' : t === 'retour' ? 'reprise' : t
+      const snapExclude = isVentilation ? ['cta'] : undefined
       if (!drawing) {
-        const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
+        const { pos: sp, ptId, onSeg } = resolveSnap(snapped, snapExclude)
         // Bloquer le démarrage depuis un émetteur déjà saturé (2 tronçons)
         if (ptId) {
           const startPt = points.find(p => p.id === ptId)
-          if ((startPt?.type === 'emetteur' || startPt?.type === 'terminalFroid') &&
-              segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length >= 2) return
+          const startSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
+          if ((startPt?.type === 'emetteur' || startPt?.type === 'terminalFroid') && startSegs.length >= 2) return
+          if (startPt?.type === 'boucheVentilation' && startSegs.length >= 1) return
           // Ventilation : bloquer si le nœud de départ a des tronçons d'un autre type
-          if (isVentilation && startPt?.type !== 'cta') {
+          if (isVentilation && startPt?.type !== 'cta' && startPt?.type !== 'ctaPort') {
             const drawPST = ventSubType(pipeType)
             const connSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
             if (connSegs.some(s => s.pipeSubType !== drawPST)) return
@@ -1083,26 +1144,29 @@ if (drawing) commitDrawing()
         // Priorité : si le clic brut est proche d'un nœud existant, finaliser vers ce nœud
         let rawNearPt = null, rawNearD = DRAW_SNAP
         for (const p of points) {
+          if (isVentilation && p.type === 'cta') continue
           const d = dist(p, pos)
           if (d < rawNearD) { rawNearD = d; rawNearPt = p }
         }
         if (rawNearPt) {
           const rawSegs = segments.filter(s => s.startPointId === rawNearPt.id || s.endPointId === rawNearPt.id)
           if ((rawNearPt.type === 'emetteur' || rawNearPt.type === 'terminalFroid') && rawSegs.length >= 2) return
+          if (rawNearPt.type === 'boucheVentilation' && rawSegs.length >= 1) return
           // Ventilation : bloquer si le nœud cible a des tronçons d'un autre type
-          if (isVentilation && rawNearPt.type !== 'cta') {
+          if (isVentilation && rawNearPt.type !== 'cta' && rawNearPt.type !== 'ctaPort') {
             const drawPST = ventSubType(drawing.type)
             if (rawSegs.some(s => s.pipeSubType !== drawPST)) return
           }
           finalize({ x: rawNearPt.x, y: rawNearPt.y }, rawNearPt.id)
         } else {
-          const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
+          const { pos: sp, ptId, onSeg } = resolveSnap(snapped, snapExclude)
           if (ptId) {
             const snapPt = points.find(p => p.id === ptId)
             const snapSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
             if ((snapPt?.type === 'emetteur' || snapPt?.type === 'terminalFroid') && snapSegs.length >= 2) return
+            if (snapPt?.type === 'boucheVentilation' && snapSegs.length >= 1) return
             // Ventilation : bloquer si le nœud cible a des tronçons d'un autre type
-            if (isVentilation && snapPt?.type !== 'cta') {
+            if (isVentilation && snapPt?.type !== 'cta' && snapPt?.type !== 'ctaPort') {
               const drawPST = ventSubType(drawing.type)
               if (snapSegs.some(s => s.pipeSubType !== drawPST)) return
             }
@@ -1183,6 +1247,7 @@ if (drawing) commitDrawing()
       const connectedSegs = segments.filter(s => s.startPointId === np.id || s.endPointId === np.id)
       const canDrag = !np.isLocked && connectedSegs.length <= 2
         && (np.type !== 'groupe' || groupesEditMode)
+        && np.type !== 'ctaPort'
       if (canDrag) {
         ptDragRef.current = {
           ptId: np.id, startX: e.clientX, startY: e.clientY,
@@ -1321,6 +1386,8 @@ if (drawing) commitDrawing()
 
       const overlap = points.find(p => {
         if (p.id === ptId || !isNear(p)) return false
+        if (p.type === 'cta') return false          // CTA center never absorbs incoming nodes
+        if (dragged?.type === 'cta') return false   // CTA center never absorbs other nodes when dragged
         if (p.type === 'groupe' && segments.filter(s => s.startPointId === p.id || s.endPointId === p.id).length >= 1) return false
         // Émetteur déplacé → nœud cible >2 tronçons : bloquer
         if (isTerminalType(dragged)) {
@@ -1333,7 +1400,7 @@ if (drawing) commitDrawing()
         }
         return true
       })
-      if (isVentilation && overlap && dragged && dragged.type !== 'cta' && overlap.type !== 'cta') {
+      if (isVentilation && overlap && dragged && dragged.type !== 'cta' && dragged.type !== 'ctaPort' && overlap.type !== 'cta' && overlap.type !== 'ctaPort') {
         const segsA = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
         const segsB = segments.filter(s => s.startPointId === overlap.id || s.endPointId === overlap.id)
         const types = new Set([...segsA, ...segsB].map(s => s.pipeSubType).filter(Boolean))
@@ -1344,7 +1411,7 @@ if (drawing) commitDrawing()
         }
       }
       if (overlap && dragged) {
-        const rank = p => (p?.type === 'productionECS' || p?.type === 'productionChauffage' || p?.type === 'productionEauGlacee' || p?.type === 'cta') ? 3 : p?.type === 'groupe' ? 2 : (p?.type === 'pump' || p?.type === 'emetteur' || p?.type === 'terminalFroid') ? 1 : 0
+        const rank = p => (p?.type === 'productionECS' || p?.type === 'productionChauffage' || p?.type === 'productionEauGlacee' || p?.type === 'cta') ? 3 : p?.type === 'groupe' ? 2 : (p?.type === 'pump' || p?.type === 'emetteur' || p?.type === 'terminalFroid' || p?.type === 'boucheVentilation') ? 1 : 0
         const draggedWins = rank(dragged) > rank(overlap)
         const winner = draggedWins ? dragged : overlap
         const loser  = draggedWins ? overlap : dragged
@@ -1374,7 +1441,7 @@ if (drawing) commitDrawing()
         const hitSeg = nearestOnSegments(np, segments.filter(s => !exclude.has(s.id)))
 
         // Ventilation : bloquer si le drop sur segment créerait une jonction de types mixtes
-        if (isVentilation && hitSeg && hitSeg.d < SNAP && dragged?.type !== 'cta' && dragged?.type !== 'groupe') {
+        if (isVentilation && hitSeg && hitSeg.d < SNAP && dragged?.type !== 'cta' && dragged?.type !== 'ctaPort' && dragged?.type !== 'groupe') {
           const draggedSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
           if (draggedSegs.some(s => s.pipeSubType && s.pipeSubType !== hitSeg.seg.pipeSubType)) {
             setPtDragPos(null)
@@ -1384,7 +1451,7 @@ if (drawing) commitDrawing()
         }
 
         const segsOfDraggedForP2 = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId).length
-        if (hitSeg && hitSeg.d < SNAP && dragged?.type !== 'groupe' && !(dragged?.type === 'emetteur' && segsOfDraggedForP2 >= 1)) {
+        if (hitSeg && hitSeg.d < SNAP && dragged?.type !== 'groupe' && dragged?.type !== 'cta' && dragged?.type !== 'ctaPort' && !(dragged?.type === 'emetteur' && segsOfDraggedForP2 >= 1) && !(dragged?.type === 'boucheVentilation' && segsOfDraggedForP2 >= 1)) {
           const { seg, subIdx } = hitSeg
           const seg1 = { ...seg, id: uid('T'), vertices: [...seg.vertices.slice(0, subIdx + 1), np], endPointId: ptId }
           const seg2 = { ...seg, id: uid('T'), vertices: [np, ...seg.vertices.slice(subIdx + 1)], startPointId: ptId }
@@ -1406,7 +1473,35 @@ if (drawing) commitDrawing()
         } else {
           // Priority 3: move with cascade (maintains orthogonality for T/L junctions)
           const { newSegs, newPts } = computeNodeMove(ptId, np, segments, points, ptDragPos.effectiveConstraint)
-          onNetworkChange(newSegs, newPts)
+          const movingCta = points.find(p => p.id === ptId)
+          if (movingCta?.type === 'cta') {
+            const dx = np.x - movingCta.x, dy = np.y - movingCta.y
+            let segsOut = newSegs, ptsOut = newPts
+            for (const port of points.filter((p: any) => p.parentCtaId === ptId)) {
+              const r = computeNodeMove(port.id, { x: port.x + dx, y: port.y + dy }, segsOut, ptsOut, null)
+              segsOut = r.newSegs; ptsOut = r.newPts
+            }
+            // Auto-connexion : port superposé à un nœud connecté à un seul tronçon → rebrancher
+            for (const port of ptsOut.filter((p: any) => (p as any).parentCtaId === ptId)) {
+              const candidate = ptsOut.find(p => {
+                if (p.id === port.id) return false
+                if ((p as any).type === 'cta' || (p as any).type === 'ctaPort') return false
+                if (Math.hypot(p.x - port.x, p.y - port.y) > PT_HIT) return false
+                return segsOut.filter(s => s.startPointId === p.id || s.endPointId === p.id).length === 1
+              })
+              if (candidate) {
+                segsOut = segsOut.map(s => {
+                  if (s.startPointId === candidate.id) return { ...s, startPointId: port.id }
+                  if (s.endPointId   === candidate.id) return { ...s, endPointId:   port.id }
+                  return s
+                })
+                ptsOut = ptsOut.filter(p => p.id !== candidate.id)
+              }
+            }
+            onNetworkChange(segsOut, ptsOut)
+          } else {
+            onNetworkChange(newSegs, newPts)
+          }
         }
       }
       setPtDragPos(null)
@@ -1417,7 +1512,58 @@ if (drawing) commitDrawing()
     if (segDragRef.current) {
       if (segDragState && segDragState.delta !== 0) {
         const moved = computeSegMove(segDragState.segId, segDragState.subIdx, segDragState.delta, segments, points)
-        const { newSegs, newPts } = mergeCoincidentNodes(moved.newSegs, moved.newPts)
+        // Si un ctaPort a bougé, propager la translation à toute la CTA (corps rigide)
+        // En ventilation : la CTA reste ancrée, on remet le port à sa position d'origine
+        const rigidMoved = (() => {
+          for (const np of moved.newPts) {
+            if ((np as any).type !== 'ctaPort') continue
+            const op = points.find(p => p.id === np.id)
+            if (!op) continue
+            const dx = np.x - op.x, dy = np.y - op.y
+            if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) continue
+            if (isVentilation) {
+              const dragDir = segDragRef.current?.dir  // 'h' ou 'v'
+              const wPts = moved.newPts.map(p => p.id === op.id ? op : p)
+              const wSegs = moved.newSegs.map(s => {
+                if (s.startPointId === op.id) {
+                  const v = [...s.vertices]
+                  v[0] = { x: op.x, y: op.y }
+                  if (v.length >= 2 && Math.abs(v[0].x - v[1].x) > 0.1 && Math.abs(v[0].y - v[1].y) > 0.1) {
+                    const elbow = dragDir === 'h' ? { x: op.x, y: v[1].y } : { x: v[1].x, y: op.y }
+                    v.splice(1, 0, elbow)
+                  }
+                  return { ...s, vertices: v }
+                }
+                if (s.endPointId === op.id) {
+                  const v = [...s.vertices]
+                  const last = v.length - 1
+                  v[last] = { x: op.x, y: op.y }
+                  if (v.length >= 2 && Math.abs(v[last].x - v[last-1].x) > 0.1 && Math.abs(v[last].y - v[last-1].y) > 0.1) {
+                    const elbow = dragDir === 'h' ? { x: op.x, y: v[last-1].y } : { x: v[last-1].x, y: op.y }
+                    v.splice(last, 0, elbow)
+                  }
+                  return { ...s, vertices: v }
+                }
+                return s
+              })
+              return { newSegs: wSegs, newPts: wPts }
+            }
+            const ctaId = (op as any).parentCtaId
+            // Partir du résultat de computeSegMove : le tronçon draggé + son nœud opposé
+            // sont déjà à la bonne position ; computeNodeMove sur ce port sera un no-op.
+            let wSegs = moved.newSegs, wPts = moved.newPts
+            // Déplacer le centre CTA (pas de tronçons attachés)
+            wPts = wPts.map(p => p.id === ctaId ? { ...p, x: p.x + dx, y: p.y + dy } : p)
+            // Déplacer chaque port via computeNodeMove (ajuste les tronçons connectés)
+            for (const port of points.filter((p: any) => p.parentCtaId === ctaId)) {
+              const r = computeNodeMove(port.id, { x: port.x + dx, y: port.y + dy }, wSegs, wPts, null)
+              wSegs = r.newSegs; wPts = r.newPts
+            }
+            return { newSegs: wSegs, newPts: wPts }
+          }
+          return moved
+        })()
+        const { newSegs, newPts } = mergeCoincidentNodes(rigidMoved.newSegs, rigidMoved.newPts)
         // Annuler si un émetteur se retrouverait avec >2 tronçons, ou s'il a été absorbé par un nœud classique
         const emetteurIds = new Set(points.filter(p => p.type === 'emetteur' || p.type === 'terminalFroid').map(p => p.id))
         const hasInvalidEmetteur =
@@ -1426,7 +1572,7 @@ if (drawing) commitDrawing()
           [...emetteurIds].some(id => !newPts.find(p => p.id === id))
         // Ventilation : annuler si un nœud (hors CTA) se retrouve avec des tronçons de types mixtes
         const hasVentMixedTypes = isVentilation && newPts.some(pt => {
-          if (pt.type === 'cta') return false
+          if (pt.type === 'cta' || pt.type === 'ctaPort') return false
           const conn = newSegs.filter(s => s.startPointId === pt.id || s.endPointId === pt.id)
           const types = new Set(conn.map((s: any) => s.pipeSubType).filter(Boolean))
           return types.size > 1
@@ -1481,15 +1627,17 @@ if (drawing) commitDrawing()
     // Priorité : nœud proche du clic brut
     let rawNearPt = null, rawNearD = DRAW_SNAP
     for (const p of points) {
+      if (isVentilation && p.type === 'cta') continue
       const d = dist(p, pos)
       if (d < rawNearD) { rawNearD = d; rawNearPt = p }
     }
     const ventSubTypeDbl = (t: string) => t === 'aller' ? 'soufflage' : t === 'retour' ? 'reprise' : t
     if (rawNearPt) {
-      if (isVentilation && rawNearPt.type !== 'cta') {
+      const rawSegsDbl = segments.filter(s => s.startPointId === rawNearPt.id || s.endPointId === rawNearPt.id)
+      if (rawNearPt.type === 'boucheVentilation' && rawSegsDbl.length >= 1) return
+      if (isVentilation && rawNearPt.type !== 'cta' && rawNearPt.type !== 'ctaPort') {
         const drawPST = ventSubTypeDbl(drawing.type)
-        const rawSegs = segments.filter(s => s.startPointId === rawNearPt.id || s.endPointId === rawNearPt.id)
-        if (rawSegs.some(s => s.pipeSubType !== drawPST)) return
+        if (rawSegsDbl.some(s => s.pipeSubType !== drawPST)) return
       }
       finalize({ x: rawNearPt.x, y: rawNearPt.y }, rawNearPt.id)
       return
@@ -1497,14 +1645,15 @@ if (drawing) commitDrawing()
     const snapped = drawing.vertices.length
       ? ortho(drawing.vertices[drawing.vertices.length - 1], pos)
       : { x: snap(pos.x), y: snap(pos.y) }
-    const { pos: sp, ptId, onSeg } = resolveSnap(snapped)
+    const { pos: sp, ptId, onSeg } = resolveSnap(snapped, isVentilation ? ['cta'] : undefined)
     if (ptId) {
+      const snapPtDbl = points.find(p => p.id === ptId)
+      const snapSegsDbl = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
+      if (snapPtDbl?.type === 'boucheVentilation' && snapSegsDbl.length >= 1) return
       if (isVentilation) {
-        const snapPt = points.find(p => p.id === ptId)
-        if (snapPt?.type !== 'cta') {
+        if (snapPtDbl?.type !== 'cta' && snapPtDbl?.type !== 'ctaPort') {
           const drawPST = ventSubTypeDbl(drawing.type)
-          const snapSegs = segments.filter(s => s.startPointId === ptId || s.endPointId === ptId)
-          if (snapSegs.some(s => s.pipeSubType !== drawPST)) return
+          if (snapSegsDbl.some(s => s.pipeSubType !== drawPST)) return
         }
       }
       finalize(sp, ptId)
@@ -1527,6 +1676,7 @@ if (drawing) commitDrawing()
     const lastV = drawing.vertices[drawing.vertices.length - 1]
     let best = null, bestD = DRAW_SNAP
     for (const p of points) {
+      if (isVentilation && p.type === 'cta') continue
       const d = dist(p, mouse)
       if (d < bestD) { bestD = d; best = p }
     }
@@ -1580,11 +1730,64 @@ if (drawing) commitDrawing()
       }
     }
     if (segDragState) {
-      const { newSegs, newPts } = computeSegMove(segDragState.segId, segDragState.subIdx, segDragState.delta, segments, points)
-      return { renderSegs: newSegs, renderPts: newPts }
+      const moved = computeSegMove(segDragState.segId, segDragState.subIdx, segDragState.delta, segments, points)
+      // Preview : même logique corps rigide CTA (sauf ventilation où la CTA reste ancrée)
+      for (const np of moved.newPts) {
+        if ((np as any).type !== 'ctaPort') continue
+        const op = points.find(p => p.id === np.id)
+        if (!op) continue
+        const dx = np.x - op.x, dy = np.y - op.y
+        if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) continue
+        if (isVentilation) {
+          const dragDir = segDragRef.current?.dir
+          const wPts = moved.newPts.map(p => p.id === op.id ? op : p)
+          const wSegs = moved.newSegs.map(s => {
+            if (s.startPointId === op.id) {
+              const v = [...s.vertices]
+              v[0] = { x: op.x, y: op.y }
+              if (v.length >= 2 && Math.abs(v[0].x - v[1].x) > 0.1 && Math.abs(v[0].y - v[1].y) > 0.1) {
+                const elbow = dragDir === 'h' ? { x: op.x, y: v[1].y } : { x: v[1].x, y: op.y }
+                v.splice(1, 0, elbow)
+              }
+              return { ...s, vertices: v }
+            }
+            if (s.endPointId === op.id) {
+              const v = [...s.vertices]
+              const last = v.length - 1
+              v[last] = { x: op.x, y: op.y }
+              if (v.length >= 2 && Math.abs(v[last].x - v[last-1].x) > 0.1 && Math.abs(v[last].y - v[last-1].y) > 0.1) {
+                const elbow = dragDir === 'h' ? { x: op.x, y: v[last-1].y } : { x: v[last-1].x, y: op.y }
+                v.splice(last, 0, elbow)
+              }
+              return { ...s, vertices: v }
+            }
+            return s
+          })
+          return { renderSegs: wSegs, renderPts: wPts }
+        }
+        const ctaId = (op as any).parentCtaId
+        let wSegs = moved.newSegs, wPts = moved.newPts
+        wPts = wPts.map(p => p.id === ctaId ? { ...p, x: p.x + dx, y: p.y + dy } : p)
+        for (const port of points.filter((p: any) => p.parentCtaId === ctaId)) {
+          const r = computeNodeMove(port.id, { x: port.x + dx, y: port.y + dy }, wSegs, wPts, null)
+          wSegs = r.newSegs; wPts = r.newPts
+        }
+        return { renderSegs: wSegs, renderPts: wPts }
+      }
+      return { renderSegs: moved.newSegs, renderPts: moved.newPts }
     }
     if (ptDragPos) {
       const { newSegs, newPts } = computeNodeMove(ptDragPos.ptId, { x: ptDragPos.x, y: ptDragPos.y }, segments, points, ptDragPos.effectiveConstraint)
+      const draggingCta = points.find(p => p.id === ptDragPos.ptId)
+      if (draggingCta?.type === 'cta') {
+        const dx = ptDragPos.x - draggingCta.x, dy = ptDragPos.y - draggingCta.y
+        let segsOut = newSegs, ptsOut = newPts
+        for (const port of points.filter((p: any) => p.parentCtaId === ptDragPos.ptId)) {
+          const r = computeNodeMove(port.id, { x: port.x + dx, y: port.y + dy }, segsOut, ptsOut, null)
+          segsOut = r.newSegs; ptsOut = r.newPts
+        }
+        return { renderSegs: segsOut, renderPts: ptsOut }
+      }
       return { renderSegs: newSegs, renderPts: newPts }
     }
     return { renderSegs: segments, renderPts: points }
@@ -3018,25 +3221,40 @@ if (drawing) commitDrawing()
           }
 
           if (pt.type === 'cta') {
-            const w = pt.size?.w ?? 52, h = pt.size?.h ?? 28
+            const w = CTA_DEFAULT_SIZE.w, h = CTA_DEFAULT_SIZE.h
             const col = sel || dragged ? '#2563eb' : '#000'
             const bg  = sel || dragged ? '#dbeafe' : '#fff'
-            const fs = Math.max(6, Math.min(9, h * 0.28))
             return (
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
                 <rect x={pt.x - w/2 - 4} y={pt.y - h/2 - 4} width={w + 8} height={h + 8} fill="transparent" />
                 <g style={{ pointerEvents: 'none' }}>
                   <rect x={pt.x - w/2} y={pt.y - h/2} width={w} height={h}
-                    fill={bg} stroke={col} strokeWidth={1.5} rx={3} />
-                  <text x={pt.x} y={pt.y + fs * 0.35}
-                    fontSize={fs} fill={col} textAnchor="middle" fontWeight="700"
+                    fill={bg} stroke={col} strokeWidth={2} rx={3} />
+                  <text x={pt.x} y={pt.y - 4}
+                    fontSize={11} fill={col} textAnchor="middle" fontWeight="800"
                     style={{ userSelect: 'none' }}>CTA</text>
+                  <text x={pt.x} y={pt.y + 9}
+                    fontSize={8.5} fill={col} textAnchor="middle" fontWeight="600"
+                    style={{ userSelect: 'none' }}>DF</text>
                 </g>
                 {pt.name && pt.name !== 'CTA' && (
-                  <text x={pt.x} y={pt.y - h/2 - 3}
-                    fontSize={6} fill={col} textAnchor="middle"
+                  <text x={pt.x} y={pt.y - h/2 - 4}
+                    fontSize={6.5} fill={col} textAnchor="middle"
                     style={{ userSelect: 'none', pointerEvents: 'none' }}>{pt.name}</text>
                 )}
+              </g>
+            )
+          }
+
+          if (pt.type === 'ctaPort') {
+            const PS = 4  // half-size of port square
+            const col = sel ? '#2563eb' : '#000'
+            const bg  = sel ? '#dbeafe' : '#000'
+            return (
+              <g key={pt.id} style={{ cursor: 'crosshair' }} onClick={selClick}>
+                <rect x={pt.x - PS - 6} y={pt.y - PS - 6} width={(PS + 6) * 2} height={(PS + 6) * 2} fill="transparent" />
+                <rect x={pt.x - PS} y={pt.y - PS} width={PS * 2} height={PS * 2}
+                  fill={bg} stroke={col} strokeWidth={1.5} rx={1} style={{ pointerEvents: 'none' }} />
               </g>
             )
           }
@@ -3047,23 +3265,66 @@ if (drawing) commitDrawing()
               const role = (roleMap?.get ? roleMap.get(s.id) : roleMap?.[s.id]) ?? (s as any).pipeSubType
               return role === 'reprise'
             })
-            const col = sel || dragged ? '#2563eb' : isReprise ? '#f472b6' : '#059669'
-            const bg  = sel || dragged ? '#dbeafe' : isReprise ? '#fdf2f8' : '#f0fdf4'
-            const r = 8
+            const col = sel || dragged ? '#2563eb' : isReprise ? '#dc2626' : '#16a34a'
+            const bg  = sel || dragged ? '#dbeafe' : isReprise ? '#fef2f2' : '#f0fdf4'
+            const S = 7
+
+            // Direction de la flèche : déduite du premier segment de la gaine
+            // Extraction → flèche vers le tronçon (flux entrant dans la gaine)
+            // Soufflage  → flèche opposée au tronçon (flux sortant de la gaine)
+            let arrowDx = 0, arrowDy = isReprise ? -1 : 1
+            const connSeg = connectedSegs[0]
+            if (connSeg) {
+              const verts = connSeg.vertices
+              if (verts && verts.length >= 2) {
+                let sdx: number, sdy: number
+                if (connSeg.startPointId === pt.id) {
+                  sdx = verts[1].x - verts[0].x
+                  sdy = verts[1].y - verts[0].y
+                } else {
+                  sdx = verts[verts.length - 2].x - verts[verts.length - 1].x
+                  sdy = verts[verts.length - 2].y - verts[verts.length - 1].y
+                }
+                if (Math.abs(sdx) > 0.1 || Math.abs(sdy) > 0.1) {
+                  if (Math.abs(sdx) >= Math.abs(sdy)) {
+                    const d = sdx > 0 ? 1 : -1
+                    arrowDx = isReprise ? d : -d; arrowDy = 0
+                  } else {
+                    const d = sdy > 0 ? 1 : -1
+                    arrowDx = 0; arrowDy = isReprise ? d : -d
+                  }
+                }
+              }
+            }
+
+            // Coordonnées flèche généralisées (tige + pointe)
+            const ax1 = pt.x - arrowDx * 3, ay1 = pt.y - arrowDy * 3
+            const ax2 = pt.x + arrowDx,     ay2 = pt.y + arrowDy
+            const tipX = pt.x + arrowDx * 5, tipY = pt.y + arrowDy * 5
+            const bx1 = ax2 + (-arrowDy) * 3, by1 = ay2 + arrowDx * 3
+            const bx2 = ax2 - (-arrowDy) * 3, by2 = ay2 - arrowDx * 3
+
             return (
               <g key={pt.id} style={{ cursor: 'pointer' }} onClick={selClick}>
-                <circle cx={pt.x} cy={pt.y} r={r + 4} fill="transparent" />
+                <rect x={pt.x - S - 4} y={pt.y - S - 4} width={(S + 4) * 2} height={(S + 4) * 2} fill="transparent" />
                 <g style={{ pointerEvents: 'none' }}>
-                  <circle cx={pt.x} cy={pt.y} r={r} fill={bg} stroke={col} strokeWidth={1.2} />
-                  <line x1={pt.x - r * 0.5} y1={pt.y} x2={pt.x + r * 0.5} y2={pt.y}
-                    stroke={col} strokeWidth={1} />
-                  <line x1={pt.x} y1={pt.y - r * 0.5} x2={pt.x} y2={pt.y + r * 0.5}
-                    stroke={col} strokeWidth={1} />
+                  <rect x={pt.x - S} y={pt.y - S} width={S * 2} height={S * 2}
+                    fill={bg} stroke={col} strokeWidth={1.5} rx={1} />
+                  <line x1={ax1} y1={ay1} x2={ax2} y2={ay2}
+                    stroke={col} strokeWidth={1.5} strokeLinecap="round" />
+                  <polygon points={`${bx1},${by1} ${bx2},${by2} ${tipX},${tipY}`} fill={col} />
                 </g>
                 {pt.name && (
-                  <text x={pt.x} y={pt.y - r - 3}
+                  <text x={pt.x} y={pt.y - S - 4}
                     fontSize={6} fill={col} textAnchor="middle"
                     style={{ userSelect: 'none', pointerEvents: 'none' }}>{pt.name}</text>
+                )}
+                {(pt as any).debit_nominal != null && (pt as any).debit_nominal > 0 && (
+                  <text x={pt.x} y={pt.y + S + 8}
+                    fontSize={6} fill={col} textAnchor="middle"
+                    style={{ userSelect: 'none', pointerEvents: 'none' }}>
+                    {(pt as any).debit_nominal} m³/h
+                  </text>
                 )}
               </g>
             )
@@ -3332,14 +3593,18 @@ if (drawing) commitDrawing()
             )
           }
           if (placingEquipment.type === 'cta') {
-            const w = placingEquipment.size?.w ?? 52, h = placingEquipment.size?.h ?? 28
-            const fs = Math.max(6, Math.min(9, h * 0.28))
+            const w = CTA_DEFAULT_SIZE.w, h = CTA_DEFAULT_SIZE.h
+            const offsets = getCtaPortOffsets(w, h)
             return (
               <g style={{ pointerEvents: 'none' }}>
                 <rect x={gx - w/2} y={gy - h/2} width={w} height={h}
-                  fill="rgba(240,253,244,0.6)" stroke="rgba(5,150,105,0.5)" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
-                <text x={gx} y={gy + fs * 0.35}
-                  fontSize={fs} fill="rgba(5,150,105,0.7)" fontWeight="700" textAnchor="middle">CTA</text>
+                  fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.4)" strokeWidth={1.5} strokeDasharray="4,3" rx={3} />
+                <text x={gx} y={gy - 4} fontSize={11} fill="rgba(0,0,0,0.45)" fontWeight="800" textAnchor="middle">CTA</text>
+                <text x={gx} y={gy + 9} fontSize={8.5} fill="rgba(0,0,0,0.45)" fontWeight="600" textAnchor="middle">DF</text>
+                {offsets.map((off, i) => (
+                  <rect key={i} x={gx + off.x - 4} y={gy + off.y - 4} width={8} height={8}
+                    fill="rgba(0,0,0,0.3)" stroke="rgba(0,0,0,0.4)" strokeWidth={1} rx={1} />
+                ))}
               </g>
             )
           }
@@ -3347,16 +3612,46 @@ if (drawing) commitDrawing()
             const nearPt = points.find(p => dist(p, { x: gx, y: gy }) < PT_HIT)
             const nearSegs = nearPt ? segments.filter(s => s.startPointId === nearPt.id || s.endPointId === nearPt.id) : []
             const validConnSeg = nearSegs.length === 1 && (nearSegs[0].pipeSubType === 'soufflage' || nearSegs[0].pipeSubType === 'reprise') ? nearSegs[0] : null
+            const previewIsReprise = validConnSeg?.pipeSubType === 'reprise'
             const previewCol = validConnSeg
-              ? validConnSeg.pipeSubType === 'reprise' ? 'rgba(244,114,182,0.8)' : 'rgba(5,150,105,0.8)'
-              : 'rgba(148,163,184,0.5)'
-            const r = 8
+              ? previewIsReprise ? 'rgba(220,38,38,0.75)' : 'rgba(22,163,74,0.75)'
+              : 'rgba(148,163,184,0.55)'
+            const S = 7
+            let pDx = 0, pDy = previewIsReprise ? -1 : 1
+            if (validConnSeg && nearPt) {
+              const verts = validConnSeg.vertices
+              if (verts && verts.length >= 2) {
+                let sdx: number, sdy: number
+                if (validConnSeg.startPointId === nearPt.id) {
+                  sdx = verts[1].x - verts[0].x; sdy = verts[1].y - verts[0].y
+                } else {
+                  sdx = verts[verts.length - 2].x - verts[verts.length - 1].x
+                  sdy = verts[verts.length - 2].y - verts[verts.length - 1].y
+                }
+                if (Math.abs(sdx) > 0.1 || Math.abs(sdy) > 0.1) {
+                  if (Math.abs(sdx) >= Math.abs(sdy)) {
+                    const d = sdx > 0 ? 1 : -1
+                    pDx = previewIsReprise ? d : -d; pDy = 0
+                  } else {
+                    const d = sdy > 0 ? 1 : -1
+                    pDx = 0; pDy = previewIsReprise ? d : -d
+                  }
+                }
+              }
+            }
+            const pax1 = gx - pDx * 3, pay1 = gy - pDy * 3
+            const pax2 = gx + pDx,     pay2 = gy + pDy
+            const ptipX = gx + pDx * 5, ptipY = gy + pDy * 5
+            const pbx1 = pax2 + (-pDy) * 3, pby1 = pay2 + pDx * 3
+            const pbx2 = pax2 - (-pDy) * 3, pby2 = pay2 - pDx * 3
             return (
               <g style={{ pointerEvents: 'none' }}>
-                <circle cx={gx} cy={gy} r={r}
-                  fill="rgba(255,255,255,0.6)" stroke={previewCol} strokeWidth={1.2} strokeDasharray={validConnSeg ? 'none' : '3,2'} />
-                <line x1={gx - r * 0.5} y1={gy} x2={gx + r * 0.5} y2={gy} stroke={previewCol} strokeWidth={1} />
-                <line x1={gx} y1={gy - r * 0.5} x2={gx} y2={gy + r * 0.5} stroke={previewCol} strokeWidth={1} />
+                <rect x={gx - S} y={gy - S} width={S * 2} height={S * 2}
+                  fill="rgba(255,255,255,0.6)" stroke={previewCol} strokeWidth={1.5}
+                  strokeDasharray={validConnSeg ? undefined : '3,2'} rx={1} />
+                <line x1={pax1} y1={pay1} x2={pax2} y2={pay2}
+                  stroke={previewCol} strokeWidth={1.5} strokeLinecap="round" />
+                <polygon points={`${pbx1},${pby1} ${pbx2},${pby2} ${ptipX},${ptipY}`} fill={previewCol} />
               </g>
             )
           }

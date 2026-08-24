@@ -209,8 +209,9 @@ export type PdcParamsAlimECS = typeof DEFAULT_PDC_PARAMS_ALIM_ECS
 /** Paramètres PDC ventilation : Darcy-Weisbach fixe, singulières accessoires uniquement. */
 export const DEFAULT_PDC_PARAMS_VENTILATION: PdcParams = {
   ...DEFAULT_PDC_PARAMS,
-  methodeReg:  'darcy-colebrook',
-  methodeSing: 'accessoires',
+  methodeReg:       'darcy-colebrook',
+  methodeSing:      'accessoires',
+  equipementsActifs: true,
 }
 
 /** Masse volumique de l'eau (kg/m³) — formule de Kell (0–100 °C). */

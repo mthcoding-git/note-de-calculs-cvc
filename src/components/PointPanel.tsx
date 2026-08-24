@@ -7,6 +7,17 @@ import { tAvalStyle, Field, SectionLabel, SegNameField, CoteSection, TempBadge, 
 import { getModeFlags } from '../utils/calcModeFlags'
 import { EMETTEUR_TYPES } from '../data/emetteurs'
 import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
+import type { VentNodeTransition, VentNodeTransitionRect, VentNodeTransitionMixed, TransitionKind } from '../utils/transitionCalc'
+import {
+  detectTransitionKind, TRANSITION_LABELS, computeXiTransition,
+  detectTransitionKindByArea, RECT_TRANSITION_LABELS, computeXiTransitionRect,
+  MIXED_TRANSITION_LABELS, computeXiTransitionMixed,
+} from '../utils/transitionCalc'
+import TransitionModal from './TransitionModal'
+import type { CircJunctionType, VentNodeJunction, RectJunctionType, RectNodeJunction } from '../utils/junctionCalc'
+import { JUNCTION_LABELS, RECT_JUNCTION_LABELS } from '../utils/junctionCalc'
+import JunctionModal, { type AmontSegInfo } from './JunctionModal'
+import RectJunctionModal, { type AmontSegInfoRect } from './RectJunctionModal'
 
 function PumpCircuitButton({ criticalSegIds, criticalPathIds, onShowCriticalPath }: {
   criticalSegIds: Set<string>
@@ -66,9 +77,11 @@ interface PointPanelProps {
   criticalPathIds?: string[]
   calcConstants?: import('../types').CalcConstants
   ventilationResults?: Map<string, any>
+  ventilationNodeTransitionDp?: Map<string, number>
+  ventilationNodeJunctionDp?: Map<string, number>
 }
 
-export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null, eauGlaceeFlows = null, eauGlaceeParams = null, onEauGlaceeParamsChange = null, eauGlaceeThermal = null, egApportsMap = null, eauGlaceePumpHMT = null, eauGlaceeSplitCumDp = null, networkFlows = null, mixingNodes = null, chauffagePumpHMT = null, chauffageSplitCumDp = null, onShowCriticalPath = null, pumpCriticalMap = null, criticalPathIds = [], customEmetteurTypes = [], customTerminalFroidTypes = [], calcConstants, ventilationResults = null }: PointPanelProps) {
+export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], globalParams, activeCalcId, alimentationParams, alimentationResults, points = [], calcSubMode, onResultsViewChange = null, pdcCumResults, pdcParams, pdcCumAlimResults, levels = [], lineYs = [], pressionSourceAlimECS = null, pressionSourceAlimECSStatic = null, pressionSourceAlimEF = null, pressionSourceAlimEFStatic = null, groupDisplayNames = null, allSegs = [], flowDirections = null, materials = [], roleMap = null, columns = [], columnXs = [], thermalResults = null, chauffageFlows = null, chauffageParams = null, onChauffageParamsChange = null, chauffageThermal = null, eauGlaceeFlows = null, eauGlaceeParams = null, onEauGlaceeParamsChange = null, eauGlaceeThermal = null, egApportsMap = null, eauGlaceePumpHMT = null, eauGlaceeSplitCumDp = null, networkFlows = null, mixingNodes = null, chauffagePumpHMT = null, chauffageSplitCumDp = null, onShowCriticalPath = null, pumpCriticalMap = null, criticalPathIds = [], customEmetteurTypes = [], customTerminalFroidTypes = [], calcConstants, ventilationResults = null, ventilationNodeTransitionDp = null }: PointPanelProps) {
   const set = (key, val) => onUpdate(pt.id, 'point', { [key]: val })
   const T_depart     = globalParams?.T_depart ?? null
   const _prodECS_ref = points.find(p => p.type === 'productionECS')
@@ -76,6 +89,12 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
   const [showDims, setShowDims] = useState(false)
   const [showDimsCH, setShowDimsCH] = useState(false)
   const [showDimsEF, setShowDimsEF] = useState(false)
+  const [transModalOpen, setTransModalOpen]       = useState(false)
+  const [transModalEditing, setTransModalEditing] = useState<VentNodeTransition | VentNodeTransitionRect | VentNodeTransitionMixed | null>(null)
+  const [junctionModalOpen,     setJunctionModalOpen]     = useState(false)
+  const [junctionEditing,       setJunctionEditing]       = useState<VentNodeJunction | null>(null)
+  const [junctionRectModalOpen, setJunctionRectModalOpen] = useState(false)
+  const [junctionRectEditing,   setJunctionRectEditing]   = useState<RectNodeJunction | null>(null)
   const deltaTByType = useRef<Record<string, number | null>>({})
 
   const { isBouclage, isAlimECS, isAlimEF, isAlimMode, hasPdc, isChauffage, isEauGlacee, isVentilation } = getModeFlags(activeCalcId)
@@ -142,6 +161,42 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
       )
     }
     return null
+  }
+
+  if (pt.type === 'ctaPort') {
+    const portLabels = ['Gauche haut', 'Gauche bas', 'Droit haut', 'Droit bas']
+    const portLabel  = portLabels[(pt as any).portIndex ?? 0] ?? 'Port'
+    const connSegs   = allSegs.filter(s => s.startPointId === pt.id || s.endPointId === pt.id)
+    return (
+      <div className="rp-section">
+        <h3 className="rp-title">Port CTA — {portLabel}</h3>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginBottom: 8,
+          padding: '3px 8px', background: '#f0fdf4', border: '1px solid #86efac',
+          borderRadius: 4, fontSize: 10, fontWeight: 700, color: '#059669' }}>
+          Point de raccordement
+        </div>
+        {connSegs.length > 0 && (
+          <>
+            <hr className="rp-divider" />
+            <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' as const,
+              letterSpacing: '0.06em', marginBottom: 4 }}>Tronçons raccordés</div>
+            {connSegs.map(s => {
+              const role = (s as any).pipeSubType ?? (s.type === 'retour' ? 'reprise' : 'soufflage')
+              const roleLabels: Record<string, string> = { soufflage: 'Soufflage', reprise: 'Reprise', 'air-neuf': 'Air neuf', 'air-rejete': 'Air rejeté' }
+              return (
+                <div key={s.id} style={{ fontSize: 10, color: '#374151', padding: '2px 0',
+                  borderBottom: '1px solid #f3f4f6' }}>
+                  {s.name || s.id.slice(-4)} — {roleLabels[role] ?? role}
+                </div>
+              )
+            })}
+          </>
+        )}
+        {connSegs.length === 0 && (
+          <p className="lp-hint">Aucun tronçon raccordé — dessiner un tronçon depuis ce port.</p>
+        )}
+      </div>
+    )
   }
 
   if (pt.type === 'cta') {
@@ -259,7 +314,7 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
   if (activeCalcId === 'distribution-ventilation') {
     const connSegs = allSegs.filter(s => s.startPointId === pt.id || s.endPointId === pt.id)
     const airSeg   = connSegs.find((s: any) => s.pipeSubType === 'air-neuf' || s.pipeSubType === 'air-rejete')
-    if (airSeg && connSegs.length === 1 && pt.type !== 'cta') {
+    if (airSeg && connSegs.length === 1 && pt.type !== 'cta' && pt.type !== 'ctaPort') {
       const isNeuf  = (airSeg as any).pipeSubType === 'air-neuf'
       const color   = isNeuf ? '#0284c7' : '#64748b'
       const label   = isNeuf ? 'Air neuf' : 'Air rejeté'
@@ -2609,6 +2664,516 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
                 </div>
               )}
             </div>
+          </>
+        )
+      })()}
+
+      {/* ── Transitions de section (ventilation, nœud de transit) ── */}
+      {isVentilation && (() => {
+        const noteStyle: React.CSSProperties = {
+          padding:'6px 8px', borderRadius:5, fontSize:10, color:'#6b7280',
+          background:'#f3f4f6', border:'1px solid #e5e7eb', marginBottom:4,
+        }
+        const header = (
+          <>
+            <hr className="rp-divider" />
+            <SectionLabel>Transitions de section</SectionLabel>
+          </>
+        )
+
+        if (!flowDirections || !ventilationResults) return (
+          <>
+            {header}
+            <div style={noteStyle}>Lancez le calcul ventilation pour détecter les transitions.</div>
+          </>
+        )
+
+        const amontSegs = allSegs.filter(s => flowDirections.get(s.id)?.toId === pt.id)
+        const avalSegs  = allSegs.filter(s => flowDirections.get(s.id)?.fromId === pt.id)
+        if (amontSegs.length !== 1 || avalSegs.length !== 1) return null
+
+        const pipeSubType = (amontSegs[0] as any).pipeSubType as string | undefined
+
+        const amontRes = ventilationResults.get(amontSegs[0].id)
+        const avalRes  = ventilationResults.get(avalSegs[0].id)
+        if (!amontRes || !avalRes) return (
+          <>
+            {header}
+            <div style={noteStyle}>Résultats de débit manquants sur les tronçons adjacents.</div>
+          </>
+        )
+
+        const bothCircular = amontRes.shape === 'circular'    && avalRes.shape === 'circular'
+        const bothRect     = amontRes.shape === 'rectangular' && avalRes.shape === 'rectangular'
+        const isMixed      = (amontRes.shape === 'circular' && avalRes.shape === 'rectangular')
+                          || (amontRes.shape === 'rectangular' && avalRes.shape === 'circular')
+
+        if (!bothCircular && !bothRect && !isMixed) return (
+          <>
+            {header}
+            <div style={noteStyle}>Forme de gaine non reconnue pour ce nœud.</div>
+          </>
+        )
+
+        const dynPressure = 0.5 * (amontRes.rho as number) * (amontRes.v_ms as number) ** 2
+
+        // ── Groupe 1 : Circulaire → Circulaire ──────────────────────────────────
+        if (bothCircular) {
+          const D1 = amontRes.di_mm as number
+          const D2 = avalRes.di_mm as number
+          const kind = detectTransitionKind(D1, D2) as TransitionKind
+          const transitions: VentNodeTransition[] = (pt as any).ventTransitions ?? []
+          const removeTrans = (id: string) =>
+            set('ventTransitions', transitions.filter(t => t.id !== id))
+
+          const kindStyle = kind === 'expansion'
+            ? { bg:'#eff6ff', border:'#bfdbfe', color:'#1d4ed8', label:`Agrandissement — Ø${D1} → Ø${D2} mm` }
+            : kind === 'contraction'
+            ? { bg:'#fff7ed', border:'#fed7aa', color:'#c2410c', label:`Rétrécissement — Ø${D1} → Ø${D2} mm` }
+            : { bg:'#f3f4f6', border:'#e5e7eb', color:'#6b7280', label:`Diamètres identiques (Ø${D1} mm)` }
+
+          return (
+            <>
+              {header}
+              <div style={{ padding:'5px 8px', borderRadius:5, background:kindStyle.bg,
+                border:`1px solid ${kindStyle.border}`, color:kindStyle.color,
+                fontSize:10, fontWeight:600, marginBottom:8 }}>
+                {kindStyle.label}
+              </div>
+              {transitions.map(t => {
+                const xi = computeXiTransition(t, D1, D2)
+                const dp = xi * dynPressure
+                return (
+                  <div key={t.id} style={{ display:'flex', alignItems:'center', gap:5,
+                    padding:'6px 8px', marginBottom:4, borderRadius:6,
+                    background:'#f8fafc', border:'1px solid #e2e8f0' }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:10, fontWeight:600, color:'#1e293b',
+                        whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                        {TRANSITION_LABELS[t.type]}
+                      </div>
+                      <div style={{ fontSize:9, color:'#6b7280', marginTop:1, fontFamily:'ui-monospace,monospace' }}>
+                        ξ = {xi.toFixed(3)} · ΔP = {dp.toFixed(1)} Pa
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { setTransModalEditing(t); setTransModalOpen(true) }}
+                      title="Modifier"
+                      style={{ padding:'3px 7px', fontSize:11, border:'1px solid #e2e8f0',
+                        borderRadius:4, cursor:'pointer', background:'#fff', color:'#64748b', flexShrink:0 }}
+                    >✏</button>
+                    <button
+                      onClick={() => removeTrans(t.id)}
+                      title="Supprimer"
+                      style={{ padding:'3px 7px', fontSize:11, border:'1px solid #fca5a5',
+                        borderRadius:4, cursor:'pointer', background:'#fef2f2', color:'#dc2626', flexShrink:0 }}
+                    >✕</button>
+                  </div>
+                )
+              })}
+              {kind !== 'none' && transitions.length === 0 && (
+                <button
+                  onClick={() => { setTransModalEditing(null); setTransModalOpen(true) }}
+                  style={{ width:'100%', padding:'5px 8px', fontSize:10, fontWeight:600,
+                    border:'1px dashed #93c5fd', borderRadius:5, cursor:'pointer',
+                    background:'#eff6ff', color:'#1d4ed8', marginTop:2 }}
+                >
+                  + Ajouter une transition de section
+                </button>
+              )}
+              <TransitionModal
+                isOpen={transModalOpen}
+                onClose={() => setTransModalOpen(false)}
+                editing={transModalEditing}
+                mode="circular"
+                D1={D1} D2={D2} dynPressure={dynPressure} kind={kind}
+                pipeSubType={pipeSubType}
+                onSave={saved => {
+                  const t = saved as VentNodeTransition
+                  set('ventTransitions', transModalEditing
+                    ? transitions.map(x => x.id === t.id ? t : x)
+                    : [...transitions, t])
+                }}
+              />
+            </>
+          )
+        }
+
+        // ── Groupe 2 : Rectangulaire → Rectangulaire ────────────────────────────
+        if (bothRect) {
+          const a1 = amontRes.a_mm as number
+          const b1 = amontRes.b_mm as number
+          const a2 = avalRes.a_mm as number
+          const b2 = avalRes.b_mm as number
+          const A1_mm2 = a1 * b1
+          const A2_mm2 = a2 * b2
+          const kind = detectTransitionKindByArea(A1_mm2, A2_mm2) as TransitionKind
+          const transitions: VentNodeTransitionRect[] = (pt as any).ventTransitionsRect ?? []
+          const removeTrans = (id: string) =>
+            set('ventTransitionsRect', transitions.filter(t => t.id !== id))
+
+          const kindStyle = kind === 'expansion'
+            ? { bg:'#eff6ff', border:'#bfdbfe', color:'#1d4ed8', label:`Agrandissement — ${a1}×${b1} → ${a2}×${b2} mm` }
+            : kind === 'contraction'
+            ? { bg:'#fff7ed', border:'#fed7aa', color:'#c2410c', label:`Rétrécissement — ${a1}×${b1} → ${a2}×${b2} mm` }
+            : { bg:'#f3f4f6', border:'#e5e7eb', color:'#6b7280', label:`Sections identiques (${a1}×${b1} mm)` }
+
+          return (
+            <>
+              {header}
+              <div style={{ padding:'5px 8px', borderRadius:5, background:kindStyle.bg,
+                border:`1px solid ${kindStyle.border}`, color:kindStyle.color,
+                fontSize:10, fontWeight:600, marginBottom:8 }}>
+                {kindStyle.label}
+              </div>
+              {transitions.map(t => {
+                const xi = computeXiTransitionRect(t, A1_mm2, A2_mm2)
+                const dp = xi * dynPressure
+                return (
+                  <div key={t.id} style={{ display:'flex', alignItems:'center', gap:5,
+                    padding:'6px 8px', marginBottom:4, borderRadius:6,
+                    background:'#f8fafc', border:'1px solid #e2e8f0' }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:10, fontWeight:600, color:'#1e293b',
+                        whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                        {RECT_TRANSITION_LABELS[t.type]}
+                      </div>
+                      <div style={{ fontSize:9, color:'#6b7280', marginTop:1, fontFamily:'ui-monospace,monospace' }}>
+                        ξ = {xi.toFixed(3)} · ΔP = {dp.toFixed(1)} Pa
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { setTransModalEditing(t); setTransModalOpen(true) }}
+                      title="Modifier"
+                      style={{ padding:'3px 7px', fontSize:11, border:'1px solid #e2e8f0',
+                        borderRadius:4, cursor:'pointer', background:'#fff', color:'#64748b', flexShrink:0 }}
+                    >✏</button>
+                    <button
+                      onClick={() => removeTrans(t.id)}
+                      title="Supprimer"
+                      style={{ padding:'3px 7px', fontSize:11, border:'1px solid #fca5a5',
+                        borderRadius:4, cursor:'pointer', background:'#fef2f2', color:'#dc2626', flexShrink:0 }}
+                    >✕</button>
+                  </div>
+                )
+              })}
+              {kind !== 'none' && transitions.length === 0 && (
+                <button
+                  onClick={() => { setTransModalEditing(null); setTransModalOpen(true) }}
+                  style={{ width:'100%', padding:'5px 8px', fontSize:10, fontWeight:600,
+                    border:'1px dashed #93c5fd', borderRadius:5, cursor:'pointer',
+                    background:'#eff6ff', color:'#1d4ed8', marginTop:2 }}
+                >
+                  + Ajouter une transition de section
+                </button>
+              )}
+              <TransitionModal
+                isOpen={transModalOpen}
+                onClose={() => setTransModalOpen(false)}
+                editing={transModalEditing}
+                mode="rectangular"
+                a1_mm={a1} b1_mm={b1} a2_mm={a2} b2_mm={b2}
+                dynPressure={dynPressure} kind={kind}
+                pipeSubType={pipeSubType}
+                onSave={saved => {
+                  const t = saved as VentNodeTransitionRect
+                  set('ventTransitionsRect', transModalEditing
+                    ? transitions.map(x => x.id === t.id ? t : x)
+                    : [...transitions, t])
+                }}
+              />
+            </>
+          )
+        }
+
+        // ── Groupe 3 : Circulaire ↔ Rectangulaire ───────────────────────────────
+        const amontShape = amontRes.shape as 'circular' | 'rectangular'
+        const mA1 = amontShape === 'circular'
+          ? Math.PI * ((amontRes.di_mm as number) / 2) ** 2
+          : (amontRes.a_mm as number) * (amontRes.b_mm as number)
+        const mA2 = amontShape === 'circular'
+          ? (avalRes.a_mm as number) * (avalRes.b_mm as number)
+          : Math.PI * ((avalRes.di_mm as number) / 2) ** 2
+        const mAB = (() => {
+          const a = amontShape === 'rectangular' ? (amontRes.a_mm as number) : (avalRes.a_mm as number)
+          const b = amontShape === 'rectangular' ? (amontRes.b_mm as number) : (avalRes.b_mm as number)
+          return Math.max(a, b) / Math.max(Math.min(a, b), 1)
+        })()
+        const kindM = detectTransitionKindByArea(mA1, mA2) as TransitionKind
+        const amontLabel = amontShape === 'circular'
+          ? `Ø${amontRes.di_mm} mm`
+          : `${amontRes.a_mm}×${amontRes.b_mm} mm`
+        const avalLabel = amontShape === 'circular'
+          ? `${avalRes.a_mm}×${avalRes.b_mm} mm`
+          : `Ø${avalRes.di_mm} mm`
+        const transitionsMixed: VentNodeTransitionMixed[] = (pt as any).ventTransitionsMixed ?? []
+        const removeTransMixed = (id: string) =>
+          set('ventTransitionsMixed', transitionsMixed.filter(t => t.id !== id))
+
+        const kindStyleM = kindM === 'expansion'
+          ? { bg:'#eff6ff', border:'#bfdbfe', color:'#1d4ed8', label:`Agrandissement — ${amontLabel} → ${avalLabel}` }
+          : kindM === 'contraction'
+          ? { bg:'#fff7ed', border:'#fed7aa', color:'#c2410c', label:`Rétrécissement — ${amontLabel} → ${avalLabel}` }
+          : { bg:'#f3f4f6', border:'#e5e7eb', color:'#6b7280', label:`Sections équivalentes — ${amontLabel} → ${avalLabel}` }
+
+        return (
+          <>
+            {header}
+            <div style={{ padding:'5px 8px', borderRadius:5, background:kindStyleM.bg,
+              border:`1px solid ${kindStyleM.border}`, color:kindStyleM.color,
+              fontSize:10, fontWeight:600, marginBottom:8 }}>
+              {kindStyleM.label}
+            </div>
+            {transitionsMixed.map(t => {
+              const xi = computeXiTransitionMixed(t, mA1, mA2, mAB)
+              const dp = xi * dynPressure
+              return (
+                <div key={t.id} style={{ display:'flex', alignItems:'center', gap:5,
+                  padding:'6px 8px', marginBottom:4, borderRadius:6,
+                  background:'#f8fafc', border:'1px solid #e2e8f0' }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:10, fontWeight:600, color:'#1e293b',
+                      whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                      {MIXED_TRANSITION_LABELS[t.type]}
+                    </div>
+                    <div style={{ fontSize:9, color:'#6b7280', marginTop:1, fontFamily:'ui-monospace,monospace' }}>
+                      ξ = {xi.toFixed(3)} · ΔP = {dp.toFixed(1)} Pa
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { setTransModalEditing(t); setTransModalOpen(true) }}
+                    title="Modifier"
+                    style={{ padding:'3px 7px', fontSize:11, border:'1px solid #e2e8f0',
+                      borderRadius:4, cursor:'pointer', background:'#fff', color:'#64748b', flexShrink:0 }}
+                  >✏</button>
+                  <button
+                    onClick={() => removeTransMixed(t.id)}
+                    title="Supprimer"
+                    style={{ padding:'3px 7px', fontSize:11, border:'1px solid #fca5a5',
+                      borderRadius:4, cursor:'pointer', background:'#fef2f2', color:'#dc2626', flexShrink:0 }}
+                  >✕</button>
+                </div>
+              )
+            })}
+            {kindM !== 'none' && transitionsMixed.length === 0 && (
+              <button
+                onClick={() => { setTransModalEditing(null); setTransModalOpen(true) }}
+                style={{ width:'100%', padding:'5px 8px', fontSize:10, fontWeight:600,
+                  border:'1px dashed #93c5fd', borderRadius:5, cursor:'pointer',
+                  background:'#eff6ff', color:'#1d4ed8', marginTop:2 }}
+              >
+                + Ajouter une transition de section
+              </button>
+            )}
+            <TransitionModal
+              isOpen={transModalOpen}
+              onClose={() => setTransModalOpen(false)}
+              editing={transModalEditing}
+              mode="mixed"
+              dynPressure={dynPressure} kind={kindM}
+              amontShape={amontShape}
+              amontD_mm={amontShape === 'circular' ? amontRes.di_mm as number : undefined}
+              amontA_mm={amontShape === 'rectangular' ? amontRes.a_mm as number : undefined}
+              amontB_mm={amontShape === 'rectangular' ? amontRes.b_mm as number : undefined}
+              avalD_mm={amontShape === 'rectangular' ? avalRes.di_mm as number : undefined}
+              avalA_mm={amontShape === 'circular'    ? avalRes.a_mm as number : undefined}
+              avalB_mm={amontShape === 'circular'    ? avalRes.b_mm as number : undefined}
+              pipeSubType={pipeSubType}
+              onSave={saved => {
+                const t = saved as VentNodeTransitionMixed
+                set('ventTransitionsMixed', transModalEditing
+                  ? transitionsMixed.map(x => x.id === t.id ? t : x)
+                  : [...transitionsMixed, t])
+              }}
+            />
+          </>
+        )
+      })()}
+
+      {/* ── Réunion circulaire (confluence) ── */}
+      {isVentilation && (() => {
+        if (!flowDirections || !ventilationResults) return null
+        const amontSegsR = allSegs.filter(s => flowDirections.get(s.id)?.toId === pt.id)
+        const avalSegsR  = allSegs.filter(s => flowDirections.get(s.id)?.fromId === pt.id)
+        if (amontSegsR.length < 2 || avalSegsR.length !== 1) return null
+
+        const avalResR = ventilationResults.get(avalSegsR[0].id)
+        if (!avalResR || avalResR.shape !== 'circular') return null
+        if (!amontSegsR.every((s: any) => ventilationResults!.get(s.id)?.shape === 'circular')) return null
+
+        const junction: VentNodeJunction | null = (pt as any).ventJunction ?? null
+
+        const amontSegInfos: AmontSegInfo[] = amontSegsR.map((s: any) => ({
+          id:    s.id,
+          name:  s.name ?? 'Tronçon',
+          Q_m3h: ventilationResults!.get(s.id)?.Q_m3h ?? 0,
+          di_mm: ventilationResults!.get(s.id)?.di_mm ?? 0,
+        }))
+
+        const noteStyle: React.CSSProperties = {
+          padding: '6px 8px', borderRadius: 5, fontSize: 10, color: '#6b7280',
+          background: '#f3f4f6', border: '1px solid #e5e7eb', marginBottom: 4,
+        }
+
+        return (
+          <>
+            <hr className="rp-divider" />
+            <SectionLabel>Réunion circulaire</SectionLabel>
+
+            {amontSegsR.length > 2 ? (
+              <div style={noteStyle}>
+                {amontSegsR.length} tronçons entrants — seuls 2 tronçons sont pris en charge pour l'instant.
+              </div>
+            ) : (
+              <>
+                {!junction ? (
+                  <button
+                    onClick={() => { setJunctionEditing(null); setJunctionModalOpen(true) }}
+                    style={{
+                      width: '100%', padding: '6px 10px', fontSize: 11, fontWeight: 600,
+                      borderRadius: 6, border: '1px dashed #2563eb', background: '#eff6ff',
+                      color: '#2563eb', cursor: 'pointer',
+                    }}>
+                    + Configurer la réunion
+                  </button>
+                ) : (
+                  <div style={{ padding: '8px 10px', borderRadius: 7,
+                    border: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#1e293b' }}>
+                        {JUNCTION_LABELS[junction.type as CircJunctionType]}
+                      </div>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button
+                          onClick={() => { setJunctionEditing(junction); setJunctionModalOpen(true) }}
+                          style={{ padding: '2px 8px', fontSize: 10, fontWeight: 600, borderRadius: 4,
+                            border: '1px solid #e2e8f0', background: '#f1f5f9', color: '#374151', cursor: 'pointer' }}>
+                          Modifier
+                        </button>
+                        <button
+                          onClick={() => set('ventJunction', null)}
+                          style={{ padding: '2px 8px', fontSize: 10, fontWeight: 600, borderRadius: 4,
+                            border: '1px solid #fee2e2', background: '#fff5f5', color: '#dc2626', cursor: 'pointer' }}>
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                    {junction.alpha_deg != null && (
+                      <div style={{ fontSize: 10, color: '#64748b', marginTop: 3 }}>
+                        α = {junction.alpha_deg}°
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <JunctionModal
+                  isOpen={junctionModalOpen}
+                  onClose={() => setJunctionModalOpen(false)}
+                  editing={junctionEditing}
+                  amontSegs={amontSegInfos}
+                  avalDi_mm={avalResR.di_mm as number}
+                  avalQ_m3h={avalResR.Q_m3h as number}
+                  avalV_ms={avalResR.v_ms as number}
+                  rho={avalResR.rho as number}
+                  onSave={j => set('ventJunction', j)}
+                />
+              </>
+            )}
+          </>
+        )
+      })()}
+
+      {/* ── Réunion rectangulaire (confluence) ── */}
+      {isVentilation && (() => {
+        if (!flowDirections || !ventilationResults) return null
+        const amontSegsR = allSegs.filter(s => flowDirections.get(s.id)?.toId === pt.id)
+        const avalSegsR  = allSegs.filter(s => flowDirections.get(s.id)?.fromId === pt.id)
+        if (amontSegsR.length < 2 || avalSegsR.length !== 1) return null
+
+        const avalResR = ventilationResults.get(avalSegsR[0].id)
+        if (!avalResR || avalResR.shape !== 'rectangular') return null
+        if (!amontSegsR.every((s: any) => ventilationResults!.get(s.id)?.shape === 'rectangular')) return null
+
+        const junctionRect: RectNodeJunction | null = (pt as any).ventJunctionRect ?? null
+
+        const amontSegInfosRect: AmontSegInfoRect[] = amontSegsR.map((s: any) => ({
+          id:    s.id,
+          name:  s.name ?? 'Tronçon',
+          Q_m3h: ventilationResults!.get(s.id)?.Q_m3h ?? 0,
+          a_mm:  ventilationResults!.get(s.id)?.a_mm ?? 0,
+          b_mm:  ventilationResults!.get(s.id)?.b_mm ?? 0,
+        }))
+
+        const noteStyle: React.CSSProperties = {
+          padding: '6px 8px', borderRadius: 5, fontSize: 10, color: '#6b7280',
+          background: '#f3f4f6', border: '1px solid #e5e7eb', marginBottom: 4,
+        }
+
+        return (
+          <>
+            <hr className="rp-divider" />
+            <SectionLabel>Réunion rectangulaire</SectionLabel>
+
+            {amontSegsR.length > 2 ? (
+              <div style={noteStyle}>
+                {amontSegsR.length} tronçons entrants — seuls 2 tronçons sont pris en charge pour l'instant.
+              </div>
+            ) : (
+              <>
+                {!junctionRect ? (
+                  <button
+                    onClick={() => { setJunctionRectEditing(null); setJunctionRectModalOpen(true) }}
+                    style={{
+                      width: '100%', padding: '6px 10px', fontSize: 11, fontWeight: 600,
+                      borderRadius: 6, border: '1px dashed #2563eb', background: '#eff6ff',
+                      color: '#2563eb', cursor: 'pointer',
+                    }}>
+                    + Configurer la réunion
+                  </button>
+                ) : (
+                  <div style={{ padding: '8px 10px', borderRadius: 7,
+                    border: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#1e293b' }}>
+                        {RECT_JUNCTION_LABELS[junctionRect.type as RectJunctionType]}
+                      </div>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button
+                          onClick={() => { setJunctionRectEditing(junctionRect); setJunctionRectModalOpen(true) }}
+                          style={{ padding: '2px 8px', fontSize: 10, fontWeight: 600, borderRadius: 4,
+                            border: '1px solid #e2e8f0', background: '#f1f5f9', color: '#374151', cursor: 'pointer' }}>
+                          Modifier
+                        </button>
+                        <button
+                          onClick={() => set('ventJunctionRect', null)}
+                          style={{ padding: '2px 8px', fontSize: 10, fontWeight: 600, borderRadius: 4,
+                            border: '1px solid #fee2e2', background: '#fff5f5', color: '#dc2626', cursor: 'pointer' }}>
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                    {junctionRect.alpha_deg != null && (
+                      <div style={{ fontSize: 10, color: '#64748b', marginTop: 3 }}>
+                        α = {junctionRect.alpha_deg}°
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <RectJunctionModal
+                  isOpen={junctionRectModalOpen}
+                  onClose={() => setJunctionRectModalOpen(false)}
+                  editing={junctionRectEditing}
+                  amontSegs={amontSegInfosRect}
+                  avalA_mm={avalResR.a_mm ?? 0}
+                  avalB_mm={avalResR.b_mm ?? 0}
+                  avalQ_m3h={avalResR.Q_m3h as number}
+                  avalV_ms={avalResR.v_ms as number}
+                  rho={avalResR.rho as number}
+                  onSave={j => set('ventJunctionRect', j)}
+                />
+              </>
+            )}
           </>
         )
       })()}

@@ -452,7 +452,7 @@ export default function PdcSegResults({ pdcResult, pdcParams, seg, dnDef, flowDa
           <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
             {pdcParams?.methodeSing === 'pourcentage'
               ? `Forfaitaire — ${pdcParams.pourcentageSing ?? 20} % des pertes linéaires`
-              : 'Par accessoires — ξ × ρV²/2'}
+              : 'Par singularités — ξ × ρV²/2'}
           </div>
           {pdcParams?.methodeSing === 'pourcentage'
             ? (<>

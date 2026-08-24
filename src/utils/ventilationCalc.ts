@@ -1,11 +1,19 @@
 import type { Material, Segment, Point, FlowDirections } from '../types'
 import { FITTING_TYPES, EQUIPMENT_TYPES } from './pdcCalc'
+import { computeXiSingularityFull } from './singularityCalc'
+import { computeXiTransition, computeXiTransitionRect, computeXiTransitionMixed } from './transitionCalc'
+import {
+  computeXiJunction, computeXiJunctionRect,
+  type VentNodeJunction, type JunctionBranchInput,
+  type RectNodeJunction, type JunctionBranchRectInput,
+} from './junctionCalc'
 
 // ── Directions d'écoulement ventilation ─────────────────────────────────────
 
-function dijkstra(startId: string, segs: Segment[]): Map<string, number> {
-  const dist = new Map<string, number>([[startId, 0]])
-  const queue: [number, string][] = [[0, startId]]
+function dijkstra(startIds: string[], segs: Segment[]): Map<string, number> {
+  const dist = new Map<string, number>()
+  const queue: [number, string][] = []
+  for (const id of startIds) { dist.set(id, 0); queue.push([0, id]) }
   while (queue.length) {
     queue.sort((a, b) => a[0] - b[0])
     const [d, id] = queue.shift()!
@@ -13,7 +21,7 @@ function dijkstra(startId: string, segs: Segment[]): Map<string, number> {
     for (const seg of segs) {
       if (seg.startPointId !== id && seg.endPointId !== id) continue
       const nb  = seg.startPointId === id ? seg.endPointId : seg.startPointId
-      const nd  = d + (seg.length_override ?? 1)
+      const nd  = d + ((seg as any).length_override ?? 1)
       if (nd < (dist.get(nb) ?? Infinity)) { dist.set(nb, nd); queue.push([nd, nb]) }
     }
   }
@@ -29,6 +37,9 @@ export function computeFlowDirectionsVentilation(segments: Segment[], points: Po
   const cta = points.find(p => p.type === 'cta')
   if (!cta) return new Map()
 
+  const ctaPorts = points.filter(p => (p as any).parentCtaId === cta.id)
+  const ctaAndPortIds = [cta.id, ...ctaPorts.map(p => p.id)]
+
   const getSubType = (s: Segment): string =>
     (s as any).pipeSubType ?? (s.type === 'retour' ? 'reprise' : 'soufflage')
   const isAllerSeg = (s: Segment): boolean => {
@@ -39,8 +50,8 @@ export function computeFlowDirectionsVentilation(segments: Segment[], points: Po
   const allerSegs  = segments.filter(isAllerSeg)
   const retourSegs = segments.filter(s => !isAllerSeg(s))
 
-  const distAller  = dijkstra(cta.id, allerSegs)
-  const distRetour = dijkstra(cta.id, retourSegs)
+  const distAller  = dijkstra(ctaAndPortIds, allerSegs)
+  const distRetour = dijkstra(ctaAndPortIds, retourSegs)
 
   const result: FlowDirections = new Map()
   for (const seg of segments) {
@@ -296,9 +307,12 @@ export function getVentDi(seg: Segment, materials: Material[]): VentDiResult | n
   if (mat.shapeType === 'rectangular') {
     const dnDef = mat.dns.find(d => d.dn === (seg as any).dn) as any
     if (!dnDef) return null
-    const dh = (seg as any).di_override ?? dnDef.dh ?? dnDef.di
+    const a_mm = (seg as any).a_override ?? dnDef.a
+    const b_mm = (seg as any).b_override ?? dnDef.b
+    const dhCalc = Math.round(2 * a_mm * b_mm / (a_mm + b_mm))
+    const dh = (seg as any).di_override ?? dhCalc
     if (dh == null) return null
-    return { di_mm: dh, eps_mm: mat.epsilon ?? EPS_DEFAULT, shape: 'rectangular', a_mm: dnDef.a, b_mm: dnDef.b }
+    return { di_mm: dh, eps_mm: mat.epsilon ?? EPS_DEFAULT, shape: 'rectangular', a_mm, b_mm }
   }
 
   const di_mm = (seg as any).di_override ?? mat.dns.find(d => d.dn === (seg as any).dn)?.di ?? null
@@ -324,12 +338,18 @@ function computeVentEquipDP(seg: Segment, pdcParams: any): number {
 }
 
 /** ΔP singulières via accessoires ξ (pression dynamique ρv²/2). */
-function computeVentSingDP(seg: Segment, dynPressure: number, pdcParams: any): number {
+function computeVentSingDP(seg: Segment, dynPressure: number, pdcParams: any, lambda: number, Re?: number, Dh_mm?: number): number {
+  // Nouvelles singularités géométriques
+  const ventSing: any[] = (seg as any).ventSingularites ?? []
+  const v_ms_sing = Math.sqrt(2 * dynPressure / 1.2)
+  const dpSing = ventSing.reduce((sum: number, s: any) =>
+    sum + computeXiSingularityFull(s, lambda, Re, Dh_mm, v_ms_sing).ksi_total * dynPressure * (s.count ?? 1), 0)
+
+  // Anciennes singularités par ξ fixe (rétrocompat)
   const fittings: any[] = (seg as any).fittings ?? []
-  if (fittings.length === 0) return 0
   const libOverrides = pdcParams?.fittingOverrides ?? {}
   const customF: any[] = pdcParams?.customFittings ?? []
-  return fittings.reduce((sum: number, f: any) => {
+  const dpFit = fittings.reduce((sum: number, f: any) => {
     const xi = f.xiOverride
       ?? libOverrides[f.type]
       ?? FITTING_TYPES.find((t: any) => t.id === f.type)?.xi
@@ -337,6 +357,157 @@ function computeVentSingDP(seg: Segment, dynPressure: number, pdcParams: any): n
       ?? 0
     return sum + xi * (f.count ?? 1) * dynPressure
   }, 0)
+
+  return dpSing + dpFit
+}
+
+/**
+ * Calcule le ΔP de transition (agrandissement / rétrécissement) à chaque nœud.
+ * Groupe 1 (circ→circ) : lit ventTransitions, uses D1/D2.
+ * Groupe 2 (rect→rect) : lit ventTransitionsRect, uses A1/A2 (mm²).
+ * Retourne une Map<nodeId, ΔP en Pa>.
+ */
+export function computeNodeTransitionDp(
+  points:         Point[],
+  segments:       Segment[],
+  flowDirections: FlowDirections,
+  ventSegResults: Map<string, VentSegResult>,
+): Map<string, number> {
+  const result = new Map<string, number>()
+
+  for (const pt of points) {
+    const amontSegs = segments.filter(s => flowDirections.get(s.id)?.toId   === pt.id)
+    const avalSegs  = segments.filter(s => flowDirections.get(s.id)?.fromId === pt.id)
+    if (amontSegs.length !== 1 || avalSegs.length !== 1) continue
+
+    const amontRes = ventSegResults.get(amontSegs[0].id)
+    const avalRes  = ventSegResults.get(avalSegs[0].id)
+    if (!amontRes || !avalRes) continue
+
+    const dynPressure = 0.5 * amontRes.rho * amontRes.v_ms ** 2
+
+    // Groupe 1 — Circulaire → Circulaire
+    if (amontRes.shape === 'circular' && avalRes.shape === 'circular') {
+      const transitions: any[] = (pt as any).ventTransitions ?? []
+      if (transitions.length === 0) continue
+      const totalDp = transitions.reduce((sum: number, t: any) =>
+        sum + computeXiTransition(t, amontRes.di_mm, avalRes.di_mm) * dynPressure, 0)
+      if (totalDp > 0) result.set(amontSegs[0].id, totalDp)
+    }
+
+    // Groupe 2 — Rectangulaire → Rectangulaire
+    if (amontRes.shape === 'rectangular' && avalRes.shape === 'rectangular') {
+      const transitions: any[] = (pt as any).ventTransitionsRect ?? []
+      if (transitions.length === 0) continue
+      const a1 = amontRes.a_mm ?? 0; const b1 = amontRes.b_mm ?? 0
+      const a2 = avalRes.a_mm  ?? 0; const b2 = avalRes.b_mm  ?? 0
+      const A1_mm2 = a1 * b1
+      const A2_mm2 = a2 * b2
+      if (A1_mm2 <= 0 || A2_mm2 <= 0) continue
+      const totalDp = transitions.reduce((sum: number, t: any) =>
+        sum + computeXiTransitionRect(t, A1_mm2, A2_mm2, a1, b1, a2, b2) * dynPressure, 0)
+      if (totalDp > 0) result.set(amontSegs[0].id, totalDp)
+    }
+
+    // Groupe 3 — Circulaire ↔ Rectangulaire
+    const isCircRect = (amontRes.shape === 'circular' && avalRes.shape === 'rectangular')
+                    || (amontRes.shape === 'rectangular' && avalRes.shape === 'circular')
+    if (isCircRect) {
+      const transitions: any[] = (pt as any).ventTransitionsMixed ?? []
+      if (transitions.length === 0) continue
+      const A1_mm2 = amontRes.shape === 'circular'
+        ? Math.PI * (amontRes.di_mm / 2) ** 2
+        : (amontRes.a_mm ?? 0) * (amontRes.b_mm ?? 0)
+      const A2_mm2 = avalRes.shape === 'circular'
+        ? Math.PI * (avalRes.di_mm / 2) ** 2
+        : (avalRes.a_mm ?? 0) * (avalRes.b_mm ?? 0)
+      if (A1_mm2 <= 0 || A2_mm2 <= 0) continue
+      const rectRes = amontRes.shape === 'rectangular' ? amontRes : avalRes
+      const circRes = amontRes.shape === 'circular'    ? amontRes : avalRes
+      const a_r = rectRes.a_mm ?? 1
+      const b_r = rectRes.b_mm ?? 1
+      const ab_ratio = Math.max(a_r, b_r) / Math.max(Math.min(a_r, b_r), 1)
+      const Dh_circ = circRes.di_mm
+      const Dh_rect = 2 * a_r * b_r / (a_r + b_r)
+      const Dh1 = amontRes.shape === 'circular' ? Dh_circ : Dh_rect
+      const Dh2 = avalRes.shape  === 'circular' ? Dh_circ : Dh_rect
+      const totalDp = transitions.reduce((sum: number, t: any) =>
+        sum + computeXiTransitionMixed(t, A1_mm2, A2_mm2, ab_ratio, Dh1, Dh2) * dynPressure, 0)
+      if (totalDp > 0) result.set(amontSegs[0].id, totalDp)
+    }
+  }
+
+  return result
+}
+
+/**
+ * Calcule le ΔP de réunion (confluence) pour chaque tronçon entrant d'un nœud.
+ * Gère les réunions circulaires (ventJunction) et rectangulaires (ventJunctionRect).
+ * Retourne Map<segId, ΔP en Pa> — clé = segId du tronçon ENTRANT.
+ */
+export function computeNodeJunctionDp(
+  points:         Point[],
+  segments:       Segment[],
+  flowDirections: FlowDirections,
+  ventSegResults: Map<string, VentSegResult>,
+): Map<string, number> {
+  const result = new Map<string, number>()
+
+  for (const pt of points) {
+    const amontSegs = segments.filter(s => flowDirections.get(s.id)?.toId   === pt.id)
+    const avalSegs  = segments.filter(s => flowDirections.get(s.id)?.fromId === pt.id)
+    if (amontSegs.length < 2 || avalSegs.length !== 1) continue
+
+    const avalRes = ventSegResults.get(avalSegs[0].id)
+    if (!avalRes) continue
+
+    const Qc          = avalRes.Q_m3h
+    const dynPressure = 0.5 * avalRes.rho * avalRes.v_ms ** 2
+
+    // ── Réunion circulaire ────────────────────────────────────────────────────
+    if (avalRes.shape === 'circular' &&
+        amontSegs.every(s => ventSegResults.get(s.id)?.shape === 'circular')) {
+      const junction: VentNodeJunction | undefined = (pt as any).ventJunction
+      if (!junction) continue
+
+      const Dc      = avalRes.di_mm
+      const branches: JunctionBranchInput[] = amontSegs.map(seg => {
+        const res = ventSegResults.get(seg.id)
+        return {
+          segId:      seg.id,
+          Q_m3h:      res?.Q_m3h ?? 0,
+          di_mm:      res?.di_mm ?? Dc,
+          isStraight: junction.straightSegId === seg.id,
+        }
+      })
+      const xiMap = computeXiJunction(junction, branches, Qc, Dc)
+      for (const [segId, xi] of xiMap) result.set(segId, xi * dynPressure)
+    }
+
+    // ── Réunion rectangulaire ─────────────────────────────────────────────────
+    if (avalRes.shape === 'rectangular' &&
+        amontSegs.every(s => ventSegResults.get(s.id)?.shape === 'rectangular')) {
+      const junction: RectNodeJunction | undefined = (pt as any).ventJunctionRect
+      if (!junction) continue
+
+      const ac = avalRes.a_mm ?? 0
+      const bc = avalRes.b_mm ?? 0
+      const branches: JunctionBranchRectInput[] = amontSegs.map(seg => {
+        const res = ventSegResults.get(seg.id)
+        return {
+          segId:      seg.id,
+          Q_m3h:      res?.Q_m3h ?? 0,
+          a_mm:       res?.a_mm ?? ac,
+          b_mm:       res?.b_mm ?? bc,
+          isStraight: junction.straightSegId === seg.id,
+        }
+      })
+      const xiMap = computeXiJunctionRect(junction, branches, Qc, ac, bc)
+      for (const [segId, xi] of xiMap) result.set(segId, xi * dynPressure)
+    }
+  }
+
+  return result
 }
 
 export function computeVentilationResults(
@@ -368,7 +539,7 @@ export function computeVentilationResults(
     const dp_Pa   = (L != null && L > 0) ? dp_Pa_m * L : 0
 
     const dynPressure  = 0.5 * rho * v ** 2
-    const dp_sing_Pa   = computeVentSingDP(seg, dynPressure, pdcParams)
+    const dp_sing_Pa   = computeVentSingDP(seg, dynPressure, pdcParams, f, Re, ventDi.di_mm)
     const dp_equip_Pa  = computeVentEquipDP(seg, pdcParams)
 
     result.set(seg.id, {

@@ -112,6 +112,7 @@ export default function Toolbar({
   onAddEmetteur,
   onAddProductionEauGlacee, hasProductionEauGlacee, onAddTerminalFroid,
   onAddCTA, onAddBoucheVentilation,
+  boucheDebit = null, onBoucheDebitChange,
   canvasDisplay, onCanvasDisplayToggle,
   activeFluidId, activeCalcId,
   pdcParams,
@@ -134,6 +135,7 @@ export default function Toolbar({
   onAddEmetteur: any
   onAddProductionEauGlacee: any; hasProductionEauGlacee: boolean; onAddTerminalFroid: any
   onAddCTA?: any; onAddBoucheVentilation?: any
+  boucheDebit?: number | null; onBoucheDebitChange?: (v: number | null) => void
   canvasDisplay: any; onCanvasDisplayToggle: any
   activeFluidId: string | null; activeCalcId: CalcMode | null
   pdcParams: any
@@ -827,6 +829,26 @@ export default function Toolbar({
             >
               Bouche
             </button>
+            {placingEquipment?.type === 'boucheVentilation' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 2 }}>
+                <input
+                  type="number"
+                  min={0}
+                  step={5}
+                  value={boucheDebit ?? ''}
+                  placeholder="—"
+                  autoFocus
+                  onChange={e => onBoucheDebitChange?.(e.target.value === '' ? null : Math.max(0, Number(e.target.value)))}
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    width: 52, padding: '3px 5px', fontSize: 11, textAlign: 'right',
+                    border: '1px solid #93c5fd', borderRadius: 4, fontWeight: 600,
+                    color: '#1e293b', background: '#eff6ff'
+                  }}
+                />
+                <span style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, whiteSpace: 'nowrap' }}>m³/h</span>
+              </div>
+            )}
           </>
         )}
 

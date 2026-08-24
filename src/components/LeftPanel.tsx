@@ -1272,7 +1272,7 @@ function EditParamsPanel({
 function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chaufferie, networkFlows, onSelectIds, onConnHighlight, activeCalcId, flowDirections = null, roleMap = null, hasConnectedProductions = false }) {
   const [showConnHighlight,   setShowConnHighlight]   = useState(false)
   const [showManualHighlight, setShowManualHighlight] = useState(false)
-  const { isAlimEF: isEF, isChauffage, isEauGlacee } = getModeFlags(activeCalcId)
+  const { isAlimEF: isEF, isChauffage, isEauGlacee, isVentilation } = getModeFlags(activeCalcId)
 
   const connIssues = useMemo(() => {
     const ptCount = new Map()
@@ -1287,9 +1287,11 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
       // Les bouts fermés légitimes : groupes, arrivées EF, émetteurs chauffage
       const startPt = points.find(p => p.id === s.startPointId)
       const endPt   = points.find(p => p.id === s.endPointId)
-      return startPt?.type !== 'groupe'    && endPt?.type !== 'groupe'
-        && startPt?.type !== 'arriveeEF'   && endPt?.type !== 'arriveeEF'
-        && startPt?.type !== 'emetteur'    && endPt?.type !== 'emetteur'
+      return startPt?.type !== 'groupe'           && endPt?.type !== 'groupe'
+        && startPt?.type !== 'arriveeEF'          && endPt?.type !== 'arriveeEF'
+        && startPt?.type !== 'emetteur'           && endPt?.type !== 'emetteur'
+        && startPt?.type !== 'ctaPort'            && endPt?.type !== 'ctaPort'
+        && startPt?.type !== 'boucheVentilation'  && endPt?.type !== 'boucheVentilation'
     })
   }, [segments, points])
 
@@ -1328,7 +1330,7 @@ function ErrorPanel({ segments, points, levels, lineYs, columns, columnXs, chauf
   const hasProdCH        = points.some(p => p.type === 'productionChauffage')
   const hasProdEG        = points.some(p => p.type === 'productionEauGlacee')
   const hasArriveeEF     = points.some(p => p.type === 'arriveeEF')
-  const missingProdECS   = !isEF && !isChauffage && !isEauGlacee && hasAllerRetour && !hasProdECS
+  const missingProdECS   = !isEF && !isChauffage && !isEauGlacee && !isVentilation && hasAllerRetour && !hasProdECS
   const missingProdCH    = isChauffage && hasAllerRetour && !hasProdCH
   const missingProdEG    = isEauGlacee && hasAllerRetour && !hasProdEG
   const missingArriveeEF = isEF && segments.length > 0 && !hasArriveeEF
@@ -1751,7 +1753,7 @@ function PdcParamsSection({ params, onChange,
             {isVentilation ? (
               <FormulaHint>
                 <span style={{ fontFamily: 'ui-monospace, monospace', color: '#c2562d' }}>ΔP = Σ ξ × ρV²/2</span>
-                <br />Accessoires renseignés tronçon par tronçon
+                <br />Singularités renseignées tronçon par tronçon
               </FormulaHint>
             ) : (<>
               <label className="lp-label">Méthode de calcul</label>
@@ -1761,7 +1763,7 @@ function PdcParamsSection({ params, onChange,
                 activeColor="#c2562d" activeBg="#fef0ea" activeBorder="#fbd5c5"
                 options={[
                   { value: 'pourcentage', label: 'Forfaitaire (%)' },
-                  { value: 'accessoires', label: 'Accessoires (ξ)' },
+                  { value: 'accessoires', label: 'Singularités (ξ)' },
                 ]}
               />
               {params.methodeSing === 'pourcentage' && (
@@ -1773,7 +1775,7 @@ function PdcParamsSection({ params, onChange,
               {params.methodeSing === 'accessoires' && (
                 <FormulaHint>
                   <span style={{ fontFamily: 'ui-monospace, monospace', color: '#c2562d' }}>ΔP = Σ ξ × ρV²/2</span>
-                  <br />Accessoires renseignés tronçon par tronçon
+                  <br />Singularités renseignées tronçon par tronçon
                 </FormulaHint>
               )}
             </>)}
@@ -1906,7 +1908,7 @@ function FittingLibrarySection({ pdcParams, onChange, mode = null }: { pdcParams
   const customE    = pdcParams?.customEquipments  ?? []
   const isVent     = mode === 'distribution-ventilation'
 
-  const showF = pdcParams?.methodeSing === 'accessoires'
+  const showF = pdcParams?.methodeSing === 'accessoires' && !isVent
   const showE = !!pdcParams?.equipementsActifs
   if (!showF && !showE) return null
 
@@ -1961,8 +1963,8 @@ function FittingLibrarySection({ pdcParams, onChange, mode = null }: { pdcParams
                   letterSpacing: '0.06em', marginBottom: 7, marginTop: 2 }}>{label}</div>
   )
 
-  const title = showF && showE ? 'Accessoires & Équipements'
-    : showF ? 'Accessoires'
+  const title = showF && showE ? 'Singularités & Équipements'
+    : showF ? 'Singularités'
     : 'Équipements'
 
   return (
@@ -1970,7 +1972,7 @@ function FittingLibrarySection({ pdcParams, onChange, mode = null }: { pdcParams
       <>
         {showF && (
           <>
-            {showE && subHeader('Accessoires', '#c2562d')}
+            {showE && subHeader('Singularités', '#c2562d')}
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 3 }}>
               <span style={{ width: 50, fontSize: 9, color: '#9ca3af', textAlign: 'center', fontWeight: 600 }}>ξ</span>
             </div>

@@ -55,12 +55,12 @@ export function SegFittingsPanel({ seg, set, pdcParams, mode = null }: { seg: an
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ fontSize: 10.5, fontWeight: 700, color: '#c2562d', marginBottom: 5, letterSpacing: '0.03em' }}>
-        Accessoires
+        Singularités
       </div>
 
       {fittings.length === 0 && (
         <div style={{ fontSize: 10, color: '#9ca3af', fontStyle: 'italic', marginBottom: 6 }}>
-          Aucun accessoire sur ce tronçon
+          Aucune singularité sur ce tronçon
         </div>
       )}
 
@@ -110,7 +110,7 @@ export function SegFittingsPanel({ seg, set, pdcParams, mode = null }: { seg: an
                         boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: 250, padding: 6 }}>
             {available.length === 0 ? (
               <div style={{ padding: '6px 10px', fontSize: 10, color: '#9ca3af' }}>
-                Tous les accessoires sont déjà ajoutés
+                Toutes les singularités sont déjà ajoutées
               </div>
             ) : available.map(t => {
               const libXi = libOverrides[t.id] ?? t.xi
@@ -183,7 +183,7 @@ export function SegEquipPanel({ seg, set, pdcParams, mode = null }: { seg: any; 
   })
 
   return (
-    <div style={{ marginBottom: 10 }}>
+    <div style={{ marginTop: 14, marginBottom: 10 }}>
       <div style={{ fontSize: 10.5, fontWeight: 700, color: '#7c3aed', marginBottom: 5, letterSpacing: '0.03em' }}>
         Équipements
       </div>

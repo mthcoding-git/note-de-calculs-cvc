@@ -9,11 +9,245 @@ import { getSegHR, computeCondensationFromParams, getDewPoint, getRequiredResist
 import { sf, fmtDpLabel } from '../utils/fmt'
 import { NumInput } from './NumInput'
 import { SegFittingsPanel, SegEquipPanel } from './segPanelShared'
+import SingularityModal from './SingularityModal'
+import { computeXiSingularity, SING_LABELS, newSingId } from '../utils/singularityCalc'
+import type { VentSingularity } from '../utils/singularityCalc'
 import { tAvalStyle, Field, SectionLabel, SegNameField, CoteSection, TempBadge, AntenneGroupesAval } from './rpShared'
 import PdcSegResults from './PdcSegResults'
 import VentPdcResults from './VentPdcResults'
 import { ABAQUE } from '../utils/alimentationCalc'
 
+// ── Panneau singularités circulaires ────────────────────────────────────────
+function VentSingularitiesPanel({ sings, dynPressure, di_mm, Re, onChange, configured, ductInfo }: {
+  sings: VentSingularity[]
+  dynPressure: number | null
+  di_mm: number | null
+  Re: number | null
+  onChange: (v: VentSingularity[]) => void
+  configured: boolean
+  ductInfo: string | null
+}) {
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing]     = useState<VentSingularity | null>(null)
+
+  const openAdd  = () => { setEditing(null); setModalOpen(true) }
+  const openEdit = (s: VentSingularity) => { setEditing(s); setModalOpen(true) }
+  const close    = () => { setModalOpen(false); setEditing(null) }
+
+  const handleSave = (s: VentSingularity) => {
+    onChange(editing ? sings.map(x => x.id === s.id ? s : x) : [...sings, s])
+    close()
+  }
+
+  if (!configured) {
+    return (
+      <div style={{
+        padding: '9px 11px', background: '#fefce8', border: '1px solid #fde68a',
+        borderRadius: 6, fontSize: 10, color: '#92400e',
+        display: 'flex', alignItems: 'flex-start', gap: 6,
+      }}>
+        <span>⚠</span>
+        <span>Sélectionnez un matériau et les dimensions de la gaine pour pouvoir ajouter des singularités.</span>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+
+      {sings.length === 0 && (
+        <p className="lp-hint">Aucune singularité sur ce tronçon</p>
+      )}
+      {sings.map(s => {
+        const xi   = computeXiSingularity(s, Re ?? undefined, di_mm ?? undefined)
+        const cnt  = s.count ?? 1
+        const dp   = dynPressure != null ? xi * dynPressure * cnt : null
+        const setCount = (n: number) => onChange(sings.map(x => x.id === s.id ? { ...x, count: Math.max(1, n) } : x))
+        return (
+          <div key={s.id} style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '5px 8px', background: '#f9fafb',
+            borderRadius: 6, border: '1px solid #e5e7eb',
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 600, color: '#1e293b',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {SING_LABELS[s.type]}
+              </div>
+              <div style={{ fontSize: 9.5, color: '#6b7280', fontFamily: 'ui-monospace, monospace' }}>
+                δ={s.angle}°&nbsp;&nbsp;ξ={xi.toFixed(3)}
+                {dp != null ? `  →  ${dp.toFixed(2)} Pa` : ''}
+              </div>
+            </div>
+            {/* Sélecteur quantité */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <button onClick={() => setCount(cnt - 1)} style={{
+                background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 4,
+                width: 18, height: 18, fontSize: 13, lineHeight: 1, cursor: 'pointer',
+                color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>−</button>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#374151',
+                minWidth: 18, textAlign: 'center' }}>{cnt}</span>
+              <button onClick={() => setCount(cnt + 1)} style={{
+                background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 4,
+                width: 18, height: 18, fontSize: 13, lineHeight: 1, cursor: 'pointer',
+                color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>+</button>
+            </div>
+            <button onClick={() => openEdit(s)} style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '2px 4px', color: '#6366f1', fontSize: 12, lineHeight: 1,
+            }} title="Modifier">✏</button>
+            <button onClick={() => onChange(sings.filter(x => x.id !== s.id))} style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '2px 4px', color: '#ef4444', fontSize: 13, lineHeight: 1,
+            }} title="Supprimer">✕</button>
+          </div>
+        )
+      })}
+      <button onClick={openAdd} style={{
+        width: '100%', padding: '6px 0', fontSize: 10.5, color: '#c2562d',
+        background: '#fef0ea', border: '1px dashed #fbd5c5', borderRadius: 6,
+        cursor: 'pointer', fontWeight: 600, marginTop: sings.length > 0 ? 2 : 0,
+      }}>
+        + Ajouter un coude circulaire
+      </button>
+      {modalOpen && (
+        <SingularityModal
+          isOpen={modalOpen}
+          onClose={close}
+          onSave={s => {
+            onChange(editing
+              ? sings.map(x => x.id === s.id ? { ...s, count: x.count } : x)
+              : [...sings, s])
+            close()
+          }}
+          editing={editing}
+          di_mm={di_mm}
+          dynPressure={dynPressure}
+          ductInfo={ductInfo}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Panneau singularités rectangulaires ──────────────────────────────────────
+function VentRectSingularitiesPanel({ sings, dynPressure, l_mm, h_mm, Re, onChange, configured, ductInfo }: {
+  sings: VentSingularity[]
+  dynPressure: number | null
+  l_mm: number | null
+  h_mm: number | null
+  Re: number | null
+  onChange: (v: VentSingularity[]) => void
+  configured: boolean
+  ductInfo: string | null
+}) {
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing]     = useState<VentSingularity | null>(null)
+
+  const openAdd  = () => { setEditing(null); setModalOpen(true) }
+  const openEdit = (s: VentSingularity) => { setEditing(s); setModalOpen(true) }
+  const close    = () => { setModalOpen(false); setEditing(null) }
+
+  const handleSave = (s: VentSingularity) => {
+    onChange(editing ? sings.map(x => x.id === s.id ? s : x) : [...sings, s])
+    close()
+  }
+
+  if (!configured) {
+    return (
+      <div style={{
+        padding: '9px 11px', background: '#fefce8', border: '1px solid #fde68a',
+        borderRadius: 6, fontSize: 10, color: '#92400e',
+        display: 'flex', alignItems: 'flex-start', gap: 6,
+      }}>
+        <span>⚠</span>
+        <span>Sélectionnez un matériau et les dimensions de la gaine pour pouvoir ajouter des singularités.</span>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {sings.length === 0 && (
+        <p className="lp-hint">Aucune singularité sur ce tronçon</p>
+      )}
+      {sings.map(s => {
+        const xi  = computeXiSingularity({ ...s, l_mm: l_mm ?? s.l_mm, h_mm: h_mm ?? s.h_mm }, Re ?? undefined)
+        const cnt = s.count ?? 1
+        const dp  = dynPressure != null ? xi * dynPressure * cnt : null
+        const setCount = (n: number) => onChange(sings.map(x => x.id === s.id ? { ...x, count: Math.max(1, n) } : x))
+        return (
+          <div key={s.id} style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '5px 8px', background: '#f9fafb',
+            borderRadius: 6, border: '1px solid #e5e7eb',
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 600, color: '#1e293b',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {SING_LABELS[s.type]}
+              </div>
+              <div style={{ fontSize: 9.5, color: '#6b7280', fontFamily: 'ui-monospace, monospace' }}>
+                δ={s.angle}°&nbsp;&nbsp;ξ={xi.toFixed(3)}
+                {dp != null ? `  →  ${dp.toFixed(2)} Pa` : ''}
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <button onClick={() => setCount(cnt - 1)} style={{
+                background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 4,
+                width: 18, height: 18, fontSize: 13, lineHeight: 1, cursor: 'pointer',
+                color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>−</button>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#374151',
+                minWidth: 18, textAlign: 'center' }}>{cnt}</span>
+              <button onClick={() => setCount(cnt + 1)} style={{
+                background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 4,
+                width: 18, height: 18, fontSize: 13, lineHeight: 1, cursor: 'pointer',
+                color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>+</button>
+            </div>
+            <button onClick={() => openEdit(s)} style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '2px 4px', color: '#6366f1', fontSize: 12, lineHeight: 1,
+            }} title="Modifier">✏</button>
+            <button onClick={() => onChange(sings.filter(x => x.id !== s.id))} style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '2px 4px', color: '#ef4444', fontSize: 13, lineHeight: 1,
+            }} title="Supprimer">✕</button>
+          </div>
+        )
+      })}
+      <button onClick={openAdd} style={{
+        width: '100%', padding: '6px 0', fontSize: 10.5, color: '#c2562d',
+        background: '#fef0ea', border: '1px dashed #fbd5c5', borderRadius: 6,
+        cursor: 'pointer', fontWeight: 600, marginTop: sings.length > 0 ? 2 : 0,
+      }}>
+        + Ajouter un coude rectangulaire
+      </button>
+      {modalOpen && (
+        <SingularityModal
+          isOpen={modalOpen}
+          onClose={close}
+          onSave={s => {
+            onChange(editing
+              ? sings.map(x => x.id === s.id ? { ...s, count: x.count } : x)
+              : [...sings, s])
+            close()
+          }}
+          editing={editing}
+          di_mm={null}
+          dynPressure={dynPressure}
+          ductInfo={ductInfo}
+          ductShape="rectangular"
+          l_mm={l_mm}
+          h_mm={h_mm}
+        />
+      )}
+    </div>
+  )
+}
 
 interface SegmentPanelProps {
   seg: any; onUpdate: any; materials: any[]; insulations: any[]
@@ -35,9 +269,10 @@ interface SegmentPanelProps {
   calcConstants?: import('../types').CalcConstants
   ventilationResult?: any
   ventilationFlow?: any
+  displayPrefs?: any
 }
 
-export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null, chauffageThermal = null, eauGlaceeThermal = null, egApportsMap = null, chauffageSplitCumDp = null, eauGlaceeSplitCumDp = null, eauGlaceeParams = null, hrGlobalDefault = null, calcConstants, ventilationResult = null, ventilationFlow = null }: SegmentPanelProps) {
+export default function SegmentPanel({ seg, onUpdate, materials, insulations, allSegs, levels, lineYs, columns, columnXs, chaufferie, points, flowData, globalParams, thermalData, roleMap, drawMode, onExitEditParams, activeCalcId, alimentationData, alimentationParams = null, pdcParams, pdcResult, resultsView, onResultsViewChange, pdcCumResults, pdcCumAlimResults, segToCol, flowDirections, groupDisplayNames = null, chauffageThermal = null, eauGlaceeThermal = null, egApportsMap = null, chauffageSplitCumDp = null, eauGlaceeSplitCumDp = null, eauGlaceeParams = null, hrGlobalDefault = null, calcConstants, ventilationResult = null, ventilationFlow = null, displayPrefs = null }: SegmentPanelProps) {
   const [tab, setTab]                       = useState('params')
   const [openDetailTherm, setOpenDetailTherm] = useState(false)
   const [openCondDetail, setOpenCondDetail]   = useState(false)
@@ -90,6 +325,21 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
       : segRole === 'antenne'           ? 'Antenne ECS'
       : seg.type === 'retour'           ? 'Retour ECS'
       : 'Aller ECS'
+
+    const ecsShortCode = !isAlimECS ? '' :
+      segRole === 'collecteur-aller'  ? 'CA' :
+      segRole === 'collecteur-retour' ? 'CR' :
+      segRole === 'antenne'           ? 'ANT' :
+      seg.type === 'retour'           ? 'R' : 'A'
+    const ecsRoleLabel = !isAlimECS ? '' :
+      segRole === 'collecteur-aller'  ? 'Collecteur aller — ECS' :
+      segRole === 'collecteur-retour' ? 'Collecteur retour — ECS' :
+      segRole === 'antenne'           ? 'Antenne — ECS' :
+      seg.type === 'retour'           ? 'Retour — ECS' : 'Aller — ECS'
+    const ecsColor = seg.type === 'retour'
+      ? (displayPrefs?.ecs?.colorRetour ?? '#f97316')
+      : (displayPrefs?.ecs?.colorAller  ?? '#dc2626')
+    const ecsDisplayName = isDefault && displayName ? displayName.replace(/^[^–]*–\s*/, '') : displayName
 
     const Alert = ({ msg, level = 'error' }) => {
       const isErr = level === 'error'
@@ -195,7 +445,20 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
 
     return (
       <div className="rp-section">
-        <h3 className="rp-title">Tronçon</h3>
+        {isAlimECS ? (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <h3 className="rp-title" style={{ margin: 0 }}>Tronçon</h3>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '3px 8px', background: ecsColor + '18', border: `1px solid ${ecsColor}44`,
+              borderRadius: 4, fontSize: 10, fontWeight: 700, color: ecsColor }}>
+              <span style={{ fontSize: 8, background: ecsColor, color: '#fff',
+                borderRadius: 3, padding: '1px 4px', letterSpacing: '0.4px' }}>{ecsShortCode}</span>
+              {ecsRoleLabel}
+            </div>
+          </div>
+        ) : (
+          <h3 className="rp-title">Tronçon</h3>
+        )}
 
         {/* ── Onglets ── */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
@@ -213,7 +476,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
         {/* ── Paramètres ── */}
         {tab === 'params' && (<>
           <SectionLabel>Identification</SectionLabel>
-          <SegNameField displayName={displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
+          <SegNameField displayName={isAlimECS ? ecsDisplayName : displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
           {!isAlimEF && (
             <Field label="Type de tronçon" labelFlex="44%">
               <select value={seg.type} onChange={e => set('type', e.target.value)}>
@@ -320,7 +583,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
           {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (
             <>
               <hr className="rp-divider" />
-              <SectionLabel>Accessoires &amp; équipements</SectionLabel>
+              <SectionLabel>Singularités &amp; équipements</SectionLabel>
               {pdcParams.methodeSing === 'accessoires' && (
                 <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} mode={activeCalcId} />
               )}
@@ -590,11 +853,25 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
     )
     const role = roleMap?.get(seg.id) ?? (seg.type === 'retour' ? 'reprise' : 'soufflage')
     const roleLabel = role === 'reprise' ? 'Air extrait' : role === 'air-neuf' ? 'Air neuf' : role === 'air-rejete' ? 'Air rejeté' : 'Air soufflé'
-    const roleColor = role === 'reprise' ? '#f472b6' : role === 'air-rejete' ? '#94a3b8' : role === 'air-neuf' ? '#38bdf8' : '#059669'
+    const roleBadge = role === 'reprise' ? 'AE' : role === 'air-rejete' ? 'AR' : role === 'air-neuf' ? 'AN' : 'AS'
+    const roleColor = role === 'reprise' ? '#db2777' : role === 'air-rejete' ? '#64748b' : role === 'air-neuf' ? '#0ea5e9' : '#059669'
+    // Strip "Air xxx – " prefix from auto-generated name — the badge already shows the network type
+    const ventDisplayName = isDefault && displayName
+      ? displayName.replace(/^[^–]*–\s*/, '')
+      : displayName
 
     return (
       <div className="rp-section">
-        <h3 className="rp-title">Tronçon</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <h3 className="rp-title" style={{ margin: 0 }}>Tronçon</h3>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '3px 8px', background: roleColor + '18', border: `1px solid ${roleColor}44`,
+            borderRadius: 4, fontSize: 10, fontWeight: 700, color: roleColor }}>
+            <span style={{ fontSize: 8, background: roleColor, color: '#fff',
+              borderRadius: 3, padding: '1px 4px', letterSpacing: '0.4px' }}>{roleBadge}</span>
+            {roleLabel}
+          </div>
+        </div>
 
         <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
           {[['params', 'Paramètres'], ['results', 'Résultats']].map(([key, label]) => (
@@ -613,12 +890,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
 
         {tab === 'params' && (<>
           <SectionLabel>Identification</SectionLabel>
-          <SegNameField displayName={displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginBottom: 8,
-            padding: '3px 8px', background: roleColor + '18', border: `1px solid ${roleColor}44`,
-            borderRadius: 4, fontSize: 10, fontWeight: 700, color: roleColor }}>
-            {roleLabel}
-          </div>
+          <SegNameField displayName={ventDisplayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
           <hr className="rp-divider" />
           <SectionLabel>Canalisation</SectionLabel>
 
@@ -665,6 +937,8 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
               set('materialId', autoMat?.id ?? null)
               set('dn', null)
               set('di_override', null)
+              set('a_override', null)
+              set('b_override', null)
             }
 
             return (<>
@@ -711,49 +985,103 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                 )}
               </>)}
 
-              {/* Rectangulaire : A×B + Dh affiché */}
+              {/* Rectangulaire : A×B modifiables + Dh calculé */}
               {ductShape === 'rectangular' && shapeMat && (<>
                 <Field label="Dimensions">
                   <select value={seg.dn || ''}
-                    onChange={e => { set('dn', e.target.value || null); set('di_override', null) }}>
+                    onChange={e => {
+                      set('dn', e.target.value || null)
+                      set('di_override', null)
+                      set('a_override', null)
+                      set('b_override', null)
+                    }}>
                     <option value="">— Choisir —</option>
                     {shapeMat.dns.map(d => <option key={d.dn} value={d.dn}>{d.dn} mm</option>)}
                   </select>
                 </Field>
-                {shapeDnDef && (
-                  <div style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '5px 8px', background: '#f8fafc', border: '1px solid #e2e8f0',
-                    borderRadius: 5, marginBottom: 6,
-                  }}>
-                    <span style={{ fontSize: 10, color: '#6b7280' }}>Dh (diamètre hydraulique)</span>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: '#334155', fontFamily: 'ui-monospace, monospace' }}>
-                      {shapeDnDef.dh ?? shapeDnDef.di} mm
-                    </span>
-                  </div>
-                )}
-                {shapeDnDef && (
-                  <div style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '5px 8px', background: '#f8fafc', border: '1px solid #e2e8f0',
-                    borderRadius: 5, marginBottom: 6,
-                  }}>
-                    <span style={{ fontSize: 10, color: '#6b7280' }}>Section</span>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: '#334155', fontFamily: 'ui-monospace, monospace' }}>
-                      {((shapeDnDef.a * shapeDnDef.b) / 1e6).toFixed(4)} m²
-                    </span>
-                  </div>
-                )}
+                {shapeDnDef && (() => {
+                  const aEff = (seg as any).a_override ?? shapeDnDef.a
+                  const bEff = (seg as any).b_override ?? shapeDnDef.b
+                  const dhEff = Math.round(2 * aEff * bEff / (aEff + bEff))
+                  return (<>
+                    <Field label="Largeur (L)" unit="mm">
+                      <NumInput min={1} value={(seg as any).a_override ?? null}
+                        placeholder={`${shapeDnDef.a} (par défaut)`} allowEmpty
+                        onChange={v => set('a_override', v)} />
+                    </Field>
+                    <Field label="Hauteur (H)" unit="mm">
+                      <NumInput min={1} value={(seg as any).b_override ?? null}
+                        placeholder={`${shapeDnDef.b} (par défaut)`} allowEmpty
+                        onChange={v => set('b_override', v)} />
+                    </Field>
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '5px 8px', background: '#f8fafc', border: '1px solid #e2e8f0',
+                      borderRadius: 5, marginBottom: 6,
+                    }}>
+                      <span style={{ fontSize: 10, color: '#6b7280' }}>Dh (diamètre hydraulique)</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#334155', fontFamily: 'ui-monospace, monospace' }}>
+                        {dhEff} mm
+                      </span>
+                    </div>
+                  </>)
+                })()}
               </>)}
             </>)
           })()}
 
           {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (<>
             <hr className="rp-divider" />
-            <SectionLabel>Accessoires &amp; équipements</SectionLabel>
-            {pdcParams.methodeSing === 'accessoires' && (
-              <SegFittingsPanel seg={seg} set={set} pdcParams={pdcParams} mode={activeCalcId} />
-            )}
+            <SectionLabel>Singularités &amp; équipements</SectionLabel>
+            {pdcParams.methodeSing === 'accessoires' && (() => {
+              const ductShape: 'circular' | 'rectangular' = (seg as any).ductShape ?? 'circular'
+              const ventSings = (seg as any).ventSingularites as VentSingularity[] ?? []
+              const dynP      = vr ? 0.5 * vr.rho * vr.v_ms ** 2 : null
+              const Re_seg    = vr ? vr.v_ms * (vr.di_mm / 1000) / 15e-6 : null
+              const singMat   = materials.find(m => m.id === seg.materialId)
+              const singDnDef = singMat?.dns?.find((d: any) => d.dn === seg.dn) as any
+
+              if (ductShape === 'circular') {
+                // Diamètre : priorité au résultat calculé, fallback sur définition DN
+                const seg_di_mm  = (seg as any).di_override ?? singDnDef?.di ?? null
+                const di_mm      = vr?.di_mm ?? seg_di_mm
+                const configured = !!(seg.materialId && seg.dn && seg_di_mm != null)
+                const ductInfo   = configured && singMat
+                  ? `${singMat.name} · Circulaire · Ø ${(seg_di_mm as number).toFixed(0)} mm`
+                  : null
+                return (
+                  <VentSingularitiesPanel
+                    sings={ventSings}
+                    dynPressure={dynP}
+                    di_mm={di_mm}
+                    Re={Re_seg}
+                    onChange={v => set('ventSingularites', v)}
+                    configured={configured}
+                    ductInfo={ductInfo}
+                  />
+                )
+              }
+
+              // Gaine rectangulaire
+              const a_mm           = (seg as any).a_override ?? singDnDef?.a ?? null
+              const h_mm_val       = (seg as any).b_override ?? singDnDef?.b ?? null
+              const rectConfigured = !!(seg.materialId && seg.dn && (a_mm != null || h_mm_val != null))
+              const rectDuctInfo   = rectConfigured && singMat
+                ? `${singMat.name} · Rectangulaire · ${a_mm ?? '?'} × ${h_mm_val ?? '?'} mm`
+                : null
+              return (
+                <VentRectSingularitiesPanel
+                  sings={ventSings}
+                  dynPressure={dynP}
+                  l_mm={a_mm}
+                  h_mm={h_mm_val}
+                  Re={Re_seg}
+                  onChange={v => set('ventSingularites', v)}
+                  configured={rectConfigured}
+                  ductInfo={rectDuctInfo}
+                />
+              )
+            })()}
             {pdcParams.equipementsActifs && (
               <SegEquipPanel seg={seg} set={set} pdcParams={pdcParams} mode={activeCalcId as string | null} />
             )}
@@ -789,59 +1117,60 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             )}
 
             {/* ── Dimensionnement ── */}
-            {resultsView !== 'pdc' && (vr ? (<>
-              <div style={{ padding: '8px 12px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-                  <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
-                    textTransform: 'uppercase', letterSpacing: '0.05em' }}>Débit</div>
-                  {ventilationFlow?.source && (
-                    <span style={{ fontSize: 8, fontWeight: 600, padding: '1px 5px', borderRadius: 3,
-                      background: ventilationFlow.source === 'bouche' ? '#f0fdf4' : ventilationFlow.source === 'computed' ? '#eff6ff' : '#fdf4ff',
-                      color: ventilationFlow.source === 'bouche' ? '#16a34a' : ventilationFlow.source === 'computed' ? '#2563eb' : '#7c3aed',
-                      border: `1px solid ${ventilationFlow.source === 'bouche' ? '#bbf7d0' : ventilationFlow.source === 'computed' ? '#bfdbfe' : '#e9d5ff'}` }}>
-                      {ventilationFlow.source === 'bouche' ? 'bouche' : ventilationFlow.source === 'computed' ? 'calculé' : 'manuel'}
-                    </span>
-                  )}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                  <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{vr.Q_m3h.toFixed(0)}</span>
-                  <span style={{ fontSize: 11, color: '#9ca3af' }}>m³/h</span>
-                </div>
-              </div>
-              <div style={{ padding: '8px 12px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6 }}>
-                <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
-                  textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>Vitesse</div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                  <span style={{ fontSize: 20, fontWeight: 700,
-                    color: vr.v_ms > 8 ? '#ef4444' : vr.v_ms > 5 ? '#f97316' : '#111827' }}>
-                    {vr.v_ms.toFixed(2)}
-                  </span>
-                  <span style={{ fontSize: 11, color: '#9ca3af' }}>m/s</span>
-                </div>
-                {vr.v_ms > 8 && <div style={{ fontSize: 9, fontWeight: 600, color: '#ef4444', marginTop: 2 }}>✗ v &gt; 8 m/s — bruit excessif</div>}
-                {vr.v_ms > 5 && vr.v_ms <= 8 && <div style={{ fontSize: 9, fontWeight: 600, color: '#f97316', marginTop: 2 }}>⚠ v &gt; 5 m/s — vérifier le bruit</div>}
-                {vr.v_ms <= 5 && <div style={{ fontSize: 9, fontWeight: 600, color: '#16a34a', marginTop: 2 }}>✓ v ≤ 5 m/s — conforme</div>}
-              </div>
-              <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
-                {dRow('Re', vr.Re.toFixed(0))}
-                {dRow('T air', `${vr.T_air.toFixed(0)} °C`)}
-                {dRow('ρ air', `${vr.rho.toFixed(3)} kg/m³`)}
-                {vr.shape === 'rectangular' && vr.a_mm && vr.b_mm
-                  ? (<>
-                      {dRow('Dimensions', `${vr.a_mm} × ${vr.b_mm} mm`)}
-                      {dRow('Dh', `${vr.di_mm.toFixed(0)} mm`)}
-                    </>)
-                  : dRow('di', `${vr.di_mm.toFixed(1)} mm`)}
-              </div>
-            </>) : (
-              <p className="lp-hint">
-                {enabledMats.length === 0
-                  ? 'Aucun matériau activé — configurez les matériaux ventilation.'
-                  : !seg.materialId ? 'Choisir un matériau.'
-                  : !seg.dn ? 'Choisir un DN / section.'
-                  : 'Débit non calculé — saisir les débits aux bouches ou nœuds d\'extrémité.'}
-              </p>
-            ))}
+            {resultsView !== 'pdc' && (() => {
+              const flow = ventilationFlow
+              const Q    = vr?.Q_m3h ?? flow?.flowRate ?? null
+              const src  = flow?.source ?? null
+              const sourceBadge = src && (
+                <span style={{ fontSize: 8, fontWeight: 600, padding: '1px 5px', borderRadius: 3,
+                  background: src === 'bouche' ? '#f0fdf4' : src === 'computed' ? '#eff6ff' : '#fdf4ff',
+                  color: src === 'bouche' ? '#16a34a' : src === 'computed' ? '#2563eb' : '#7c3aed',
+                  border: `1px solid ${src === 'bouche' ? '#bbf7d0' : src === 'computed' ? '#bfdbfe' : '#e9d5ff'}` }}>
+                  {src === 'bouche' ? 'bouche' : src === 'computed' ? 'calculé' : 'manuel'}
+                </span>
+              )
+              return (<>
+                {/* Débit — affiché même sans matériau/DN */}
+                {Q != null ? (
+                  <div style={{ padding: '8px 12px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+                      <div style={{ fontSize: 9, color: '#6b7280', fontWeight: 700,
+                        textTransform: 'uppercase', letterSpacing: '0.05em' }}>Débit</div>
+                      {sourceBadge}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{Q.toFixed(0)}</span>
+                      <span style={{ fontSize: 11, color: '#9ca3af' }}>m³/h</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="lp-hint">Débit non calculé — saisir les débits aux bouches ou nœuds d'extrémité.</p>
+                )}
+
+                {/* Vitesse + di — uniquement si matériau et DN sélectionnés */}
+                {vr ? (<>
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
+                    {dRow('Vitesse', `${vr.v_ms.toFixed(2)} m/s`)}
+                    {vr.shape === 'rectangular' && vr.a_mm && vr.b_mm
+                      ? (<>
+                          {dRow('Dimensions', `${vr.a_mm} × ${vr.b_mm} mm`)}
+                          {dRow('Dh', `${vr.di_mm.toFixed(0)} mm`)}
+                        </>)
+                      : dRow('di', `${vr.di_mm.toFixed(1)} mm`)}
+                  </div>
+                </>) : Q != null && (
+                  <p className="lp-hint" style={{ fontStyle: 'italic' }}>
+                    {enabledMats.length === 0
+                      ? 'Aucun matériau activé — configurez les matériaux ventilation.'
+                      : !seg.materialId
+                        ? 'Vitesse non calculable — choisir un matériau.'
+                        : !seg.dn
+                          ? 'Vitesse non calculable — choisir un DN / section.'
+                          : null}
+                  </p>
+                )}
+              </>)
+            })()}
 
             {/* ── Pertes de charge ── */}
             {resultsView === 'pdc' && (vr
@@ -862,9 +1191,48 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
     )
   }
 
+  const csRole      = roleMap?.get(seg.id)
+  const csIsRetour  = seg.type === 'retour'
+  const csShowBadge = isBouclage || isChauffage || isEauGlacee
+  const csModeLabel = isBouclage ? 'ECS' : isChauffage ? 'CH' : 'EG'
+  const csIsBypass  = (isChauffage || isEauGlacee) && csIsRetour && !!displayName?.includes('vers mélange')
+  const csShortCode = !csShowBadge ? '' :
+    csRole === 'collecteur-aller'        ? 'CA' :
+    csRole === 'collecteur-retour'       ? 'CR' :
+    (isBouclage && csRole === 'antenne') ? 'ANT' :
+    csIsRetour ? 'R' : 'A'
+  const csRoleLabel = !csShowBadge ? '' :
+    csRole === 'collecteur-aller'        ? `Collecteur aller — ${csModeLabel}` :
+    csRole === 'collecteur-retour'       ? `Collecteur retour — ${csModeLabel}` :
+    (isBouclage && csRole === 'antenne') ? 'Antenne — ECS' :
+    csIsRetour ? `Retour — ${csModeLabel}` : `Aller — ${csModeLabel}`
+  const csDisplayName = csShowBadge && !csIsBypass && isDefault && displayName
+    ? displayName.replace(/^[^–]*–\s*/, '')
+    : displayName
+  const csColor = isBouclage
+    ? (csIsRetour ? (displayPrefs?.ecs?.colorRetour       ?? '#f97316') : (displayPrefs?.ecs?.colorAller       ?? '#dc2626'))
+    : isChauffage
+    ? (csIsRetour ? (displayPrefs?.chauffage?.colorRetour ?? '#2563eb') : (displayPrefs?.chauffage?.colorAller ?? '#2563eb'))
+    : isEauGlacee
+    ? (csIsRetour ? (displayPrefs?.eauglacee?.colorRetour ?? '#1d4ed8') : (displayPrefs?.eauglacee?.colorAller ?? '#06b6d4'))
+    : '#6366f1'
+
   return (
     <div className="rp-section">
-      <h3 className="rp-title">Tronçon</h3>
+      {csShowBadge ? (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <h3 className="rp-title" style={{ margin: 0 }}>Tronçon</h3>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '3px 8px', background: csColor + '18', border: `1px solid ${csColor}44`,
+            borderRadius: 4, fontSize: 10, fontWeight: 700, color: csColor }}>
+            <span style={{ fontSize: 8, background: csColor, color: '#fff',
+              borderRadius: 3, padding: '1px 4px', letterSpacing: '0.4px' }}>{csShortCode}</span>
+            {csRoleLabel}
+          </div>
+        </div>
+      ) : (
+        <h3 className="rp-title">Tronçon</h3>
+      )}
 
       {/* Tab toggle */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
@@ -1455,7 +1823,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
       {tab === 'params' && (<>
       {/* Identification */}
       <SectionLabel>Identification</SectionLabel>
-      <SegNameField displayName={displayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
+      <SegNameField displayName={csDisplayName} isDefault={isDefault} value={seg.name ?? ''} onChange={v => set('name', v)} />
 
       <Field label="Type de tronçon" labelFlex="44%">
         <select value={seg.type} onChange={e => set('type', e.target.value)}>

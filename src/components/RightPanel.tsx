@@ -170,7 +170,7 @@ function TronconAmontPanel({ tr, index, result, materials, totalQpAlimM3h, pdcPa
           {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (
             <>
               <hr className="rp-divider" />
-              <SectionLabel>Accessoires &amp; équipements</SectionLabel>
+              <SectionLabel>Singularités &amp; équipements</SectionLabel>
               {pdcParams.methodeSing === 'accessoires' && (
                 <SegFittingsPanel seg={tr} set={(k, v) => set(k, v)} pdcParams={pdcParams} />
               )}
@@ -478,6 +478,9 @@ interface RightPanelProps {
   calcConstants?: import('../types').CalcConstants
   ventilationResults?: Map<string, any>
   ventilationFlows?: Map<string, any>
+  ventilationNodeTransitionDp?: Map<string, number>
+  ventilationNodeJunctionDp?: Map<string, number>
+  displayPrefs?: any
 }
 
 export default function RightPanel({
@@ -514,6 +517,9 @@ export default function RightPanel({
   calcConstants,
   ventilationResults,
   ventilationFlows,
+  ventilationNodeTransitionDp,
+  ventilationNodeJunctionDp,
+  displayPrefs,
 }: RightPanelProps) {
   const [resultsView, setResultsView] = useState<'dimensionnement' | 'pdc'>('dimensionnement')
 
@@ -661,6 +667,7 @@ export default function RightPanel({
       calcConstants={calcConstants}
       ventilationResult={ventilationResults?.get(seg.id)}
       ventilationFlow={ventilationFlows?.get(seg.id)}
+      displayPrefs={displayPrefs}
     />
   )
   if (pt) {
@@ -725,6 +732,8 @@ export default function RightPanel({
         customTerminalFroidTypes={customTerminalFroidTypes}
         calcConstants={calcConstants}
         ventilationResults={ventilationResults}
+        ventilationNodeTransitionDp={ventilationNodeTransitionDp}
+        ventilationNodeJunctionDp={ventilationNodeJunctionDp}
       />
     )
   }

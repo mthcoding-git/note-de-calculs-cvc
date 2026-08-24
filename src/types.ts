@@ -43,7 +43,7 @@ export interface Insulation {
 }
 
 export type SegmentType = 'aller' | 'retour'
-export type PointType = 'productionECS' | 'arriveeEF' | 'groupe' | 'pump' | 'node' | 'productionChauffage' | 'emetteur' | 'productionEauGlacee' | 'terminalFroid' | 'cta' | 'boucheVentilation'
+export type PointType = 'productionECS' | 'arriveeEF' | 'groupe' | 'pump' | 'node' | 'productionChauffage' | 'emetteur' | 'productionEauGlacee' | 'terminalFroid' | 'cta' | 'boucheVentilation' | 'ctaPort'
 
 export type FluidId = 'ecs' | 'ef' | 'chauffage' | 'eauglacee' | 'ventilation'
 

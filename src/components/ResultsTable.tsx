@@ -617,6 +617,8 @@ interface ResultsTableProps {
   hrGlobalDefault?: number | null
   calcConstants?: import('../types').CalcConstants
   ventilationResults?: Map<string, any>
+  ventilationNodeTransitionDp?: Map<string, number>
+  ventilationNodeJunctionDp?: Map<string, number>
 }
 
 export default function ResultsTable({
@@ -648,6 +650,8 @@ export default function ResultsTable({
   hrGlobalDefault = null,
   calcConstants,
   ventilationResults,
+  ventilationNodeTransitionDp,
+  ventilationNodeJunctionDp,
 }: ResultsTableProps) {
   const selectedRowRef = useRef(null)
   useEffect(() => {
@@ -927,7 +931,7 @@ export default function ResultsTable({
                 <th className={`rt-th rt-th-result${isDarcy ? ' rt-group-sep' : ' rt-th-result-first'}`}>J (Pa/m)</th>
                 <th className="rt-th rt-th-result">ΔP lin ({dpUnit})</th>
                 {isAccessoires ? <>
-                  <th className="rt-th rt-th-result rt-group-sep">Accessoire</th>
+                  <th className="rt-th rt-th-result rt-group-sep">Singularité</th>
                   <th className="rt-th rt-th-result">n</th>
                   <th className="rt-th rt-th-result">ξ</th>
                   <th className="rt-th rt-th-result">ΔP ({dpUnit})</th>
@@ -2177,12 +2181,18 @@ export default function ResultsTable({
   }
 
   if (isVentilation) {
-    const VENT_COLS = 9
+    const VENT_COLS = 8
     const ROLE_COLOR: Record<string, string> = {
-      soufflage: '#059669', reprise: '#f472b6', 'air-neuf': '#38bdf8', 'air-rejete': '#94a3b8',
+      soufflage: '#059669', reprise: '#db2777', 'air-neuf': '#0ea5e9', 'air-rejete': '#64748b',
     }
-    const ROLE_LABEL: Record<string, string> = {
-      soufflage: 'Air soufflé', reprise: 'Air extrait', 'air-neuf': 'Air neuf', 'air-rejete': 'Air rejeté',
+    const ROLE_BADGE: Record<string, string> = {
+      soufflage: 'AS', reprise: 'AE', 'air-neuf': 'AN', 'air-rejete': 'AR',
+    }
+    const NET_BG: Record<string, string> = {
+      reprise: '#fdf2f8', soufflage: '#f0fdf4', 'air-rejete': '#f8fafc', 'air-neuf': '#f0f9ff',
+    }
+    const NET_BORDER: Record<string, string> = {
+      reprise: '#db2777', soufflage: '#059669', 'air-rejete': '#64748b', 'air-neuf': '#0ea5e9',
     }
     return (
       <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
@@ -2190,13 +2200,13 @@ export default function ResultsTable({
           <table className="rt-table">
             <thead>
               <tr className="rt-thead-group">
-                <th colSpan={2} className="rt-thg">Identification</th>
+                <th colSpan={3} className="rt-thg">Identification</th>
                 <th colSpan={2} className="rt-thg">Canalisation</th>
                 <th colSpan={5} className="rt-thg rt-thg-result rt-th-result-first">Résultats</th>
               </tr>
               <tr className="rt-thead-cols">
+                <th className="rt-th" style={{ width: 28 }}></th>
                 <th className="rt-th">Tronçon</th>
-                <th className="rt-th">Rôle</th>
                 <th className="rt-th">DN</th>
                 <th className="rt-th">L (m)</th>
                 <th className="rt-th rt-th-result rt-th-result-first">Q (m³/h)</th>
@@ -2208,36 +2218,56 @@ export default function ResultsTable({
             </thead>
             <tbody>
               {displayRows.length === 0 && (
-                <tr><td colSpan={VENT_COLS} className="rt-empty">Aucun tronçon — tracez des réseaux ventilation et placez une CTA</td></tr>
+                <tr><td colSpan={VENT_COLS + 1} className="rt-empty">Aucun tronçon — tracez des réseaux ventilation et placez une CTA</td></tr>
               )}
               {displayRows.map((row, i) => {
-                if (row.kind === 'flow-start') return (
-                  <tr key="flow-start" className="rt-flow-banner rt-flow-banner-start">
-                    <td colSpan={VENT_COLS}>▶ CTA — Départ air soufflé</td>
-                  </tr>
-                )
-                if (row.kind === 'flow-end') return (
-                  <tr key="flow-end" className="rt-flow-banner rt-flow-banner-end">
-                    <td colSpan={VENT_COLS}>◀ CTA — Retour air extrait</td>
+                if (row.kind === 'vent-network-header') {
+                  const color  = ROLE_COLOR[row.role] ?? '#374151'
+                  const bg     = NET_BG[row.role]     ?? '#f8fafc'
+                  const border = NET_BORDER[row.role] ?? '#94a3b8'
+                  const isFirst = i === 0 || !displayRows.slice(0, i).some(r => r.kind === 'vent-network-header')
+                  return (
+                    <React.Fragment key={`net-${row.role}-${i}`}>
+                      {!isFirst && <tr className="rt-vent-net-spacer"><td colSpan={VENT_COLS + 1} /></tr>}
+                      <tr className="rt-vent-net-header">
+                        <td colSpan={VENT_COLS + 1} style={{ borderLeft: `4px solid ${border}`, background: bg }}>
+                          <span className="rt-vent-net-label" style={{ color }}>{row.label}</span>
+                          <span className="rt-vent-net-arrow" style={{ color }}>▸ depuis CTA</span>
+                        </td>
+                      </tr>
+                    </React.Fragment>
+                  )
+                }
+                if (row.kind === 'vent-separation') return (
+                  <tr key={`vsep-${row.ptId}-${i}`} className="rt-vent-separation">
+                    <td colSpan={VENT_COLS + 1} />
                   </tr>
                 )
                 if (row.kind !== 'segment') return null
-                const { seg } = row
+                const { seg, ctaPortName, depth = 0 } = row
                 const role = roleMap?.get(seg.id) ?? 'soufflage'
                 const vr = ventilationResults?.get(seg.id)
-                const mat = materials?.find((m: any) => m.id === seg.materialId)
+                const transDp    = ventilationNodeTransitionDp?.get(seg.id) ?? 0
+                const junctionDp = ventilationNodeJunctionDp?.get(seg.id) ?? 0
                 const isSelected = selectedIds?.includes(seg.id)
-                const name = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections, segDisplayDists)
+                const rawName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections, segDisplayDists)
+                // Strip "Air xxx – " prefix since the badge already shows the network type
+                const sepIdx = rawName?.indexOf(' – ') ?? -1
+                const name = sepIdx >= 0 ? rawName!.slice(sepIdx + 3) : rawName
+                const badge = ROLE_BADGE[role] ?? '?'
+                const badgeColor = ROLE_COLOR[role] ?? '#374151'
+                const indent = depth * 14
                 return (
                   <tr key={seg.id}
                     className={`rt-row${isSelected ? ' rt-row-selected' : ''}`}
                     ref={isSelected ? selectedRowRef : null}
                     onClick={() => onSelectIds?.([seg.id])}>
-                    <td className="rt-td">{name ?? seg.name ?? '—'}</td>
-                    <td className="rt-td">
-                      <span style={{ color: ROLE_COLOR[role] ?? '#374151', fontWeight: 600, fontSize: 10 }}>
-                        {ROLE_LABEL[role] ?? role}
-                      </span>
+                    <td className="rt-td" style={{ paddingLeft: 6, textAlign: 'center' }}>
+                      <span className="rt-vent-badge" style={{ background: badgeColor }}>{badge}</span>
+                    </td>
+                    <td className="rt-td" style={{ paddingLeft: 4 + indent }}>
+                      {depth > 0 && <span className="rt-depth">{'└─'}</span>}
+                      {name ?? seg.name ?? '—'}
                     </td>
                     <td className="rt-td">{seg.dn ?? '—'}</td>
                     <td className="rt-td">{seg.length_override != null ? seg.length_override.toFixed(2) : '—'}</td>
@@ -2254,7 +2284,7 @@ export default function ResultsTable({
                       {vr && seg.length_override != null ? Math.round(vr.dp_Pa) : '—'}
                     </td>
                     <td className="rt-td rt-td-result" style={{ fontWeight: 600 }}>
-                      {vr && seg.length_override != null ? Math.round(vr.dp_total_Pa) : '—'}
+                      {vr ? Math.round(vr.dp_total_Pa + transDp + junctionDp) : '—'}
                     </td>
                   </tr>
                 )

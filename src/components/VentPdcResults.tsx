@@ -116,7 +116,7 @@ export default function VentPdcResults({ vr, pdcParams, seg }: {
         {cardHeader('Pertes singulières', fmtPa(vr.dp_sing_Pa), pct(vr.dp_sing_Pa), '#c2562d', '#fca38a', () => setOpenSing(v => !v))}
         {openSing && (
           <div style={{ padding: '8px 12px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Accessoires — ξ × ρv²/2</div>
+            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Singularités — ξ × ρv²/2</div>
             {row('ρv²/2 (pression dynamique)', `${dynP.toFixed(1)} Pa`)}
             {(() => {
               const fittings: any[]    = seg.fittings ?? []
