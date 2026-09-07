@@ -36,9 +36,14 @@ export function NumInput({ value, onChange, allowEmpty = false, onBlur, ...props
       value={text}
       onChange={e => setText(e.target.value)}
       onBlur={e => {
-        const n = parseFloat(text)
+        let n = parseFloat(text)
         if (!isNaN(n)) {
+          const minVal = props.min !== undefined ? Number(props.min) : NaN
+          const maxVal = props.max !== undefined ? Number(props.max) : NaN
+          if (!isNaN(minVal)) n = Math.max(minVal, n)
+          if (!isNaN(maxVal)) n = Math.min(maxVal, n)
           committed.current = n
+          setText(String(n))
           onChange(n)
         } else if (text.trim() === '' && allowEmpty) {
           committed.current = null

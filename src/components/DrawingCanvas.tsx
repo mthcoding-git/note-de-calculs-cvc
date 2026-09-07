@@ -6,6 +6,7 @@ import { getModeFlags } from '../utils/calcModeFlags'
 import { EMETTEUR_TYPES } from '../data/emetteurs'
 import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
 import { sf } from '../utils/fmt'
+import { getVentMaxVelocity } from '../utils/ventilationCalc' // TEMPORAIRE — PROJET SPÉCIFIQUE — À SUPPRIMER
 import { AccessorySymbol } from './AccessorySymbol'
 import { uid } from '../utils/idGen'
 import { findLevelIndexAt } from '../utils/levelUtils'
@@ -2201,7 +2202,7 @@ if (drawing) commitDrawing()
           let editStyle = null
           if (editParam) {
             const { paramType, segType, materialId, dn, insulationId, thickness,
-                    length, flowVelocityMode, flowVelocityValue } = editParam
+                    length, flowVelocityMode, flowVelocityValue, coeffFoisonnement } = editParam
             if (paramType === 'type' && segType) {
               editStyle = seg.type === segType ? 'match' : 'other'
             } else if (paramType === 'material' && materialId && dn) {
@@ -2237,6 +2238,14 @@ if (drawing) commitDrawing()
                   editStyle = hasAny ? 'match' : 'missing'
                 }
               }
+            } else if (paramType === 'coeffFoisonnement') {
+              const segCf = (seg as any).coeffFoisonnement ?? null
+              if (coeffFoisonnement != null) {
+                editStyle = segCf === coeffFoisonnement ? 'match'
+                  : segCf == null ? 'missing' : 'other'
+              } else {
+                editStyle = segCf != null ? 'match' : 'missing'
+              }
             }
           }
 
@@ -2249,8 +2258,8 @@ if (drawing) commitDrawing()
           const isCriticalPath = hasCritPath && criticalPathIds!.includes(seg.id)
           const isCritDimmed   = hasCritPath && !isCriticalPath
 
-          // match=green · missing=red(ECS)/blue(EF|EG) · other=gray · dash always follows segment type
-          const missingColor = (isAlimEF || isEauGlacee) ? '#93c5fd' : '#ef4444'
+          // match=green · missing=amber(vent)/blue(EF|EG)/red(ECS) · other=gray · dash always follows segment type
+          const missingColor = (isAlimEF || isEauGlacee) ? '#3b82f6' : isVentilation ? '#f59e0b' : '#ef4444'
           const strokeColor = isGrayed || isCritDimmed ? '#d1d5db'
             : editStyle === 'match'   ? '#16a34a'
             : editStyle === 'missing' ? missingColor
@@ -2401,7 +2410,7 @@ if (drawing) commitDrawing()
                   if (isVentilation) {
                     const vr = ventilationResults?.get(seg.id)
                     if (vr?.Q_m3h != null && vr.Q_m3h > 0)
-                      lines.push({ text: `${vr.Q_m3h.toFixed(0)} m³/h` })
+                      lines.push({ text: `Q ${vr.Q_m3h.toFixed(0)} m³/h` })
                   } else if (isAlimMode) {
                     const ar = alimentationResults?.get(seg.id)
                     if (ar?.flowRateForPdc != null && ar.flowRateForPdc > 0)
@@ -2415,12 +2424,24 @@ if (drawing) commitDrawing()
                     if (flow?.flowRate != null) lines.push({ text: `${flow.flowRate.toFixed(3)} m³/h` })
                   }
                 }
+                if (canvasDisplay?.debitFoisonne && isVentilation) {
+                  const vr = ventilationResults?.get(seg.id)
+                  if (vr?.Q_foisonne_m3h != null && vr.Q_foisonne_m3h > 0)
+                    lines.push({ text: `Qf ${vr.Q_foisonne_m3h.toFixed(0)} m³/h` })
+                }
+                if (canvasDisplay?.coeffFois && isVentilation) {
+                  const coeff = (seg as any).coeffFoisonnement ?? null
+                  if (coeff != null)
+                    lines.push({ text: `cf ${Math.round(coeff * 100)} %` })
+                }
                 if (canvasDisplay?.vitesse) {
                   if (isVentilation) {
                     const vr = ventilationResults?.get(seg.id)
-                    if (vr?.v_ms != null) {
-                      const v = vr.v_ms
-                      lines.push({ text: `${sf(v, 2)} m/s`, orange: v > 5 && v <= 8, red: v > 8 })
+                    if (vr?.dimensioned && vr.v_ms > 0) {
+                      const v    = vr.v_ms
+                      // TEMPORAIRE — PROJET SPÉCIFIQUE — À SUPPRIMER : critère vitesse max f(Q)
+                      const vMax = getVentMaxVelocity(vr.Q_foisonne_m3h ?? vr.Q_m3h)
+                      lines.push({ text: `${sf(v, 2)} m/s`, red: v > vMax })
                     }
                   } else if (isAlimMode) {
                     const ar = alimentationResults?.get(seg.id)
@@ -2458,7 +2479,7 @@ if (drawing) commitDrawing()
                 if (canvasDisplay?.dpTroncon && (isBouclage || isChauffage || isEauGlacee || isVentilation)) {
                   if (isVentilation) {
                     const vr = ventilationResults?.get(seg.id)
-                    if (vr?.dp_Pa != null)
+                    if (vr?.dimensioned && vr.dp_Pa > 0)
                       lines.push({ text: `ΔP ${Math.round(vr.dp_Pa)} Pa` })
                   } else {
                     const dp = pdcResults?.get(seg.id)?.dpTotal
@@ -2473,8 +2494,8 @@ if (drawing) commitDrawing()
                 if (canvasDisplay?.rLinear && (isChauffage || isEauGlacee || isVentilation)) {
                   if (isVentilation) {
                     const vr = ventilationResults?.get(seg.id)
-                    if (vr?.dp_Pa_m != null)
-                      lines.push({ text: `J ${vr.dp_Pa_m.toFixed(1)} Pa/m`, orange: vr.dp_Pa_m > 1.5 })
+                    if (vr?.dimensioned && vr.dp_Pa_m > 0)
+                      lines.push({ text: `J ${vr.dp_Pa_m.toFixed(1)} Pa/m` })
                   } else {
                     const J = pdcResults?.get(seg.id)?.J
                     if (J != null)

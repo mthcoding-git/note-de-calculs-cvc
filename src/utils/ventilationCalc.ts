@@ -248,20 +248,22 @@ function frictionFactor(Re: number, eps_mm: number, D_mm: number): number {
 }
 
 export interface VentSegResult {
-  Q_m3h:       number
-  v_ms:        number
-  dp_Pa_m:     number
-  dp_Pa:       number          // ΔP linéaire
-  dp_sing_Pa:  number          // ΔP singulières (accessoires ξ)
-  dp_equip_Pa: number          // ΔP équipements (valeurs nominales en Pa)
-  dp_total_Pa: number          // ΔP totale = linéaire + singulières + équipements
-  Re:          number
-  di_mm:       number          // Ø intérieur (circulaire) ou Dh (rectangulaire)
-  shape:       'circular' | 'rectangular'
-  a_mm?:       number          // rectangulaire : largeur
-  b_mm?:       number          // rectangulaire : hauteur
-  T_air:       number          // température de l'air utilisée (°C)
-  rho:         number          // masse volumique utilisée (kg/m³)
+  Q_m3h:         number
+  Q_foisonne_m3h?: number      // débit foisonné (si coeffFoisonnement défini)
+  dimensioned:   boolean       // false si pas de matériau/dimension → V, J, ΔP non calculés
+  v_ms:          number
+  dp_Pa_m:       number
+  dp_Pa:         number        // ΔP linéaire
+  dp_sing_Pa:    number        // ΔP singulières (accessoires ξ)
+  dp_equip_Pa:   number        // ΔP équipements (valeurs nominales en Pa)
+  dp_total_Pa:   number        // ΔP totale = linéaire + singulières + équipements
+  Re:            number
+  di_mm:         number        // Ø intérieur (circulaire) ou Dh (rectangulaire)
+  shape:         'circular' | 'rectangular'
+  a_mm?:         number        // rectangulaire : largeur
+  b_mm?:         number        // rectangulaire : hauteur
+  T_air:         number        // température de l'air utilisée (°C)
+  rho:           number        // masse volumique utilisée (kg/m³)
 }
 
 export function computeVentSegResult(
@@ -286,7 +288,7 @@ export function computeVentSegResult(
   const dp_Pa_m = f * rho * v * v / (2 * Dh)
   const dp_Pa   = dp_Pa_m * L_m
   return {
-    Q_m3h, v_ms: v, dp_Pa_m, dp_Pa, dp_sing_Pa: 0, dp_equip_Pa: 0, dp_total_Pa: dp_Pa,
+    Q_m3h, dimensioned: true, v_ms: v, dp_Pa_m, dp_Pa, dp_sing_Pa: 0, dp_equip_Pa: 0, dp_total_Pa: dp_Pa,
     Re, di_mm, shape, T_air, rho,
     ...(shape === 'rectangular' ? { a_mm, b_mm } : {}),
   }
@@ -519,20 +521,36 @@ export function computeVentilationResults(
 ): Map<string, VentSegResult> {
   const result = new Map<string, VentSegResult>()
   for (const seg of segments) {
-    const ventDi = getVentDi(seg, materialsVentilation)
-    if (!ventDi) continue
     const Q = ventFlows?.get(seg.id)?.flowRate ?? (seg as any).flowRate
-    if (Q == null || Q <= 0) continue   // débit requis ; longueur facultative (J calculé sans L)
-    const L: number | null = (seg as any).length_override ?? null
-    const pipeSubType = (seg as any).pipeSubType ?? 'soufflage'
-    const T_air = getTempForSubType(pipeSubType, ctaTemps)
+    if (Q == null || Q <= 0) continue
 
+    const pipeSubType = (seg as any).pipeSubType ?? 'soufflage'
+    const T_air       = getTempForSubType(pipeSubType, ctaTemps)
+    const coeff       = (seg as any).coeffFoisonnement ?? null
+    const Q_foisonne  = (coeff != null && coeff > 0) ? Q * coeff : null
+
+    const ventDi = getVentDi(seg, materialsVentilation)
+    if (!ventDi) {
+      // Débit connu, mais pas de matériau/dimension : Q affiché, V/J/ΔP non calculés
+      result.set(seg.id, {
+        Q_m3h: Q,
+        ...(Q_foisonne != null ? { Q_foisonne_m3h: Q_foisonne } : {}),
+        dimensioned: false,
+        v_ms: 0, dp_Pa_m: 0, dp_Pa: 0, dp_sing_Pa: 0, dp_equip_Pa: 0, dp_total_Pa: 0,
+        Re: 0, di_mm: 0, shape: 'circular', T_air, rho: airProps(T_air).rho,
+      })
+      continue
+    }
+
+    const L: number | null = (seg as any).length_override ?? null
     const { rho, nu } = airProps(T_air)
     const Dh      = ventDi.di_mm / 1000
     const A       = (ventDi.shape === 'rectangular' && ventDi.a_mm && ventDi.b_mm)
       ? (ventDi.a_mm * ventDi.b_mm) / 1e6
       : Math.PI * (Dh / 2) ** 2
-    const v       = (Q / 3600) / A
+
+    const Q_calc       = Q_foisonne ?? Q
+    const v       = (Q_calc / 3600) / A
     const Re      = v * Dh / nu
     const f       = frictionFactor(Re, ventDi.eps_mm, ventDi.di_mm)
     const dp_Pa_m = f * rho * v * v / (2 * Dh)
@@ -543,7 +561,10 @@ export function computeVentilationResults(
     const dp_equip_Pa  = computeVentEquipDP(seg, pdcParams)
 
     result.set(seg.id, {
-      Q_m3h: Q, v_ms: v, dp_Pa_m, dp_Pa, dp_sing_Pa, dp_equip_Pa,
+      Q_m3h: Q,
+      ...(Q_foisonne != null ? { Q_foisonne_m3h: Q_foisonne } : {}),
+      dimensioned: true,
+      v_ms: v, dp_Pa_m, dp_Pa, dp_sing_Pa, dp_equip_Pa,
       dp_total_Pa: dp_Pa + dp_sing_Pa + dp_equip_Pa,
       Re, di_mm: ventDi.di_mm, shape: ventDi.shape, T_air, rho,
       ...(ventDi.shape === 'rectangular' ? { a_mm: ventDi.a_mm, b_mm: ventDi.b_mm } : {}),
@@ -551,3 +572,24 @@ export function computeVentilationResults(
   }
   return result
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// TEMPORAIRE — PROJET SPÉCIFIQUE — À SUPPRIMER
+// Vitesse maximale admissible (m/s) en fonction du débit (m³/h).
+// Interpolation linéaire par paliers selon le tableau projet.
+// Remplace les anciens seuils fixes 5 m/s (orange) / 8 m/s (rouge).
+// ════════════════════════════════════════════════════════════════════════════
+export function getVentMaxVelocity(Q_m3h: number): number {
+  if (Q_m3h <=   300) return 3
+  if (Q_m3h <=   550) return 3   + (Q_m3h -   300) * (3.5 - 3)   / (550   - 300)
+  if (Q_m3h <=   800) return 3.5 + (Q_m3h -   550) * (4   - 3.5) / (800   - 550)
+  if (Q_m3h <=  1500) return 4   + (Q_m3h -   800) * (4.5 - 4)   / (1500  - 800)
+  if (Q_m3h <=  2000) return 4.5 + (Q_m3h -  1500) * (5   - 4.5) / (2000  - 1500)
+  if (Q_m3h <=  4000) return 5
+  if (Q_m3h <=  6000) return 5   + (Q_m3h -  4000) * (5.5 - 5)   / (6000  - 4000)
+  if (Q_m3h <= 12000) return 5.5 + (Q_m3h -  6000) * (6   - 5.5) / (12000 - 6000)
+  if (Q_m3h <= 18500) return 6   + (Q_m3h - 12000) * (6.5 - 6)   / (18500 - 12000)
+  if (Q_m3h <= 25000) return 6.5 + (Q_m3h - 18500) * (7   - 6.5) / (25000 - 18500)
+  return 7.5
+}
+// ════════════════════════════════════════════════════════════════════════════

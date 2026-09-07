@@ -1322,6 +1322,7 @@ export default function App() {
     length: null,
     flowVelocityMode: 'flowRate', flowVelocityValue: null,
     ductShape: 'circular' as 'circular' | 'rectangular',
+    coeffFoisonnement: null as number | null,
   })
 
   // Generic updater for any project key
@@ -1358,6 +1359,11 @@ export default function App() {
         return editParam.flowVelocityMode === 'flowRate'
           ? { ...s, flowRate: editParam.flowVelocityValue, velocity: null }
           : { ...s, velocity: editParam.flowVelocityValue, flowRate: null }
+      }
+      if (editParam.paramType === 'coeffFoisonnement' && editParam.coeffFoisonnement != null) {
+        if ((s as any).coeffFoisonnement === editParam.coeffFoisonnement)
+          return { ...s, coeffFoisonnement: null }
+        return { ...s, coeffFoisonnement: editParam.coeffFoisonnement }
       }
       return s
     }))

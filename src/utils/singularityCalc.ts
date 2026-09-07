@@ -4,6 +4,8 @@ export type CircSingularityType =
   | 'coude-segmente'
   | 'coude-onglet'
   | 'coude-z'
+  | 'coude-s'
+  | 'coude-3-14'
 
 // ── Types rectangulaires ──────────────────────────────────────────────────────
 export type RectSingularityType =
@@ -11,6 +13,10 @@ export type RectSingularityType =
   | 'rect-onglet'
   | 'rect-aubes'
   | 'rect-onglet-aubes'
+  | 'rect-z'
+  | 'rect-3-12'
+  | 'rect-s'
+  | 'rect-3-14'
 
 export type SingularityType = CircSingularityType | RectSingularityType
 
@@ -35,6 +41,19 @@ export interface VentSingularity {
   vaneThickness?: 'simple' | 'double'    // 3-8 = simple, 3-9 = double
   design38?:    1 | 2 | 3               // design ASHRAE 3-8
   design39?:    1 | 2 | 3 | 4           // design ASHRAE 3-9
+  // rect-z (ASHRAE 3-11)
+  lOverH?:    number                     // L/H ratio (axe-à-axe / dimension plan coude)
+  offset_mm?: number                     // legacy — conservé pour rétrocompat
+  // rect-3-12 (ASHRAE 3-12)
+  lOverW?:    number                     // l/W ratio (distance entre coudes / dimension référence)
+  // coude-s / rect-s (ASHRAE 3-13 — dévoiement en S)
+  theta_s?:     number                   // angle θ de chaque coude (15|30|45|60|75|90°)
+  lOverD_s?:    number                   // L/D entre les deux coudes (circulaire)
+  rOverDs?:     number                   // r/D₀ (circulaire, doit être > 1,0)
+  elbowTypeS?:  'lisse' | 'segmente'    // type de coude simple : 3-1 lisse ou 3-2 segmenté
+  nPiecesS?:    3 | 4 | 5              // nb pièces pour coude segmenté
+  rOverWs?:     number                   // r/W (rectangulaire, doit être > 1,0)
+  lDistS_mm?:   number                   // L en mm entre les deux coudes (rectangulaire)
 }
 
 // ── Interpolation linéaire ────────────────────────────────────────────────────
@@ -158,6 +177,122 @@ export function xiCoudeZ(lOverD: number, Re: number): number {
   const co  = interp1(ASHRAE_3_4_CO, ld)
   const kRe = interp1(ASHRAE_3_3_KRE, Math.max(10000, Math.min(140000, Re)))
   return kRe * co
+}
+
+// ── ASHRAE 3-13 — Dévoiement en S (col de cygne) ─────────────────────────────
+// K(θ, L/D) : facteur d'interaction pour deux coudes identiques d'angle θ.
+// ξ_S = K × ξ_coude_unique(θ, r/D).  À L/D→∞, K→2 (deux coudes indépendants).
+const A313_THETA = [15, 30, 45, 60, 75, 90]
+const A313_LD    = [0, 1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 25, 40]
+const A313_K: number[][] = [
+  [0.20, 0.42, 0.60, 0.78, 0.94, 1.16, 1.20, 1.15, 1.08, 1.05, 1.02, 1.00, 1.10, 1.25, 2.00],
+  [0.40, 0.65, 0.88, 1.16, 1.20, 1.18, 1.12, 1.06, 1.06, 1.15, 1.28, 1.40, 1.50, 1.70, 2.00],
+  [0.60, 1.06, 1.20, 1.23, 1.20, 1.08, 1.03, 1.08, 1.17, 1.30, 1.42, 1.55, 1.65, 1.80, 2.00],
+  [1.05, 1.38, 1.37, 1.28, 1.15, 1.06, 1.16, 1.30, 1.42, 1.54, 1.66, 1.76, 1.85, 1.95, 2.00],
+  [1.50, 1.58, 1.46, 1.30, 1.27, 1.30, 1.37, 1.47, 1.57, 1.68, 1.75, 1.80, 1.88, 1.97, 2.00],
+  [1.70, 1.67, 1.40, 1.37, 1.38, 1.47, 1.55, 1.63, 1.70, 1.76, 1.82, 1.88, 1.92, 1.98, 2.00],
+]
+
+function interpK313(theta: number, lOverD: number): number {
+  const TH = A313_THETA, LD = A313_LD, K = A313_K
+  const θc = Math.max(TH[0], Math.min(TH[TH.length - 1], theta))
+  const lc = Math.max(LD[0], Math.min(LD[LD.length - 1], lOverD))
+  let ti = TH.length - 2
+  for (let i = 0; i < TH.length - 1; i++) { if (TH[i + 1] >= θc) { ti = i; break } }
+  let li = LD.length - 2
+  for (let i = 0; i < LD.length - 1; i++) { if (LD[i + 1] >= lc) { li = i; break } }
+  const tF = TH[ti + 1] === TH[ti] ? 0 : (θc - TH[ti]) / (TH[ti + 1] - TH[ti])
+  const lF = LD[li + 1] === LD[li] ? 0 : (lc - LD[li]) / (LD[li + 1] - LD[li])
+  return K[ti][li]     * (1 - tF) * (1 - lF)
+       + K[ti][li + 1] * (1 - tF) * lF
+       + K[ti + 1][li] * tF       * (1 - lF)
+       + K[ti + 1][li + 1] * tF   * lF
+}
+
+/** ASHRAE 3-13 — Dévoiement en S, section circulaire.
+ *  ξ = K(θ, L/D) × C_single,  avec C_single via 3-1 (lisse) ou 3-2 (segmenté).
+ *  Condition : r/D₀ > 1,0. */
+export function xiCoudeS(s: VentSingularity): number {
+  const theta    = Math.max(15, Math.min(90, s.theta_s ?? 90))
+  const lOverD   = Math.max(0, s.lOverD_s ?? 4)
+  const rOverD   = Math.max(1.0, s.rOverDs ?? 1.5)
+  const nPieces  = (s.nPiecesS ?? 3) as 3 | 4 | 5
+  const k        = interpK313(theta, lOverD)
+  const cSingle  = s.elbowTypeS === 'segmente'
+    ? xiCoudeSegmente(theta, nPieces, rOverD)
+    : xiCoudeLisse(theta, rOverD)
+  return k * cSingle
+}
+
+// ── ASHRAE 3-14 — Dévoiement en S, deux plans perpendiculaires ───────────────
+// K(θ, L/D) — θ ∈ {60°, 90°} uniquement (Idelchik 1986, Diagram 6-16).
+const A314_THETA = [60, 90]
+const A314_LD    = [0, 1, 2, 3, 4, 6, 8, 10, 12, 14, 20, 25, 40]
+const A314_K: number[][] = [
+  [2.00, 1.90, 1.50, 1.35, 1.30, 1.20, 1.25, 1.50, 1.63, 1.73, 1.85, 1.95, 2.00],
+  [2.00, 1.80, 1.60, 1.55, 1.55, 1.65, 1.80, 1.90, 1.93, 1.98, 2.00, 2.00, 2.00],
+]
+
+function interpK314(theta: number, lOverD: number): number {
+  const TH = A314_THETA, LD = A314_LD, K = A314_K
+  const θc = Math.max(TH[0], Math.min(TH[TH.length - 1], theta))
+  const lc = Math.max(LD[0], Math.min(LD[LD.length - 1], lOverD))
+  let ti = TH.length - 2
+  for (let i = 0; i < TH.length - 1; i++) { if (TH[i + 1] >= θc) { ti = i; break } }
+  let li = LD.length - 2
+  for (let i = 0; i < LD.length - 1; i++) { if (LD[i + 1] >= lc) { li = i; break } }
+  const tF = TH[ti + 1] === TH[ti] ? 0 : (θc - TH[ti]) / (TH[ti + 1] - TH[ti])
+  const lF = LD[li + 1] === LD[li] ? 0 : (lc - LD[li]) / (LD[li + 1] - LD[li])
+  return K[ti][li]       * (1 - tF) * (1 - lF)
+       + K[ti][li + 1]   * (1 - tF) * lF
+       + K[ti + 1][li]   * tF       * (1 - lF)
+       + K[ti + 1][li + 1] * tF     * lF
+}
+
+/** ASHRAE 3-14 — Dévoiement en S, deux plans perpendiculaires, section circulaire.
+ *  ξ = K(θ, L/D) × C′₀,  θ ∈ {60°, 90°},  r/D₀ > 1,0.
+ *  C′₀ via 3-1 (lisse) ou 3-2 (segmenté). */
+export function xiCoude314(s: VentSingularity): number {
+  const theta   = s.theta_s === 60 ? 60 : 90
+  const lOverD  = Math.max(0, s.lOverD_s ?? 4)
+  const rOverD  = Math.max(1.0, s.rOverDs ?? 1.5)
+  const nPieces = (s.nPiecesS ?? 3) as 3 | 4 | 5
+  const k       = interpK314(theta, lOverD)
+  const cSingle = s.elbowTypeS === 'segmente'
+    ? xiCoudeSegmente(theta, nPieces, rOverD)
+    : xiCoudeLisse(theta, rOverD)
+  return k * cSingle
+}
+
+/** ASHRAE 3-13 — Dévoiement en S, section rectangulaire (coude 3-5 lisse à rayon).
+ *  D_hyd = 2HW/(H+W), L/D = L_mm / D_hyd.  Condition : r/W > 1,0. */
+export function xiRectS(s: VentSingularity, Re?: number): number {
+  const theta   = Math.max(15, Math.min(90, s.theta_s ?? 90))
+  const rOverW  = Math.max(1.0, s.rOverWs ?? 1.5)
+  const { a0, b0 } = a0b0(s)
+  const W = a0, H = b0
+  const Dhyd   = (H + W) > 0 ? (2 * H * W) / (H + W) : W
+  const lOverD = s.lOverD_s != null
+    ? Math.max(0, s.lOverD_s)
+    : (Dhyd > 0 ? Math.max(0, s.lDistS_mm ?? 4 * Dhyd) / Dhyd : 4)
+  const k      = interpK313(theta, lOverD)
+  return k * xiRectRayonLisse({ ...s, angle: theta, rOverA: rOverW }, Re)
+}
+
+/** ASHRAE 3-14 — Dévoiement en S, deux plans perpendiculaires, section rectangulaire.
+ *  ξ = K(θ, L/D) × C′₀,  θ ∈ {60°, 90°},  D = 2HW/(H+W),  r/W > 1,0.
+ *  C′₀ via 3-5 (rect. lisse à rayon). */
+export function xiRect314(s: VentSingularity, Re?: number): number {
+  const theta  = s.theta_s === 60 ? 60 : 90
+  const rOverW = Math.max(1.0, s.rOverWs ?? 1.5)
+  const { a0, b0 } = a0b0(s)
+  const W = a0, H = b0
+  const Dhyd   = (H + W) > 0 ? (2 * H * W) / (H + W) : W
+  const lOverD = s.lOverD_s != null
+    ? Math.max(0, s.lOverD_s)
+    : (Dhyd > 0 ? Math.max(0, s.lDistS_mm ?? 4 * Dhyd) / Dhyd : 4)
+  const k      = interpK314(theta, lOverD)
+  return k * xiRectRayonLisse({ ...s, angle: theta, rOverA: rOverW }, Re)
 }
 
 // ── Formules rectangulaires ───────────────────────────────────────────────────
@@ -343,6 +478,65 @@ export function xiRectOngletAubes(s: VentSingularity, v_ms?: number | null): num
   return ASHRAE_3_8_XI[(s.design38 ?? 1) as 1 | 2 | 3]
 }
 
+// ── ASHRAE 3-11 — Dévoiement Z rectangulaire (deux coudes 90°) ───────────────
+// ξ = K(W/H) × KRe(Re) × C′₀(L/H)
+// H = dimension dans le plan du dévoiement (= a₀), W = perpendiculaire (= b₀)
+// L = décalage axe-à-axe
+
+const ASHRAE_3_11_C0: [number, number][] = [
+  [0, 0], [0.4, 0.62], [0.6, 0.90], [0.8, 1.6], [1.0, 2.6],
+  [1.2, 3.6], [1.4, 4.0], [1.6, 4.2], [1.8, 4.2], [2.0, 4.2],
+  [2.4, 3.7], [2.8, 3.3], [3.2, 3.2], [4.0, 3.1], [5.0, 2.9],
+  [6.0, 2.9], [7.0, 2.8], [9.0, 2.7], [10.0, 2.5], [100, 2.3],
+]
+
+const ASHRAE_3_11_K: [number, number][] = [
+  [0.25, 1.10], [0.50, 1.07], [0.75, 1.04], [1.0, 1.00],
+  [1.5, 0.95],  [2.0, 0.90],  [3.0, 0.83],  [4.0, 0.78],
+  [6.0, 0.72],  [8.0, 0.70],
+]
+
+const ASHRAE_3_11_KRE: [number, number][] = [
+  [10000, 1.40], [20000, 1.26], [30000, 1.19], [40000, 1.14],
+  [60000, 1.09], [80000, 1.06], [100000, 1.04], [140000, 1.00],
+]
+
+export function xiRectZ311(s: VentSingularity, Re = 140000): number {
+  const { a0, b0 } = a0b0(s)
+  const lOverH  = s.lOverH ?? (Math.max(0, s.offset_mm ?? 0) / a0)
+  const wOverH  = b0 / a0
+  const kRe = Re >= 140000 ? 1.0 : interp1(ASHRAE_3_11_KRE, Math.max(10000, Re))
+  const k   = interp1(ASHRAE_3_11_K, Math.max(0.25, Math.min(8.0, wOverH)))
+  const c0  = interp1(ASHRAE_3_11_C0, lOverH)
+  return k * kRe * c0
+}
+
+// ── Tables ASHRAE 3-12 — Coudes rectangulaires 90° combinés, plans différents ─
+const ASHRAE_3_12_C0: [number, number][] = [
+  [0, 1.2], [0.4, 2.4], [0.6, 2.9], [0.8, 3.3],
+  [1.0, 3.4], [1.2, 3.4], [1.4, 3.4], [1.6, 3.3], [1.8, 3.2], [2.0, 3.1],
+  [2.4, 3.2], [2.8, 3.2], [3.2, 3.2], [4.0, 3.0], [5.0, 2.9],
+  [6.0, 2.8], [7.0, 2.7], [9.0, 2.5], [10.0, 2.4], [100, 2.3],
+]
+const ASHRAE_3_12_K: [number, number][] = [
+  [0.25, 1.10], [0.50, 1.07], [0.75, 1.04], [1.0, 1.00],
+  [1.5, 0.95], [2.0, 0.90], [3.0, 0.83], [4.0, 0.78], [6.0, 0.72], [8.0, 0.70],
+]
+const ASHRAE_3_12_KRE: [number, number][] = [
+  [10000, 1.40], [20000, 1.26], [30000, 1.19], [40000, 1.14],
+  [60000, 1.09], [80000, 1.06], [100000, 1.04], [140000, 1.00],
+]
+
+export function xiRectZ312(s: VentSingularity, Re = 140000): number {
+  const { a0, b0 } = a0b0(s)  // a0 = W (dimension référence), b0 = H (autre dimension)
+  const lOverW = s.lOverW ?? 1.0
+  const hOverW = b0 / a0
+  const kRe = Re >= 140000 ? 1.0 : interp1(ASHRAE_3_12_KRE, Math.max(10000, Re))
+  const k   = interp1(ASHRAE_3_12_K, Math.max(0.25, Math.min(8.0, hOverW)))
+  const c0  = interp1(ASHRAE_3_12_C0, Math.max(0, lOverW))
+  return k * kRe * c0
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 export function computeXiSingularity(s: VentSingularity, Re?: number, Dh_mm?: number, v_ms?: number | null): number {
@@ -351,10 +545,16 @@ export function computeXiSingularity(s: VentSingularity, Re?: number, Dh_mm?: nu
     case 'coude-segmente':   return xiCoudeSegmente(s.angle, s.nPieces ?? 4, s.rOverD ?? 1.0)
     case 'coude-onglet':     return xiCoudeOnglet(s.angle, Re ?? 140000)
     case 'coude-z':          return xiCoudeZ(s.lOverD ?? 0, Re ?? 140000)
+    case 'coude-s':          return xiCoudeS(s)
+    case 'coude-3-14':       return xiCoude314(s)
     case 'rect-rayon-lisse': return xiRectRayonLisse(s, Re)
     case 'rect-onglet':      return xiRectOnglet(s, Re)
     case 'rect-aubes':       return xiRectAubes(s)
     case 'rect-onglet-aubes': return xiRectOngletAubes(s, v_ms)
+    case 'rect-z':           return xiRectZ311(s, Re)
+    case 'rect-3-12':        return xiRectZ312(s, Re)
+    case 'rect-s':           return xiRectS(s, Re)
+    case 'rect-3-14':        return xiRect314(s, Re)
   }
 }
 
@@ -426,6 +626,36 @@ export function computeXiSingularityFull(
     return { ksi_local, ksi_fr: 0, ksi_total: ksi_local }
   }
 
+  if (s.type === 'rect-z') {
+    const ksi_local = xiRectZ311(s, Re ?? 140000)
+    return { ksi_local, ksi_fr: 0, ksi_total: ksi_local }
+  }
+
+  if (s.type === 'rect-3-12') {
+    const ksi_local = xiRectZ312(s, Re ?? 140000)
+    return { ksi_local, ksi_fr: 0, ksi_total: ksi_local }
+  }
+
+  if (s.type === 'coude-s') {
+    const ksi_local = xiCoudeS(s)
+    return { ksi_local, ksi_fr: 0, ksi_total: ksi_local }
+  }
+
+  if (s.type === 'coude-3-14') {
+    const ksi_local = xiCoude314(s)
+    return { ksi_local, ksi_fr: 0, ksi_total: ksi_local }
+  }
+
+  if (s.type === 'rect-s') {
+    const ksi_local = xiRectS(s, Re ?? 140000)
+    return { ksi_local, ksi_fr: 0, ksi_total: ksi_local }
+  }
+
+  if (s.type === 'rect-3-14') {
+    const ksi_local = xiRect314(s, Re ?? 140000)
+    return { ksi_local, ksi_fr: 0, ksi_total: ksi_local }
+  }
+
   const ksi_total = computeXiSingularity(s, Re, Dh_mm, v_ms)
   return { ksi_local: ksi_total, ksi_fr: 0, ksi_total }
 }
@@ -434,11 +664,17 @@ export const SING_LABELS: Record<SingularityType, string> = {
   'coude-lisse':       'Coude lisse à rayon',
   'coude-segmente':   'Coude segmenté',
   'coude-onglet':     'Coude à onglet',
-  'coude-z':          'Dévoiement Z (2×30°)',
+  'coude-z':          'Dévoiement en Z (2×30°)',
   'rect-rayon-lisse': 'Coude rayon lisse',
-  'rect-onglet':       'Coude à onglet rect.',
+  'rect-onglet':       'Coude à onglet',
   'rect-aubes':        'Coude aubes séparatrices',
   'rect-onglet-aubes': 'Coude onglet avec aubes directrices',
+  'rect-z':            'Dévoiement en Z (2×90°)',
+  'rect-3-12':         'Coudes 90° combinés (2 plans)',
+  'coude-s':           'Dévoiement en S (col de cygne)',
+  'coude-3-14':        'Dévoiement en S — 2 plans perpendiculaires',
+  'rect-s':            'Dévoiement en S (col de cygne)',
+  'rect-3-14':         'Dévoiement en S — 2 plans perpendiculaires (rect.)',
 }
 
 export function newSingId(): string {

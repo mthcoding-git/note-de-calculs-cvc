@@ -201,7 +201,30 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
 
   if (pt.type === 'cta') {
     const set = (k, v) => onUpdate(pt.id, 'point', { [k]: v })
-    const connectedSegs = allSegs.filter(s => s.startPointId === pt.id || s.endPointId === pt.id)
+    // Segments connected via ctaPort points (parentCtaId === pt.id)
+    const ctaPortIds = new Set(
+      (points as any[]).filter(p => p.type === 'ctaPort' && p.parentCtaId === pt.id).map(p => p.id)
+    )
+    const ctaSegs = allSegs.filter(s =>
+      s.startPointId === pt.id || s.endPointId === pt.id ||
+      ctaPortIds.has(s.startPointId) || ctaPortIds.has(s.endPointId)
+    )
+
+    const airTypes = [
+      { role: 'soufflage',  label: 'Air soufflé', color: '#059669', cfKey: 'cf_soufflage',  tKey: 'T_soufflage', tDef: 18  },
+      { role: 'reprise',    label: 'Air extrait',  color: '#db2777', cfKey: 'cf_reprise',    tKey: 'T_reprise',   tDef: 20  },
+      { role: 'air-neuf',   label: 'Air neuf',     color: '#0284c7', cfKey: 'cf_airNeuf',    tKey: 'T_airNeuf',   tDef: -8  },
+      { role: 'air-rejete', label: 'Air rejeté',   color: '#64748b', cfKey: 'cf_airRejete',  tKey: 'T_airRejete', tDef: 20  },
+    ] as const
+
+    const totals: Record<string, number> = {}
+    for (const s of ctaSegs) {
+      const role = roleMap?.get(s.id)
+      if (!role) continue
+      const vr = ventilationResults?.get(s.id)
+      if (vr && vr.Q_m3h > 0) totals[role] = (totals[role] ?? 0) + vr.Q_m3h
+    }
+
     return (
       <div className="rp-section">
         <h3 className="rp-title">CTA</h3>
@@ -216,53 +239,71 @@ export default function PointPanel({ pt, onUpdate, nodeTemp, inSegs = [], global
           <input type="text" value={pt.name ?? ''} onChange={e => set('name', e.target.value)}
             style={{ width: '100%', padding: '4px 6px', fontSize: 11, border: '1px solid #d1d5db', borderRadius: 4 }} />
         </div>
-        {/* Températures par type de réseau */}
-        <hr className="rp-divider" />
-        <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
-          letterSpacing: '0.06em', marginBottom: 6 }}>Températures réseau</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px', marginBottom: 4 }}>
-          {([
-            { key: 'T_soufflage', label: 'Air soufflé',  color: '#059669', def: 18 },
-            { key: 'T_reprise',   label: 'Air extrait',   color: '#f472b6', def: 20 },
-            { key: 'T_airNeuf',   label: 'Air neuf',      color: '#0284c7', def: -8 },
-            { key: 'T_airRejete', label: 'Air rejeté',    color: '#94a3b8', def: 20 },
-          ] as const).map(({ key, label, color, def }) => (
-            <div key={key} className="lp-field" style={{ marginBottom: 0 }}>
-              <label className="lp-label" style={{ color, fontWeight: 600 }}>
-                {label} <span className="lp-unit">°C</span>
-              </label>
-              <NumInput step={1} min={-30} max={60} allowEmpty
-                value={(pt as any)[key] ?? null}
-                placeholder={String(def)}
-                onChange={v => set(key, v)} />
-            </div>
-          ))}
-        </div>
 
-        {connectedSegs.length > 0 && (
-          <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase',
-              letterSpacing: '0.06em', marginBottom: 4 }}>Tronçons connectés</div>
-            <div style={{ border: '1px solid #e5e7eb', borderRadius: 5, overflow: 'hidden' }}>
-              {connectedSegs.map(s => {
-                const role = roleMap?.get(s.id) ?? (s.type === 'retour' ? 'reprise' : 'soufflage')
-                const roleColor = role === 'reprise' ? '#f472b6' : role === 'air-rejete' ? '#94a3b8' : role === 'air-neuf' ? '#38bdf8' : '#059669'
-                const roleLabel = role === 'reprise' ? 'Air extrait' : role === 'air-rejete' ? 'Air rejeté' : role === 'air-neuf' ? 'Air neuf' : 'Air soufflé'
-                const vr = ventilationResults?.get(s.id)
-                return (
-                  <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '5px 10px', borderBottom: '1px solid #f3f4f6', gap: 8 }}>
-                    <span style={{ fontSize: 9, fontWeight: 700, color: roleColor,
-                      background: roleColor + '18', padding: '1px 5px', borderRadius: 3 }}>{roleLabel}</span>
-                    <span style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: '#374151' }}>
-                      {vr ? `${vr.Q_m3h.toFixed(0)} m³/h` : '—'}
+        {/* Tableau par type d'air : T° + débit + coeff foisonnement */}
+        <hr className="rp-divider" />
+        <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
+          {airTypes.map(({ role, label, color, cfKey, tKey, tDef }, i) => {
+            const q   = totals[role] ?? null
+            const cf  = (pt as any)[cfKey] ?? null
+            const qF  = (q != null && cf != null) ? +(q * cf).toFixed(0) : null
+            const isLast = i === airTypes.length - 1
+            return (
+              <div key={role} style={{ borderBottom: isLast ? 'none' : '1px solid #e5e7eb' }}>
+                {/* En-tête : label coloré + débit total */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '6px 10px', background: color + '0d', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <div style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                    <span style={{ fontSize: 10, fontWeight: 700, color }}>{label}</span>
+                  </div>
+                  {q != null ? (
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#111827',
+                      fontFamily: 'ui-monospace, monospace' }}>
+                      {q.toFixed(0)} <span style={{ fontSize: 10, fontWeight: 400, color: '#9ca3af' }}>m³/h</span>
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, color: '#d1d5db', fontFamily: 'ui-monospace, monospace' }}>—</span>
+                  )}
+                </div>
+                {/* Ligne T° + coeff foisonnement */}
+                <div style={{ display: 'flex', alignItems: 'center', padding: '4px 10px 5px', gap: 8, background: '#fafafa' }}>
+                  {/* Température */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 3, flex: 1 }}>
+                    <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>T°</span>
+                    <NumInput step={1} min={-30} max={60} allowEmpty style={{ width: 44 }}
+                      value={(pt as any)[tKey] ?? null}
+                      placeholder={String(tDef)}
+                      onChange={v => set(tKey, v)} />
+                    <span style={{ fontSize: 9, color: '#9ca3af' }}>°C</span>
+                  </div>
+                  {/* Séparateur */}
+                  <div style={{ width: 1, height: 16, background: '#e5e7eb', flexShrink: 0 }} />
+                  {/* Coeff foisonnement */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 3, flex: 1 }}>
+                    <span style={{ fontSize: 9, color: '#9ca3af', flexShrink: 0 }}>Coeff.</span>
+                    <NumInput min={0} max={100} step={1} allowEmpty style={{ width: 44 }}
+                      value={cf != null ? Math.round(cf * 100) : null}
+                      placeholder="100"
+                      onChange={v => set(cfKey, v != null ? v / 100 : null)} />
+                    <span style={{ fontSize: 9, color: '#9ca3af' }}>%</span>
+                  </div>
+                </div>
+                {/* Débit foisonné (si coeff défini) */}
+                {qF != null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '3px 10px 4px', background: '#eff6ff', borderTop: '1px solid #dbeafe', gap: 8 }}>
+                    <span style={{ fontSize: 9, color: '#2563eb' }}>Débit foisonné</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#1d4ed8',
+                      fontFamily: 'ui-monospace, monospace' }}>
+                      {qF} <span style={{ fontSize: 9, fontWeight: 400, color: '#60a5fa' }}>m³/h</span>
                     </span>
                   </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
+                )}
+              </div>
+            )
+          })}
+        </div>
       </div>
     )
   }

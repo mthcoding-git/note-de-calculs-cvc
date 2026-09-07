@@ -12,6 +12,7 @@ import { TERMINAL_FROID_TYPES } from '../data/terminauxFroids'
 import { findMidpointLevelIndexAt } from '../utils/levelUtils'
 import { getModeFlags } from '../utils/calcModeFlags'
 import { fmtDpLabel, fmtDpCellVal } from '../utils/fmt'
+import { getVentMaxVelocity } from '../utils/ventilationCalc' // TEMPORAIRE — PROJET SPÉCIFIQUE — À SUPPRIMER
 
 const fmt = (v, d) => { const n = Number(v); return typeof v === 'number' && Number.isFinite(n) ? n.toFixed(d) : '—' }
 const TOTAL_COLS = 21
@@ -2181,7 +2182,10 @@ export default function ResultsTable({
   }
 
   if (isVentilation) {
-    const VENT_COLS = 8
+    const isPdc = activeTable === 'pdc'
+    // Dimensionnement : 10 cols — Identification(2) + Canalisation(3) + Résultats(5)
+    // PdC            :  9 cols — Identification(2) + Canalisation(2) + Résultats(5)
+    const VENT_COLS = isPdc ? 8 : 9
     const ROLE_COLOR: Record<string, string> = {
       soufflage: '#059669', reprise: '#db2777', 'air-neuf': '#0ea5e9', 'air-rejete': '#64748b',
     }
@@ -2194,31 +2198,46 @@ export default function ResultsTable({
     const NET_BORDER: Record<string, string> = {
       reprise: '#db2777', soufflage: '#059669', 'air-rejete': '#64748b', 'air-neuf': '#0ea5e9',
     }
+    const totalCols = VENT_COLS + 1
     return (
       <div className="rt-panel" style={{ maxHeight: height ?? 320 }}>
         <div className="rt-table-scroll">
           <table className="rt-table">
             <thead>
               <tr className="rt-thead-group">
-                <th colSpan={3} className="rt-thg">Identification</th>
-                <th colSpan={2} className="rt-thg">Canalisation</th>
-                <th colSpan={5} className="rt-thg rt-thg-result rt-th-result-first">Résultats</th>
+                <th colSpan={2} className="rt-thg">Identification</th>
+                {isPdc ? (<>
+                  <th colSpan={2} className="rt-thg">Canalisation</th>
+                  <th colSpan={5} className="rt-thg rt-thg-result rt-th-result-first">Résultats</th>
+                </>) : (<>
+                  <th colSpan={3} className="rt-thg">Canalisation</th>
+                  <th colSpan={5} className="rt-thg rt-thg-result rt-th-result-first">Résultats</th>
+                </>)}
               </tr>
               <tr className="rt-thead-cols">
                 <th className="rt-th" style={{ width: 28 }}></th>
                 <th className="rt-th">Tronçon</th>
-                <th className="rt-th">DN</th>
+                <th className="rt-th">Dimension</th>
+                {!isPdc && <th className="rt-th">Dh (mm)</th>}
                 <th className="rt-th">L (m)</th>
-                <th className="rt-th rt-th-result rt-th-result-first">Q (m³/h)</th>
-                <th className="rt-th rt-th-result">V (m/s)</th>
-                <th className="rt-th rt-th-result">J (Pa/m)</th>
-                <th className="rt-th rt-th-result">ΔP lin. (Pa)</th>
-                <th className="rt-th rt-th-result">ΔP tot. (Pa)</th>
+                {isPdc ? (<>
+                  <th className="rt-th rt-th-result rt-th-result-first">Q (m³/h)</th>
+                  <th className="rt-th rt-th-result">V (m/s)</th>
+                  <th className="rt-th rt-th-result">J (Pa/m)</th>
+                  <th className="rt-th rt-th-result">ΔP lin. (Pa)</th>
+                  <th className="rt-th rt-th-result">ΔP tot. (Pa)</th>
+                </>) : (<>
+                  <th className="rt-th rt-th-result rt-th-result-first">Q (m³/h)</th>
+                  <th className="rt-th rt-th-result">Coeff.</th>
+                  <th className="rt-th rt-th-result">Q fois. (m³/h)</th>
+                  <th className="rt-th rt-th-result">V (m/s)</th>
+                  <th className="rt-th rt-th-result">J (Pa/m)</th>
+                </>)}
               </tr>
             </thead>
             <tbody>
               {displayRows.length === 0 && (
-                <tr><td colSpan={VENT_COLS + 1} className="rt-empty">Aucun tronçon — tracez des réseaux ventilation et placez une CTA</td></tr>
+                <tr><td colSpan={totalCols} className="rt-empty">Aucun tronçon — tracez des réseaux ventilation et placez une CTA</td></tr>
               )}
               {displayRows.map((row, i) => {
                 if (row.kind === 'vent-network-header') {
@@ -2228,9 +2247,9 @@ export default function ResultsTable({
                   const isFirst = i === 0 || !displayRows.slice(0, i).some(r => r.kind === 'vent-network-header')
                   return (
                     <React.Fragment key={`net-${row.role}-${i}`}>
-                      {!isFirst && <tr className="rt-vent-net-spacer"><td colSpan={VENT_COLS + 1} /></tr>}
+                      {!isFirst && <tr className="rt-vent-net-spacer"><td colSpan={totalCols} /></tr>}
                       <tr className="rt-vent-net-header">
-                        <td colSpan={VENT_COLS + 1} style={{ borderLeft: `4px solid ${border}`, background: bg }}>
+                        <td colSpan={totalCols} style={{ borderLeft: `4px solid ${border}`, background: bg }}>
                           <span className="rt-vent-net-label" style={{ color }}>{row.label}</span>
                           <span className="rt-vent-net-arrow" style={{ color }}>▸ depuis CTA</span>
                         </td>
@@ -2240,52 +2259,80 @@ export default function ResultsTable({
                 }
                 if (row.kind === 'vent-separation') return (
                   <tr key={`vsep-${row.ptId}-${i}`} className="rt-vent-separation">
-                    <td colSpan={VENT_COLS + 1} />
+                    <td colSpan={totalCols} />
                   </tr>
                 )
                 if (row.kind !== 'segment') return null
-                const { seg, ctaPortName, depth = 0 } = row
+                const { seg, depth = 0 } = row
                 const role = roleMap?.get(seg.id) ?? 'soufflage'
                 const vr = ventilationResults?.get(seg.id)
                 const transDp    = ventilationNodeTransitionDp?.get(seg.id) ?? 0
                 const junctionDp = ventilationNodeJunctionDp?.get(seg.id) ?? 0
                 const isSelected = selectedIds?.includes(seg.id)
                 const rawName = getDisplayName(seg, segments, levels, lineYs, columns, columnXs, chaufferie, points, role, activeCalcId, roleMap, flowDirections, segDisplayDists)
-                // Strip "Air xxx – " prefix since the badge already shows the network type
                 const sepIdx = rawName?.indexOf(' – ') ?? -1
                 const name = sepIdx >= 0 ? rawName!.slice(sepIdx + 3) : rawName
                 const badge = ROLE_BADGE[role] ?? '?'
                 const badgeColor = ROLE_COLOR[role] ?? '#374151'
                 const indent = depth * 14
+                const coeff = (seg as any).coeffFoisonnement ?? null
+                const dhMm = vr ? vr.di_mm.toFixed(0) : (seg as any).di_override ?? '—'
                 return (
                   <tr key={seg.id}
                     className={`rt-row${isSelected ? ' rt-row-selected' : ''}`}
                     ref={isSelected ? selectedRowRef : null}
                     onClick={() => onSelectIds?.([seg.id])}>
-                    <td className="rt-td" style={{ paddingLeft: 6, textAlign: 'center' }}>
+                    <td className="rt-cell" style={{ paddingLeft: 6 }}>
                       <span className="rt-vent-badge" style={{ background: badgeColor }}>{badge}</span>
                     </td>
-                    <td className="rt-td" style={{ paddingLeft: 4 + indent }}>
+                    <td className="rt-cell rt-cell-name" style={{ paddingLeft: 4 + indent }}>
                       {depth > 0 && <span className="rt-depth">{'└─'}</span>}
                       {name ?? seg.name ?? '—'}
                     </td>
-                    <td className="rt-td">{seg.dn ?? '—'}</td>
-                    <td className="rt-td">{seg.length_override != null ? seg.length_override.toFixed(2) : '—'}</td>
-                    <td className="rt-td rt-td-result rt-td-result-first">
-                      {vr ? vr.Q_m3h.toFixed(0) : '—'}
-                    </td>
-                    <td className="rt-td rt-td-result" style={vr && vr.v_ms > 8 ? { color: '#ef4444', fontWeight: 700 } : vr && vr.v_ms > 5 ? { color: '#f97316', fontWeight: 700 } : {}}>
-                      {vr ? vr.v_ms.toFixed(2) : '—'}
-                    </td>
-                    <td className="rt-td rt-td-result" style={vr && vr.dp_Pa_m > 1.5 ? { color: '#f97316', fontWeight: 700 } : {}}>
-                      {vr ? vr.dp_Pa_m.toFixed(2) : '—'}
-                    </td>
-                    <td className="rt-td rt-td-result">
-                      {vr && seg.length_override != null ? Math.round(vr.dp_Pa) : '—'}
-                    </td>
-                    <td className="rt-td rt-td-result" style={{ fontWeight: 600 }}>
-                      {vr ? Math.round(vr.dp_total_Pa + transDp + junctionDp) : '—'}
-                    </td>
+                    <td className="rt-cell">{seg.dn ?? '—'}</td>
+                    {!isPdc && (
+                      <td className="rt-cell" style={{ color: '#6b7280' }}>
+                        {vr?.dimensioned ? vr.di_mm.toFixed(0) : '—'}
+                      </td>
+                    )}
+                    <td className="rt-cell">{seg.length_override != null ? seg.length_override.toFixed(2) : '—'}</td>
+                    {isPdc ? (<>
+                      <td className="rt-cell rt-result rt-result-first">
+                        {vr ? (vr.Q_foisonne_m3h != null
+                          ? <span title={`Total : ${vr.Q_m3h.toFixed(0)} m³/h`} style={{ color: '#1d4ed8' }}>{vr.Q_foisonne_m3h.toFixed(0)}*</span>
+                          : vr.Q_m3h.toFixed(0)) : '—'}
+                      </td>
+                      {/* TEMPORAIRE — PROJET SPÉCIFIQUE — À SUPPRIMER : critère vitesse max f(Q) */}
+                      <td className="rt-cell rt-result" style={vr?.dimensioned && vr.v_ms > getVentMaxVelocity(vr.Q_foisonne_m3h ?? vr.Q_m3h) ? { color: '#ef4444', fontWeight: 700 } : {}}>
+                        {vr?.dimensioned ? vr.v_ms.toFixed(2) : '—'}
+                      </td>
+                      <td className="rt-cell rt-result">
+                        {vr?.dimensioned ? vr.dp_Pa_m.toFixed(2) : '—'}
+                      </td>
+                      <td className="rt-cell rt-result">
+                        {vr?.dimensioned && seg.length_override != null ? Math.round(vr.dp_Pa) : '—'}
+                      </td>
+                      <td className="rt-cell rt-result">
+                        {vr?.dimensioned ? Math.round(vr.dp_total_Pa + transDp + junctionDp) : '—'}
+                      </td>
+                    </>) : (<>
+                      <td className="rt-cell rt-result rt-result-first">
+                        {vr ? vr.Q_m3h.toFixed(0) : '—'}
+                      </td>
+                      <td className="rt-cell rt-result" style={{ color: coeff != null ? undefined : '#9ca3af' }}>
+                        {coeff != null ? `${Math.round(coeff * 100)} %` : '—'}
+                      </td>
+                      <td className="rt-cell rt-result">
+                        {vr?.Q_foisonne_m3h != null ? vr.Q_foisonne_m3h.toFixed(0) : '—'}
+                      </td>
+                      {/* TEMPORAIRE — PROJET SPÉCIFIQUE — À SUPPRIMER : critère vitesse max f(Q) */}
+                      <td className="rt-cell rt-result" style={vr?.dimensioned && vr.v_ms > getVentMaxVelocity(vr.Q_foisonne_m3h ?? vr.Q_m3h) ? { color: '#ef4444', fontWeight: 700 } : {}}>
+                        {vr?.dimensioned ? vr.v_ms.toFixed(2) : '—'}
+                      </td>
+                      <td className="rt-cell rt-result">
+                        {vr?.dimensioned ? vr.dp_Pa_m.toFixed(2) : '—'}
+                      </td>
+                    </>)}
                   </tr>
                 )
               })}

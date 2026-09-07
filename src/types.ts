@@ -79,6 +79,7 @@ export interface Segment {
   T_ch_override?: number | null  // température override tronçon chauffage (°C)
   T_eg_override?: number | null  // température override tronçon eau glacée (°C)
   hr_override?: number | null    // humidité relative override tronçon EG (%)
+  coeffFoisonnement?: number | null  // coefficient de foisonnement ventilation (0–1)
 }
 
 export interface NodeSize {
@@ -106,6 +107,11 @@ export interface Point {
   deltaT_emetteur?: number      // obsolète — conservé pour rétrocompat projets anciens
   dp_emetteur?: number          // ΔP émetteur / terminal (Pa)
   dp_vanne_th?: number          // ΔP vanne thermostatique (Pa)
+  // Coefficients de foisonnement CTA (par type d'air, 0–1)
+  cf_soufflage?:  number | null
+  cf_reprise?:    number | null
+  cf_airNeuf?:    number | null
+  cf_airRejete?:  number | null
 }
 
 export interface Level {

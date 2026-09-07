@@ -876,6 +876,21 @@ function computeGroups(paramType, segments, materials, insulations, isChauffage 
       rows.push({ key: k, label: v.isFlow ? `${v.value} m³/h` : `${v.value} m/s`, ids: v.ids, color: '#64748b' })
     return { rows, missing: none }
   }
+  if (paramType === 'coeffFoisonnement') {
+    const byKey = new Map(), none = []
+    for (const s of segments) {
+      const cf = (s as any).coeffFoisonnement
+      if (cf == null) { none.push(s.id); continue }
+      const k = String(Math.round(cf * 100))
+      if (!byKey.has(k)) byKey.set(k, { ids: [], value: cf })
+      byKey.get(k).ids.push(s.id)
+    }
+    const rows = []
+    for (const [k, v] of byKey)
+      rows.push({ key: k, label: `${Math.round(v.value * 100)} %`, ids: v.ids, color: '#64748b' })
+    rows.sort((a, b) => parseFloat(a.key) - parseFloat(b.key))
+    return { rows, missing: none }
+  }
   return { rows: [], missing: [] }
 }
 
@@ -955,7 +970,7 @@ function EditParamsPanel({
   const set = patch => onEditParamChange({ ...editParam, ...patch })
   const { paramType, segType, materialId, dn, insulationId, thickness,
           length, flowVelocityMode, flowVelocityValue,
-          ductShape: rawDuctShape } = editParam
+          ductShape: rawDuctShape, coeffFoisonnement } = editParam
   const ductShape: 'circular' | 'rectangular' = rawDuctShape ?? 'circular'
 
   const isBouclageECS = !isEF && !isAlim && !isChauffage && !isEauGlacee
@@ -963,6 +978,7 @@ function EditParamsPanel({
     : isAlim   ? ['material', 'length']
     : isChauffage ? ['material', 'length']
     : isEauGlacee ? ['material', 'insulation', 'length']
+    : isVentilation ? ['material', 'length', 'coeffFoisonnement']
     : ['material', 'insulation', 'length', 'flowVelocity']
   useEffect(() => {
     if (!validTypes.includes(paramType)) set({ paramType: 'material' })
@@ -1015,6 +1031,7 @@ function EditParamsPanel({
     : paramType === 'insulation' ? (insulationId ? `${insulationId}||${thickness ?? '__'}` : null)
     : paramType === 'length' ? (length != null ? String(length) : null)
     : paramType === 'flowVelocity' ? (flowVelocityValue != null ? `${flowVelocityMode === 'flowRate' ? 'flow' : 'vel'}||${flowVelocityValue}` : null)
+    : paramType === 'coeffFoisonnement' ? (coeffFoisonnement != null ? String(Math.round(coeffFoisonnement * 100)) : null)
     : null
 
   return (
@@ -1025,7 +1042,7 @@ function EditParamsPanel({
         <label className="lp-label">Paramètre</label>
         <select value={paramType} onChange={e => {
           const newType = e.target.value
-          const base = { paramType: newType, materialId: null, dn: null, insulationId: null, thickness: null, length: null, flowVelocityValue: null }
+          const base = { paramType: newType, materialId: null, dn: null, insulationId: null, thickness: null, length: null, flowVelocityValue: null, coeffFoisonnement: null }
           if (newType === 'material' && isVentilation) {
             const mats = ductShape === 'rectangular' ? ventRectMats : ventCircMats
             set({ ...base, materialId: mats[0]?.id ?? null })
@@ -1034,9 +1051,10 @@ function EditParamsPanel({
           }
         }}>
           <option value="material">Matériau et Section</option>
-          {!isAlim && !isChauffage && !isVentilation && <option value="insulation">Isolant & épaisseur</option>}
+          {!isAlim && !isChauffage && !isVentilation && <option value="insulation">Isolant &amp; épaisseur</option>}
           <option value="length">Longueur</option>
-          {isBouclageECS && <option value="flowVelocity">Débit / vitesse</option>}
+          {isVentilation && <option value="coeffFoisonnement">Coeff. foisonnement</option>}
+          {isBouclageECS && !isVentilation && <option value="flowVelocity">Débit / vitesse</option>}
         </select>
       </div>
 
@@ -1076,12 +1094,15 @@ function EditParamsPanel({
         {/* Section : DN circulaire ou A×B rectangulaire */}
         {selMat && (
           <div className="lp-field">
-            <label className="lp-label">{ductShape === 'rectangular' ? 'Section (A×B)' : 'Diamètre (DN)'}</label>
-            <LpDropdown
-              value={dn ?? ''}
-              onChange={v => set({ dn: v || null })}
-              options={selMat.dns.map((d: any) => ({ value: d.dn, label: d.dn }))}
-            />
+            <label className="lp-label">{ductShape === 'rectangular' ? 'Section (A×B)' : 'Diamètre'}</label>
+            <select value={dn ?? ''} onChange={e => set({ dn: e.target.value || null })}>
+              <option value="">— Choisir —</option>
+              {selMat.dns.map((d: any) => (
+                <option key={d.dn} value={d.dn}>
+                  {ductShape === 'rectangular' ? `${d.dn} mm` : d.dn}
+                </option>
+              ))}
+            </select>
           </div>
         )}
       </>) : (<>
@@ -1188,6 +1209,20 @@ function EditParamsPanel({
         </div>
       )}
 
+      {paramType === 'coeffFoisonnement' && (
+        <div className="lp-field">
+          <label className="lp-label">Valeur à appliquer</label>
+          <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+            <NumInput min={0} max={100} step={1} style={{ flex: 1, minWidth: 0 }}
+              value={coeffFoisonnement != null ? Math.round(coeffFoisonnement * 100) : null}
+              placeholder="ex: 80"
+              allowEmpty
+              onChange={v => set({ coeffFoisonnement: v != null ? v / 100 : null })} />
+            <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0 }}>%</span>
+          </div>
+        </div>
+      )}
+
       {/* Groups (segments) */}
       {(
       <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 6, marginTop: 4 }}>
@@ -1202,6 +1237,7 @@ function EditParamsPanel({
                 else if (paramType === 'insulation') { const [iid, t] = g.key.split('||'); set({ insulationId: iid, thickness: t === '__' ? null : +t }) }
                 else if (paramType === 'length') { set({ length: +g.key }) }
                 else if (paramType === 'flowVelocity') { const [mode, val] = g.key.split('||'); set({ flowVelocityMode: mode === 'flow' ? 'flowRate' : 'velocity', flowVelocityValue: +val }) }
+                else if (paramType === 'coeffFoisonnement') { set({ coeffFoisonnement: +g.key / 100 }) }
               }}
               style={{
                 display: 'flex', alignItems: 'center', gap: 7,
@@ -1226,9 +1262,10 @@ function EditParamsPanel({
             border: '1px solid #fde68a', background: '#fffbeb', userSelect: 'none' }}>
             <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: '#f59e0b' }} />
             <span style={{ flex: 1, fontSize: 11, color: '#92400e' }}>
-              Sans {paramType === 'material' ? 'matériau / DN'
+              Sans {paramType === 'material' ? (isVentilation ? 'matériau / section' : 'matériau / DN')
                   : paramType === 'insulation' ? 'isolant'
                   : paramType === 'length' ? 'longueur'
+                  : paramType === 'coeffFoisonnement' ? 'coefficient'
                   : 'débit / vitesse'}
             </span>
             <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e',
@@ -1245,15 +1282,15 @@ function EditParamsPanel({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
             {[
               { color: '#16a34a', label: 'Valeur déjà attribuée', line: 'thick' },
-              { color: (isEF || isEauGlacee) ? '#93c5fd' : '#ef4444', label: 'Paramètre absent — à attribuer', line: 'normal' },
-              { color: '#9ca3af', label: 'Autre valeur attribuée', line: 'normal' },
+              { color: isVentilation ? '#f59e0b' : (isEF || isEauGlacee) ? '#3b82f6' : '#ef4444', label: 'Paramètre absent — à attribuer', line: 'normal' },
+              { color: '#6b7280', label: 'Autre valeur attribuée', line: 'normal' },
             ].map(({ color, label, line }) => (
               <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                 <svg width={28} height={12} style={{ flexShrink: 0 }}>
                   <line x1={2} y1={6} x2={26} y2={6}
                     stroke={color}
-                    strokeWidth={line === 'thick' ? 3 : line === 'normal' ? 2 : 1}
-                    strokeDasharray={line === 'thin' ? '4,3' : 'none'} />
+                    strokeWidth={line === 'thick' ? 3 : 2}
+                    strokeDasharray="none" />
                 </svg>
                 <span style={{ fontSize: 10, color: '#374151' }}>{label}</span>
               </div>

@@ -100,7 +100,7 @@ function SchemaCoudeLisse({ angle, rOverD = 1.5, mini, di_mm }: SchemaProps) {
   const rLabel = di_mm != null ? `r = ${Math.round(rOD * di_mm)} mm` : 'r'
 
   return (
-    <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" style={{ display: 'block' }}>
+    <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
       {/* Duct geometry scaled to fit the fixed viewBox */}
       <g transform={`translate(${tx.toFixed(1)} ${ty.toFixed(1)}) scale(${scl.toFixed(4)})`}>
         <path d={pathD} fill={fill} stroke={stroke} strokeWidth={mini ? +(10/scl).toFixed(2) : +(3/scl).toFixed(3)}
@@ -115,7 +115,7 @@ function SchemaCoudeLisse({ angle, rOverD = 1.5, mini, di_mm }: SchemaProps) {
         <path d={`M ${cx_v - arcR} ${cy_v} A ${arcR} ${arcR} 0 0 1 ${annBx} ${annBy}`}
           stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
         <text x={cx_v} y={cy_v + 20} fontSize="15" fill="#374151" fontWeight="600"
-          textAnchor="middle" dominantBaseline="middle">δ = {angle}°</text>
+          textAnchor="middle" dominantBaseline="middle">θ = {angle}°</text>
         {/* Flèche R₀ */}
         <line x1={cx_v} y1={cy_v} x2={Px_v} y2={Py_v}
           stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
@@ -130,7 +130,7 @@ function SchemaCoudeLisse({ angle, rOverD = 1.5, mini, di_mm }: SchemaProps) {
         <line x1={vx(150)} y1={vy(478)} x2={vx(150)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
         <line x1={vx(230)} y1={vy(478)} x2={vx(230)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
         <line x1={vx(150)} y1={vy(484)} x2={vx(230)} y2={vy(484)} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-        <text x={vx(190)} y={vy(506)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{d0Label}</text>
+        <text x={vx(190)} y={+(vy(484) + 16).toFixed(1)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{d0Label}</text>
       </>}
     </svg>
   )
@@ -217,7 +217,7 @@ function SchemaCoudeSegmente({ angle, nPieces = 4, mini, di_mm, rOverD = 1.5 }: 
   const rLabel = di_mm != null ? `r = ${Math.round(rOD * di_mm)} mm` : 'r'
 
   return (
-    <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" style={{ display: 'block' }}>
+    <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
       {/* Duct geometry scaled to fit the fixed viewBox */}
       <g transform={`translate(${tx.toFixed(1)} ${ty.toFixed(1)}) scale(${scl.toFixed(4)})`}>
         <path d={pathD} fill={fill} stroke={stroke} strokeWidth={mini ? +(10/scl).toFixed(2) : +(3/scl).toFixed(3)}
@@ -226,7 +226,7 @@ function SchemaCoudeSegmente({ angle, nPieces = 4, mini, di_mm, rOverD = 1.5 }: 
           <line key={k}
             x1={oj[0].toFixed(1)} y1={oj[1].toFixed(1)}
             x2={innerJoints[k][0].toFixed(1)} y2={innerJoints[k][1].toFixed(1)}
-            stroke={stroke} strokeWidth={mini ? +(6/scl).toFixed(2) : +(2/scl).toFixed(3)} strokeLinecap="round" />
+            stroke={stroke} strokeWidth={mini ? +(10/scl).toFixed(2) : +(2/scl).toFixed(3)} strokeLinecap="round" />
         ))}
       </g>
       {!mini && <>
@@ -238,7 +238,7 @@ function SchemaCoudeSegmente({ angle, nPieces = 4, mini, di_mm, rOverD = 1.5 }: 
         <path d={`M ${cx_v - arcR} ${cy_v} A ${arcR} ${arcR} 0 0 1 ${annBx} ${annBy}`}
           stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
         <text x={cx_v} y={cy_v + 20} fontSize="15" fill="#374151" fontWeight="600"
-          textAnchor="middle" dominantBaseline="middle">δ = {angle}°</text>
+          textAnchor="middle" dominantBaseline="middle">θ = {angle}°</text>
         {/* Flèche R₀ */}
         <line x1={cx_v} y1={cy_v} x2={Px_v} y2={Py_v}
           stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
@@ -253,7 +253,7 @@ function SchemaCoudeSegmente({ angle, nPieces = 4, mini, di_mm, rOverD = 1.5 }: 
         <line x1={vx(150)} y1={vy(478)} x2={vx(150)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
         <line x1={vx(230)} y1={vy(478)} x2={vx(230)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
         <line x1={vx(150)} y1={vy(484)} x2={vx(230)} y2={vy(484)} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-        <text x={vx(190)} y={vy(506)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{d0Label}</text>
+        <text x={vx(190)} y={+(vy(484) + 16).toFixed(1)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{d0Label}</text>
       </>}
     </svg>
   )
@@ -307,7 +307,7 @@ function SchemaCoudeOnglet({ angle, mini, di_mm }: SchemaProps) {
   const annBy = +(cy_v - arcR * Math.sin(δ)).toFixed(1)
 
   return (
-    <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" style={{ display: 'block' }}>
+    <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
       <g transform={`translate(${tx.toFixed(1)} ${ty.toFixed(1)}) scale(${scl.toFixed(4)})`}>
         <path d={pathD} fill={fill} stroke={stroke} strokeWidth={mini ? +(10/scl).toFixed(2) : +(3/scl).toFixed(3)}
           strokeLinejoin="round" strokeLinecap="round" />
@@ -320,11 +320,11 @@ function SchemaCoudeOnglet({ angle, mini, di_mm }: SchemaProps) {
         <path d={`M ${cx_v - arcR} ${cy_v} A ${arcR} ${arcR} 0 0 1 ${annBx} ${annBy}`}
           stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
         <text x={cx_v} y={cy_v + 20} fontSize="15" fill="#374151" fontWeight="600"
-          textAnchor="middle" dominantBaseline="middle">δ = {angle}°</text>
+          textAnchor="middle" dominantBaseline="middle">θ = {angle}°</text>
         <line x1={vx(150)} y1={vy(478)} x2={vx(150)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
         <line x1={vx(230)} y1={vy(478)} x2={vx(230)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
         <line x1={vx(150)} y1={vy(484)} x2={vx(230)} y2={vy(484)} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-        <text x={vx(190)} y={vy(506)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{d0Label}</text>
+        <text x={vx(190)} y={+(vy(484) + 16).toFixed(1)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{d0Label}</text>
       </>}
     </svg>
   )
@@ -386,23 +386,23 @@ function SchemaCoudeZ({ mini, di_mm, lOverD }: { mini?: boolean; di_mm?: number 
   const lLabel = di_mm != null ? `L = ${Math.round(lOD * di_mm)} mm` : 'L'
 
   return (
-    <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" style={{ display: 'block' }}>
+    <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
       <g transform={`translate(${tx.toFixed(1)} ${ty.toFixed(1)}) scale(${scl.toFixed(4)})`}>
         <path d={pathD} fill="#f1f5f9" stroke="#374151" strokeWidth={mini ? +(10/scl).toFixed(2) : +(3/scl).toFixed(3)}
           strokeLinejoin="round" strokeLinecap="round" />
         <line x1={ic1[0].toFixed(1)} y1={ic1[1].toFixed(1)} x2={oc1[0].toFixed(1)} y2={oc1[1].toFixed(1)}
-          stroke="#374151" strokeWidth={mini ? +(6/scl).toFixed(2) : +(2/scl).toFixed(3)} strokeLinecap="round" />
+          stroke="#374151" strokeWidth={mini ? +(10/scl).toFixed(2) : +(2/scl).toFixed(3)} strokeLinecap="round" />
         <line x1={oc2[0].toFixed(1)} y1={oc2[1].toFixed(1)} x2={ic2[0].toFixed(1)} y2={ic2[1].toFixed(1)}
-          stroke="#374151" strokeWidth={mini ? +(6/scl).toFixed(2) : +(2/scl).toFixed(3)} strokeLinecap="round" />
+          stroke="#374151" strokeWidth={mini ? +(10/scl).toFixed(2) : +(2/scl).toFixed(3)} strokeLinecap="round" />
       </g>
       {!mini && <>
         {/* D₀ : repères horizontaux + trait vertical à gauche de l'entrée (gap=8, repère=12) */}
         <line x1={vx(30)} y1={vy(eCy - r)} x2={vx(42)} y2={vy(eCy - r)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
         <line x1={vx(30)} y1={vy(eCy + r)} x2={vx(42)} y2={vy(eCy + r)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
         <line x1={vx(36)} y1={vy(eCy - r)} x2={vx(36)} y2={vy(eCy + r)} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-        <text x={vx(14)} y={vy(eCy)} fontSize="15" fill="#64748b" textAnchor="middle"
+        <text x={+(vx(36) - 16).toFixed(1)} y={vy(eCy)} fontSize="15" fill="#64748b" textAnchor="middle"
           dominantBaseline="middle" fontStyle="italic"
-          transform={`rotate(-90, ${vx(14)}, ${vy(eCy)})`}>{d0Label}</text>
+          transform={`rotate(-90, ${+(vx(36) - 16).toFixed(1)}, ${vy(eCy)})`}>{d0Label}</text>
 
         {/* Onglet haut : pointillé depuis ic1 (paroi supérieure entrée) vers la droite + arc + 30° */}
         <line x1={vx(ic1[0])} y1={vy(ic1[1])} x2={+(vx(ic1[0]) + dashLen).toFixed(1)} y2={vy(ic1[1])}
@@ -429,6 +429,1548 @@ function SchemaCoudeZ({ mini, di_mm, lOverD }: { mini?: boolean; di_mm?: number 
         <text x={lLabelX} y={lLabelY} fontSize="15" fill="#374151" fontWeight="600"
           textAnchor="middle" dominantBaseline="middle"
           paintOrder="stroke" stroke="white" strokeWidth="5">{lLabel}</text>
+      </>}
+    </svg>
+  )
+}
+
+// ── Schéma ASHRAE 3-13 — Dévoiement en S / col de cygne ──────────────────────
+
+function SchemaCoudeS({ mini, theta_s, di_mm, rOverDs, lOverDs, elbowTypeS, nPiecesS }: { mini?: boolean; theta_s?: number; di_mm?: number | null; rOverDs?: number; lOverDs?: number; elbowTypeS?: 'lisse' | 'segmente'; nPiecesS?: 3 | 4 | 5 }) {
+  const cx   = 500
+  const axL  = 76
+  const axC  = 38
+  const cy1  = 110
+
+  // cy2 proportionnel à D (1 unité l/D = 2·axL px, même échelle que D), plafonné à lMaxVis
+  const lOD     = Math.max(0, lOverDs ?? 4)
+  const lMaxVis = 2.5
+  const lVisLen = Math.max(10, Math.round(Math.min(lOD, lMaxVis) * 2 * axL))
+  const cy2     = cy1 + lVisLen
+
+  // len calculé par dichotomie : à θ=90°, ligne verticale / D = rOverDs
+  const rOD = rOverDs ?? 1.0
+  const _computeT90 = (L: number) => {
+    const dx = L * Math.sqrt(3) / 2 + axL / 2
+    const dy = 1.5 * L - axL * Math.sqrt(3) / 2
+    const ri = (dx * dx + dy * dy) / (2 * dx)
+    const rm = ri + axL
+    const d  = ri - L * Math.sqrt(3) / 2
+    return -L / 2 + Math.sqrt(Math.max(0, rm * rm - d * d))
+  }
+  const _targetT = rOD * 2 * axL
+  let _lo = 50, _hi = 2000
+  for (let _i = 0; _i < 60; _i++) {
+    const _m = (_lo + _hi) / 2
+    if (_computeT90(_m) < _targetT) _lo = _m; else _hi = _m
+  }
+  const len = (_lo + _hi) / 2
+
+  const lx  = cx - axL  // 424
+  const rxE = cx + axL  // 576
+
+  // Diagonale fixe : 30° sous l'horizontale (cos30=√3/2, sin30=0.5)
+  const dsx = +(lx - len * (Math.sqrt(3) / 2)).toFixed(1)
+  const dsy = +(cy2 + len * 0.5).toFixed(1)
+
+  // "Verticale" dynamique : tourne proportionnellement à θ
+  //   à θ=90° → direction 90° (verticale bas)   arc=120°
+  //   à θ=45° → direction 30° (bas-droite)       arc=60°
+  const θ_deg      = Math.max(15, Math.min(90, theta_s ?? 90))
+  const arcSpanDeg = 120 * θ_deg / 90               // 120° à θ=90°, 60° à θ=45°, …
+  const vertDirRad = (330 + arcSpanDeg) * Math.PI / 180
+
+  // Arcs concentriques : centre à y=cy2 → tangente verticale au départ, écart = 2·axL exact
+  // Ri imposé par la contrainte : arc intérieur passe par le point de référence θ=90°
+  const nwX_90 = dsx - axL * 0.5
+  const nwY_90 = dsy + len - axL * (Math.sqrt(3) / 2)
+  const Ri   = Math.round(((lx - nwX_90) ** 2 + (cy2 - nwY_90) ** 2) / (2 * (lx - nwX_90)))
+  const Ro   = Ri + 2 * axL   // même centre → gap constant = 2·axL
+  const Cx   = lx - Ri        // centre sur la ligne y=cy2
+  const Cy   = cy2
+  const Rmid = (Ri + Ro) / 2
+
+  // Jonctions de segments (elbowTypeS === 'segmente')
+  const nSeg = nPiecesS ?? 3
+
+  // Intersection du rayon θ avec le cercle médian → position et orientation automatiques de l'ovale
+  const cv  = Math.cos(vertDirRad)
+  const sv  = Math.sin(vertDirRad)
+  const bQ  = (dsx - Cx) * cv + (dsy - Cy) * sv
+  const cQ  = (dsx - Cx) ** 2 + (dsy - Cy) ** 2 - Rmid ** 2
+  const t   = -bQ + Math.sqrt(bQ * bQ - cQ)
+  const dex = +(dsx + t * cv).toFixed(1)
+  const dey = +(dsy + t * sv).toFixed(1)
+
+  // Orientation automatique : direction radiale depuis le centre des arcs
+  const φ_rad = Math.atan2(+dey - Cy, +dex - Cx)
+  const cosφ  = Math.cos(φ_rad)
+  const sinφ  = Math.sin(φ_rad)
+  const nwX   = +(+dex - axL * cosφ).toFixed(1)
+  const nwY   = +(+dey - axL * sinφ).toFixed(1)
+  const seX   = +(+dex + axL * cosφ).toFixed(1)
+  const seY   = +(+dey + axL * sinφ).toFixed(1)
+
+  // Annotation D sur l'ovale incliné
+  const d0Label = di_mm != null ? `D = ${di_mm.toFixed(0)} mm` : 'D'
+  const rLabel  = di_mm != null && rOverDs != null ? `r = ${Math.round(rOverDs * di_mm)} mm` : 'r'
+  const lLabel  = di_mm != null ? `l = ${Math.round(lOD * di_mm)} mm` : 'l'
+  const φDeg   = (φ_rad * 180 / Math.PI).toFixed(1)
+  const annOff = 32
+  const annTx  = +(+dex - annOff * sinφ).toFixed(1)
+  const annTy  = +(+dey + annOff * cosφ).toFixed(1)
+
+  // Ligne r bas : du coin (dsx,dsy) vers le milieu de l'arc Rmid
+  const rEndX  = +(Cx + Rmid * Math.cos(φ_rad / 2)).toFixed(1)
+  const rEndY  = +(Cy + Rmid * Math.sin(φ_rad / 2)).toFixed(1)
+  const rLen   = Math.hypot(+rEndX - +dsx, +rEndY - +dsy)
+  const rDirX  = (+rEndX - +dsx) / rLen
+  const rDirY  = (+rEndY - +dsy) / rLen
+  const rLabelX = +((+dsx + +rEndX) / 2).toFixed(1)
+  const rLabelY = +((+dsy + +rEndY) / 2).toFixed(1)
+
+  // Arc θ bas : de 330° CW jusqu'à vertDirRad
+  const aR  = 38
+  const ax0 = +(dsx + aR * Math.cos(330 * Math.PI / 180)).toFixed(1)
+  const ay0 = +(dsy + aR * Math.sin(330 * Math.PI / 180)).toFixed(1)
+  const ax1 = +(dsx + aR * Math.cos(vertDirRad)).toFixed(1)
+  const ay1 = +(dsy + aR * Math.sin(vertDirRad)).toFixed(1)
+
+  // ── Virage supérieur (miroir du bas : x→2cx-x, y→cy1+cy2-y, virage vers la droite) ──
+  const Cx_t   = rxE + Ri                                    // centre arcs supérieurs
+  const dsx_t  = +(2 * cx - (+dsx)).toFixed(1)
+  const dsy_t  = +(cy1 + cy2 - (+dsy)).toFixed(1)
+  const dex_t  = +(2 * cx - (+dex)).toFixed(1)
+  const dey_t  = +(cy1 + cy2 - (+dey)).toFixed(1)
+  const nwX_t  = +(2 * cx - (+nwX)).toFixed(1)              // extrémité arc intérieur top
+  const nwY_t  = +(cy1 + cy2 - (+nwY)).toFixed(1)
+  const seX_t  = +(2 * cx - (+seX)).toFixed(1)              // extrémité arc extérieur top
+  const seY_t  = +(cy1 + cy2 - (+seY)).toFixed(1)
+  const rEndX_t  = +(Cx_t - Rmid * Math.cos(φ_rad / 2)).toFixed(1)
+  const rEndY_t  = +(cy1   - Rmid * Math.sin(φ_rad / 2)).toFixed(1)
+  const rLabelX_t = +((+dsx_t + +rEndX_t) / 2).toFixed(1)
+  const rLabelY_t = +((+dsy_t + +rEndY_t) / 2).toFixed(1)
+  // Arc θ haut : de 150° CW jusqu'à (150+arcSpanDeg)° (miroir du bas = +180°)
+  const topArcStart = 150 * Math.PI / 180
+  const topArcEnd   = (150 + arcSpanDeg) * Math.PI / 180
+  const ax0_t = +(+dsx_t + aR * Math.cos(topArcStart)).toFixed(1)
+  const ay0_t = +(+dsy_t + aR * Math.sin(topArcStart)).toFixed(1)
+  const ax1_t = +(+dsx_t + aR * Math.cos(topArcEnd)).toFixed(1)
+  const ay1_t = +(+dsy_t + aR * Math.sin(topArcEnd)).toFixed(1)
+  // Extrémités de l'axe majeur de l'ovale supérieur (pour demi-ellipses plein/pointillé)
+  const _ovalRX_t = +(+dex_t + axL * cosφ).toFixed(1)
+  const _ovalRY_t = +(+dey_t + axL * sinφ).toFixed(1)
+  const _ovalLX_t = +(+dex_t - axL * cosφ).toFixed(1)
+  const _ovalLY_t = +(+dey_t - axL * sinφ).toFixed(1)
+
+  // Boîte englobante automatique : géométrie + marge pour les labels
+  const _pad  = mini ? 8 : 15
+  const _xMin = Math.floor(mini ? (+dsx - _pad) : (+dsx - 90))
+  const _xMax = Math.ceil(Math.max(
+    mini ? (+dsx_t + _pad) : (+dsx_t + 90),
+    +nwX_t + _pad,
+    mini ? 0 : (cx + axL + 160)
+  ))
+  const _yMin = Math.floor(+seY_t - _pad)
+  const _yMax = Math.ceil(+seY + _pad)
+  const _vW   = _xMax - _xMin
+  const _vH   = _yMax - _yMin
+  const sw    = +((mini ? 10 : 3.75) * _vW / 500).toFixed(1)
+
+  return (
+    <svg viewBox={`${_xMin} ${_yMin} ${_vW} ${_vH}`} width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
+      {/* Ovale cy1 — moitié basse pleine, moitié haute en pointillé */}
+      {!mini && <ellipse cx={cx} cy={cy1} rx={axL} ry={axC} fill="#f1f5f9" stroke="none" />}
+      {!mini && <path d={`M ${cx + axL} ${cy1} A ${axL} ${axC} 0 0 1 ${cx - axL} ${cy1}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />}
+      {!mini && <path d={`M ${cx + axL} ${cy1} A ${axL} ${axC} 0 0 0 ${cx - axL} ${cy1}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" strokeDasharray="10 9" />}
+      {/* Ovale cy2 — moitié basse pleine, moitié haute en pointillé */}
+      {!mini && <ellipse cx={cx} cy={cy2} rx={axL} ry={axC} fill="#f1f5f9" stroke="none" />}
+      {!mini && <path d={`M ${cx + axL} ${cy2} A ${axL} ${axC} 0 0 1 ${cx - axL} ${cy2}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />}
+      {!mini && <path d={`M ${cx + axL} ${cy2} A ${axL} ${axC} 0 0 0 ${cx - axL} ${cy2}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" strokeDasharray="10 9" />}
+      {/* Lignes verticales */}
+      <line x1={lx}  y1={cy1} x2={lx}  y2={cy2} stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      <line x1={rxE} y1={cy1} x2={rxE} y2={cy2} stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      {/* ── Virage supérieur (vers la droite) ── */}
+      {/* Ovale supérieur orienté : fond + demi-avant (plein) + demi-arrière (pointillé) */}
+      <ellipse cx={dex_t} cy={dey_t} rx={axL} ry={axC}
+        fill="#f1f5f9" stroke="none"
+        transform={`rotate(${φDeg}, ${dex_t}, ${dey_t})`} />
+      <path d={`M ${_ovalRX_t} ${_ovalRY_t} A ${axL} ${axC} ${φDeg} 0 0 ${_ovalLX_t} ${_ovalLY_t}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      <path d={`M ${_ovalRX_t} ${_ovalRY_t} A ${axL} ${axC} ${φDeg} 0 1 ${_ovalLX_t} ${_ovalLY_t}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" strokeDasharray="10 9" />
+      {/* Paroi intérieure top (depuis rxE, sweep CW = monte puis tourne à droite) */}
+      <path d={`M ${rxE} ${cy1} A ${Ri} ${Ri} 0 0 1 ${nwX_t} ${nwY_t}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Paroi extérieure top (depuis lx, sweep CW) */}
+      <path d={`M ${lx} ${cy1} A ${Ro} ${Ro} 0 0 1 ${seX_t} ${seY_t}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Jonctions de segments top */}
+      {elbowTypeS === 'segmente' && Array.from({ length: nSeg - 1 }, (_, i) => {
+        const α  = (i + 1) * φ_rad / nSeg
+        const ix = +(Cx_t - Ri * Math.cos(α)).toFixed(1)
+        const iy = +(cy1  - Ri * Math.sin(α)).toFixed(1)
+        const ox = +(Cx_t - Ro * Math.cos(α)).toFixed(1)
+        const oy = +(cy1  - Ro * Math.sin(α)).toFixed(1)
+        return <line key={i} x1={ix} y1={iy} x2={ox} y2={oy}
+          stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      })}
+      {/* Pointillés top (masqués en mini) */}
+      {!mini && <>
+        <line x1={cx} y1={cy1} x2={dsx_t} y2={dsy_t}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+        <line x1={dsx_t} y1={dsy_t} x2={dex_t} y2={dey_t}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+      </>}
+      {/* ── Virage inférieur (vers la gauche) ── */}
+      {/* Ovale bas orienté NW-SE à 60° (dessiné avant les pointillés) */}
+      <ellipse cx={dex} cy={dey} rx={axL} ry={axC}
+        fill="#f1f5f9" stroke="#374151" strokeWidth={sw}
+        transform={`rotate(${φDeg}, ${dex}, ${dey})`} />
+      {/* Paroi intérieure — arc concentrique, départ vertical, gap = 2·axL constant */}
+      <path d={`M ${lx} ${cy2} A ${Ri} ${Ri} 0 0 1 ${nwX} ${nwY}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Paroi extérieure — arc concentrique, même centre, Ro = Ri + 2·axL */}
+      <path d={`M ${rxE} ${cy2} A ${Ro} ${Ro} 0 0 1 ${seX} ${seY}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Jonctions de segments bas */}
+      {elbowTypeS === 'segmente' && Array.from({ length: nSeg - 1 }, (_, i) => {
+        const α = (i + 1) * φ_rad / nSeg
+        const ix = +(Cx + Ri * Math.cos(α)).toFixed(1)
+        const iy = +(Cy + Ri * Math.sin(α)).toFixed(1)
+        const ox = +(Cx + Ro * Math.cos(α)).toFixed(1)
+        const oy = +(Cy + Ro * Math.sin(α)).toFixed(1)
+        return <line key={i} x1={ix} y1={iy} x2={ox} y2={oy}
+          stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      })}
+      {/* Pointillés bas (masqués en mini) */}
+      {!mini && <>
+        <line x1={cx} y1={cy2} x2={dsx} y2={dsy}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+        <line x1={dsx} y1={dsy} x2={dex} y2={dey}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+      </>}
+      {/* Annotations (mode grand schéma uniquement) */}
+      {!mini && <>
+        {/* Arc θ haut (150° → 150°+arcSpan, CW) + label à droite */}
+        <path d={`M ${ax0_t} ${ay0_t} A ${aR} ${aR} 0 0 1 ${ax1_t} ${ay1_t}`}
+          stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        <text x={+(+dsx_t + 12).toFixed(1)} y={dsy_t} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="start" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">θ = {θ_deg}°</text>
+        {/* Rayon r haut */}
+        <line x1={dsx_t} y1={dsy_t} x2={rEndX_t} y2={rEndY_t}
+          stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+        <text x={rLabelX_t} y={rLabelY_t} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="middle" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">{rLabel}</text>
+        {/* Arc θ bas (330° → 330°+arcSpan, CW) + label à gauche */}
+        <path d={`M ${ax0} ${ay0} A ${aR} ${aR} 0 0 1 ${ax1} ${ay1}`}
+          stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        <text x={+(dsx - 12).toFixed(1)} y={dsy} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="end" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">θ = {θ_deg}°</text>
+        {/* Annotation D sur l'ovale incliné : tirets perpendiculaires + ligne d'axe + label */}
+        <g transform={`rotate(${φDeg}, ${dex}, ${dey})`}>
+          <line x1={(+dex - axL).toFixed(1)} y1={(+dey - 6).toFixed(1)} x2={(+dex - axL).toFixed(1)} y2={(+dey + 6).toFixed(1)}
+            stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={(+dex + axL).toFixed(1)} y1={(+dey - 6).toFixed(1)} x2={(+dex + axL).toFixed(1)} y2={(+dey + 6).toFixed(1)}
+            stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={(+dex - axL).toFixed(1)} y1={dey} x2={(+dex + axL).toFixed(1)} y2={dey}
+            stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
+        </g>
+        <text x={annTx} y={annTy} fontSize="25" fill="#64748b" textAnchor="middle" fontStyle="italic">{d0Label}</text>
+        {/* Rayon r : du coin des pointillés vers le milieu de l'arc */}
+        <line x1={dsx} y1={dsy} x2={rEndX} y2={rEndY}
+          stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+        <text x={rLabelX} y={rLabelY} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="middle" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">{rLabel}</text>
+        {/* Annotation l : côté gauche de la gaine */}
+        {(() => {
+          const lx2 = cx - axL - 20
+          const ym  = (cy1 + cy2) / 2
+          return <>
+            <line x1={lx2 - 10} y1={cy1} x2={lx2 + 10} y2={cy1} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={lx2 - 10} y1={cy2} x2={lx2 + 10} y2={cy2} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={lx2} y1={cy1} x2={lx2} y2={cy2} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
+            <text x={lx2 - 16} y={ym} fontSize="25" fill="#64748b" textAnchor="end" dominantBaseline="middle" fontStyle="italic">{lLabel}</text>
+          </>
+        })()}
+      </>}
+    </svg>
+  )
+}
+
+// ── Schéma ASHRAE 3-14 — Dévoiement en S, deux plans perpendiculaires ────────
+
+function SchemaCoude314({ mini, theta_s, di_mm, rOverDs, lOverDs, elbowTypeS, nPiecesS }: { mini?: boolean; theta_s?: number; di_mm?: number | null; rOverDs?: number; lOverDs?: number; elbowTypeS?: 'lisse' | 'segmente'; nPiecesS?: 3 | 4 | 5 }) {
+  const cx   = 500
+  const axL  = 76
+  const axC  = 38
+  const cy1  = 110
+
+  const lOD     = Math.max(0, lOverDs ?? 4)
+  const lMaxVis = 2.5
+  const lVisLen = Math.max(10, Math.round(Math.min(lOD, lMaxVis) * 2 * axL))
+  const cy2     = cy1 + lVisLen
+
+  const rOD = rOverDs ?? 1.0
+  const _computeT90 = (L: number) => {
+    const dx = L * Math.sqrt(3) / 2 + axL / 2
+    const dy = 1.5 * L - axL * Math.sqrt(3) / 2
+    const ri = (dx * dx + dy * dy) / (2 * dx)
+    const rm = ri + axL
+    const d  = ri - L * Math.sqrt(3) / 2
+    return -L / 2 + Math.sqrt(Math.max(0, rm * rm - d * d))
+  }
+  const _targetT = rOD * 2 * axL
+  let _lo = 50, _hi = 2000
+  for (let _i = 0; _i < 60; _i++) {
+    const _m = (_lo + _hi) / 2
+    if (_computeT90(_m) < _targetT) _lo = _m; else _hi = _m
+  }
+  const len = (_lo + _hi) / 2
+
+  const lx  = cx - axL
+  const rxE = cx + axL
+
+  const dsx = +(lx - len * (Math.sqrt(3) / 2)).toFixed(1)
+  const dsy = +(cy2 + len * 0.5).toFixed(1)
+
+  const θ_deg      = Math.max(60, Math.min(90, theta_s ?? 90))
+  const arcSpanDeg = 120 * θ_deg / 90
+  const vertDirRad = (330 + arcSpanDeg) * Math.PI / 180
+
+  const nwX_90 = dsx - axL * 0.5
+  const nwY_90 = dsy + len - axL * (Math.sqrt(3) / 2)
+  const Ri   = Math.round(((lx - nwX_90) ** 2 + (cy2 - nwY_90) ** 2) / (2 * (lx - nwX_90)))
+  const Ro   = Ri + 2 * axL
+  const Cx   = lx - Ri
+  const Cy   = cy2
+  const Rmid = (Ri + Ro) / 2
+
+  const cv  = Math.cos(vertDirRad)
+  const sv  = Math.sin(vertDirRad)
+  const bQ  = (dsx - Cx) * cv + (dsy - Cy) * sv
+  const cQ  = (dsx - Cx) ** 2 + (dsy - Cy) ** 2 - Rmid ** 2
+  const t   = -bQ + Math.sqrt(bQ * bQ - cQ)
+  const dex = +(dsx + t * cv).toFixed(1)
+  const dey = +(dsy + t * sv).toFixed(1)
+
+  const φ_rad = Math.atan2(+dey - Cy, +dex - Cx)
+  const cosφ  = Math.cos(φ_rad)
+  const sinφ  = Math.sin(φ_rad)
+  const nwX   = +(+dex - axL * cosφ).toFixed(1)
+
+  // Valeurs θ=90° fixes pour la partie haute (arcs et ovale indépendants de θ)
+  const cv_90    = Math.cos((330 + 120) * Math.PI / 180)
+  const sv_90    = Math.sin((330 + 120) * Math.PI / 180)
+  const bQ_90    = (dsx - Cx) * cv_90 + (dsy - Cy) * sv_90
+  const t_90     = -bQ_90 + Math.sqrt(bQ_90 * bQ_90 - cQ)
+  const dex_90   = +(dsx + t_90 * cv_90).toFixed(1)
+  const dey_90   = +(dsy + t_90 * sv_90).toFixed(1)
+  const φ_rad_90 = Math.atan2(+dey_90 - Cy, +dex_90 - Cx)
+  const cosφ_90  = Math.cos(φ_rad_90)
+  const sinφ_90  = Math.sin(φ_rad_90)
+  const nwY   = +(+dey - axL * sinφ).toFixed(1)
+  const seX   = +(+dex + axL * cosφ).toFixed(1)
+  const seY   = +(+dey + axL * sinφ).toFixed(1)
+
+  const nSeg    = nPiecesS ?? 3
+  const rEndX   = +(Cx + Rmid * Math.cos(φ_rad / 2)).toFixed(1)
+  const rEndY   = +(Cy + Rmid * Math.sin(φ_rad / 2)).toFixed(1)
+  const rLabelX = +((+dsx + +rEndX) / 2).toFixed(1)
+  const rLabelY = +((+dsy + +rEndY) / 2).toFixed(1)
+  const rLabel  = di_mm != null && rOverDs != null ? `r = ${Math.round(rOverDs * di_mm)} mm` : 'r'
+
+  const φDeg   = (φ_rad * 180 / Math.PI).toFixed(1)
+  const d0Label = di_mm != null ? `D = ${di_mm.toFixed(0)} mm` : 'D'
+  const lLabel  = di_mm != null ? `l = ${Math.round(lOD * di_mm)} mm` : 'l'
+  const annOff = 32
+  const annTx  = +(+dex - annOff * sinφ).toFixed(1)
+  const annTy  = +(+dey + annOff * cosφ).toFixed(1)
+
+  const aR  = 38
+  const ax0 = +(dsx + aR * Math.cos(330 * Math.PI / 180)).toFixed(1)
+  const ay0 = +(dsy + aR * Math.sin(330 * Math.PI / 180)).toFixed(1)
+  const ax1 = +(dsx + aR * Math.cos(vertDirRad)).toFixed(1)
+  const ay1 = +(dsy + aR * Math.sin(vertDirRad)).toFixed(1)
+
+  // Ovale haut : haut-droite de cy1, orientation inversée SW-NE (fixé à θ=90°)
+  const dex_top = +(2 * cx - (+dex_90)).toFixed(1)
+  const dey_top = +(cy1 - (+dey_90 - cy2) * 0.8).toFixed(1)
+  const φDeg_t  = +(180 - φ_rad_90 * 180 / Math.PI).toFixed(1)
+
+  // Arc droit (virage supérieur Y-Z) — bezier depuis (rxE, cy1) vers bas de l'ovale haut
+  const botX_t = +(+dex_top - axL * cosφ_90).toFixed(1)
+  const botY_t = +(+dey_top + axL * sinφ_90).toFixed(1)
+  const cTop   = +(Ro * 0.38).toFixed(1)
+  const bP1y   = +(cy1 - +cTop).toFixed(1)
+  const arrAng = 15 * Math.PI / 180
+  const bP2x   = +(+botX_t - Math.cos(arrAng) * +cTop).toFixed(1)
+  const bP2y   = +(+botY_t - Math.sin(arrAng) * +cTop).toFixed(1)
+  const topX_t  = +(+botX_t + 2 * axL * Math.sin(arrAng)).toFixed(1)
+  const topY_t  = +(+botY_t - 2 * axL * Math.cos(arrAng)).toFixed(1)
+
+  // Ovale haut : centre = milieu SW-NE, orientation perpendiculaire à l'axe d'arrivée (arrAng)
+  const dex_topN = +(+botX_t + axL * Math.sin(arrAng)).toFixed(1)
+  const dey_topN = +(+botY_t - axL * Math.cos(arrAng)).toFixed(1)
+  const φDeg_tN  = +(arrAng * 180 / Math.PI - 90).toFixed(1)
+
+  // Arc de gauche — paroi extérieure du virage supérieur
+  const lC1y = +(cy1 - +cTop * 2.0).toFixed(1)
+  const lC2x = +(+topX_t - Math.cos(arrAng) * +cTop * 1.8).toFixed(1)
+  const lC2y = +(+topY_t - Math.sin(arrAng) * +cTop * 1.8).toFixed(1)
+
+  // Pointillés haut
+  const top_sx = +(2 * cx - +dsx).toFixed(1)
+  const top_sy = +(cy1 + (+dsy - cy2)).toFixed(1)
+
+  // Endpoint ligne pointillée haut : milieu transversal des deux parois au paramètre t_θ=θ/90
+  const t_θ        = θ_deg / 90
+  const _t1        = 1 - t_θ
+  const lMx_θ      = _t1**3*lx    + 3*_t1**2*t_θ*lx    + 3*_t1*t_θ**2*+lC2x + t_θ**3*+topX_t
+  const lMy_θ      = _t1**3*cy1   + 3*_t1**2*t_θ*+lC1y  + 3*_t1*t_θ**2*+lC2y + t_θ**3*+topY_t
+  const rMx_θ      = _t1**3*rxE   + 3*_t1**2*t_θ*rxE   + 3*_t1*t_θ**2*+bP2x + t_θ**3*+botX_t
+  const rMy_θ      = _t1**3*cy1   + 3*_t1**2*t_θ*+bP1y  + 3*_t1*t_θ**2*+bP2y + t_θ**3*+botY_t
+  const topDashEndX = +((lMx_θ + rMx_θ) / 2).toFixed(1)
+  const topDashEndY = +((lMy_θ + rMy_θ) / 2).toFixed(1)
+  const φDeg_θ      = +(Math.atan2(lMy_θ - rMy_θ, lMx_θ - rMx_θ) * 180 / Math.PI).toFixed(1)
+  // De Casteljau à t_θ : sous-arc [0..t_θ] — même courbure, s'arrête à l'ovale
+  // Arc gauche  P0=(lx,cy1)  P1=(lx,lC1y)  P2=(lC2x,lC2y)  P3=(topX_t,topY_t)
+  const _dLA01y  = cy1*_t1    + +lC1y*t_θ
+  const _dLA12x  = lx*_t1     + +lC2x*t_θ
+  const _dLA12y  = +lC1y*_t1  + +lC2y*t_θ
+  const _dLA012x = lx*_t1     + _dLA12x*t_θ
+  const _dLA012y = _dLA01y*_t1 + _dLA12y*t_θ
+  // Arc droit   P0=(rxE,cy1) P1=(rxE,bP1y) P2=(bP2x,bP2y)  P3=(botX_t,botY_t)
+  const _dRA01y  = cy1*_t1    + +bP1y*t_θ
+  const _dRA12x  = rxE*_t1    + +bP2x*t_θ
+  const _dRA12y  = +bP1y*_t1  + +bP2y*t_θ
+  const _dRA012x = rxE*_t1    + _dRA12x*t_θ
+  const _dRA012y = _dRA01y*_t1 + _dRA12y*t_θ
+  // Ligne r : du coin vers le milieu de l'arc (Bézier à t_θ/2) — miroir du bas (φ/2)
+  const t_mid     = t_θ / 2
+  const _tm1      = 1 - t_mid
+  const _lMx_m    = _tm1**3*lx  + 3*_tm1**2*t_mid*lx   + 3*_tm1*t_mid**2*+lC2x + t_mid**3*+topX_t
+  const _lMy_m    = _tm1**3*cy1 + 3*_tm1**2*t_mid*+lC1y + 3*_tm1*t_mid**2*+lC2y + t_mid**3*+topY_t
+  const _rMx_m    = _tm1**3*rxE + 3*_tm1**2*t_mid*rxE   + 3*_tm1*t_mid**2*+bP2x + t_mid**3*+botX_t
+  const _rMy_m    = _tm1**3*cy1 + 3*_tm1**2*t_mid*+bP1y + 3*_tm1*t_mid**2*+bP2y + t_mid**3*+botY_t
+  const rEndX_t   = +((_lMx_m + _rMx_m) / 2).toFixed(1)
+  const rEndY_t   = +((_lMy_m + _rMy_m) / 2).toFixed(1)
+  const rLabelX_t = +((+top_sx + rEndX_t) / 2).toFixed(1)
+  const rLabelY_t = +((+top_sy + rEndY_t) / 2).toFixed(1)
+  // Arc annotation : 2/3 de l'angle visuel à 90°
+  const topAng0      = Math.atan2(cy1 - +top_sy, cx - +top_sx)
+  const topAng0_n    = topAng0 < 0 ? topAng0 + 2 * Math.PI : topAng0
+  const topArcEnd_90 = (150 + 120) * Math.PI / 180
+  const topArcEnd    = topAng0_n + (topArcEnd_90 - topAng0_n) * (θ_deg / 90)
+  const tax0         = +(+top_sx + aR * Math.cos(topAng0)).toFixed(1)
+  const tay0         = +(+top_sy + aR * Math.sin(topAng0)).toFixed(1)
+  const tax1         = +(+top_sx + aR * Math.cos(topArcEnd)).toFixed(1)
+  const tay1         = +(+top_sy + aR * Math.sin(topArcEnd)).toFixed(1)
+
+  // Viewbox centré sur le contenu
+  const _pad  = mini ? 8 : 15
+  const _cL   = Math.min(+dsx, lx)
+  const _cR   = Math.max(+seX, +topX_t, +top_sx, +dex_topN, rxE)
+  const _midX = Math.round((_cL + _cR) / 2)
+  const _halfW = Math.ceil((_cR - _cL) / 2) + (mini ? _pad : 90)
+  const _xMin = _midX - _halfW
+  const _xMax = _midX + _halfW
+  const _yMin = Math.floor(Math.min(+topY_t, +dey_top, +top_sy) - (mini ? _pad : 35))
+  const _yMax = Math.ceil(Math.max(+seY, +dsy) + _pad)
+  const _vW   = _xMax - _xMin
+  const _vH   = _yMax - _yMin
+  const sw    = +((mini ? 10 : 3.75) * _vW / 500).toFixed(1)
+
+  return (
+    <svg viewBox={`${_xMin} ${_yMin} ${_vW} ${_vH}`} width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
+      {/* Ovale cy1 */}
+      {!mini && <ellipse cx={cx} cy={cy1} rx={axL} ry={axC} fill="#f1f5f9" stroke="none" />}
+      {!mini && <path d={`M ${cx + axL} ${cy1} A ${axL} ${axC} 0 0 1 ${cx - axL} ${cy1}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />}
+      {!mini && <path d={`M ${cx + axL} ${cy1} A ${axL} ${axC} 0 0 0 ${cx - axL} ${cy1}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" strokeDasharray="10 9" />}
+      {/* Ovale cy2 */}
+      {!mini && <ellipse cx={cx} cy={cy2} rx={axL} ry={axC} fill="#f1f5f9" stroke="none" />}
+      {!mini && <path d={`M ${cx + axL} ${cy2} A ${axL} ${axC} 0 0 1 ${cx - axL} ${cy2}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />}
+      {!mini && <path d={`M ${cx + axL} ${cy2} A ${axL} ${axC} 0 0 0 ${cx - axL} ${cy2}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" strokeDasharray="10 9" />}
+      {/* Lignes verticales cy1–cy2 */}
+      <line x1={lx}  y1={cy1} x2={lx}  y2={cy2} stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      <line x1={rxE} y1={cy1} x2={rxE} y2={cy2} stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      {/* Ovale haut — centré sur le milieu SW-NE, perpendiculaire à la tangente d'arrivée */}
+      <ellipse cx={topDashEndX} cy={topDashEndY} rx={axL} ry={axC}
+        fill="#f1f5f9" stroke="#374151" strokeWidth={sw}
+        transform={`rotate(${φDeg_θ}, ${topDashEndX}, ${topDashEndY})`} />
+      {/* Arc gauche virage haut — tronqué à t_θ par de Casteljau */}
+      <path d={`M ${lx} ${cy1} C ${lx} ${_dLA01y} ${_dLA012x} ${_dLA012y} ${lMx_θ} ${lMy_θ}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Arc droit virage haut — tronqué à t_θ par de Casteljau */}
+      <path d={`M ${rxE} ${cy1} C ${rxE} ${_dRA01y} ${_dRA012x} ${_dRA012y} ${rMx_θ} ${rMy_θ}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Jonctions de segments haut */}
+      {elbowTypeS === 'segmente' && Array.from({ length: nSeg - 1 }, (_, i) => {
+        const t_i  = (i + 1) * t_θ / nSeg
+        const _ti1 = 1 - t_i
+        const sx   = +(_ti1**3*lx  + 3*_ti1**2*t_i*lx   + 3*_ti1*t_i**2*+lC2x + t_i**3*+topX_t).toFixed(1)
+        const sy   = +(_ti1**3*cy1 + 3*_ti1**2*t_i*+lC1y + 3*_ti1*t_i**2*+lC2y + t_i**3*+topY_t).toFixed(1)
+        const ex   = +(_ti1**3*rxE + 3*_ti1**2*t_i*rxE   + 3*_ti1*t_i**2*+bP2x + t_i**3*+botX_t).toFixed(1)
+        const ey   = +(_ti1**3*cy1 + 3*_ti1**2*t_i*+bP1y + 3*_ti1*t_i**2*+bP2y + t_i**3*+botY_t).toFixed(1)
+        return <line key={`seg-top-${i}`} x1={sx} y1={sy} x2={ex} y2={ey}
+          stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      })}
+      {/* Ovale bas incliné (virage inférieur) */}
+      <ellipse cx={dex} cy={dey} rx={axL} ry={axC}
+        fill="#f1f5f9" stroke="#374151" strokeWidth={sw}
+        transform={`rotate(${φDeg}, ${dex}, ${dey})`} />
+      {/* Paroi intérieure bas */}
+      <path d={`M ${lx} ${cy2} A ${Ri} ${Ri} 0 0 1 ${nwX} ${nwY}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Paroi extérieure bas */}
+      <path d={`M ${rxE} ${cy2} A ${Ro} ${Ro} 0 0 1 ${seX} ${seY}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Jonctions de segments bas */}
+      {elbowTypeS === 'segmente' && Array.from({ length: nSeg - 1 }, (_, i) => {
+        const α = (i + 1) * φ_rad / nSeg
+        const ix = +(Cx + Ri * Math.cos(α)).toFixed(1)
+        const iy = +(Cy + Ri * Math.sin(α)).toFixed(1)
+        const ox = +(Cx + Ro * Math.cos(α)).toFixed(1)
+        const oy = +(Cy + Ro * Math.sin(α)).toFixed(1)
+        return <line key={i} x1={ix} y1={iy} x2={ox} y2={oy}
+          stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      })}
+      {/* Pointillés bas */}
+      {!mini && <>
+        <line x1={cx} y1={cy2} x2={dsx} y2={dsy}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+        <line x1={dsx} y1={dsy} x2={dex} y2={dey}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+      </>}
+      {/* Pointillés haut */}
+      {!mini && <>
+        <line x1={cx} y1={cy1} x2={top_sx} y2={top_sy}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+        <line x1={top_sx} y1={top_sy} x2={topDashEndX} y2={topDashEndY}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+      </>}
+      {/* Annotations (mode grand schéma uniquement) */}
+      {!mini && <>
+        {/* Arc θ bas + label */}
+        <path d={`M ${ax0} ${ay0} A ${aR} ${aR} 0 0 1 ${ax1} ${ay1}`}
+          stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        <text x={+(dsx - 12).toFixed(1)} y={dsy} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="end" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">θ = {θ_deg}°</text>
+        {/* Annotation D sur l'ovale incliné */}
+        <g transform={`rotate(${φDeg}, ${dex}, ${dey})`}>
+          <line x1={(+dex - axL).toFixed(1)} y1={(+dey - 6).toFixed(1)} x2={(+dex - axL).toFixed(1)} y2={(+dey + 6).toFixed(1)}
+            stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={(+dex + axL).toFixed(1)} y1={(+dey - 6).toFixed(1)} x2={(+dex + axL).toFixed(1)} y2={(+dey + 6).toFixed(1)}
+            stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={(+dex - axL).toFixed(1)} y1={dey} x2={(+dex + axL).toFixed(1)} y2={dey}
+            stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
+        </g>
+        <text x={annTx} y={annTy} fontSize="25" fill="#64748b" textAnchor="middle" fontStyle="italic">{d0Label}</text>
+        {/* Rayon r bas */}
+        <line x1={dsx} y1={dsy} x2={rEndX} y2={rEndY}
+          stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+        <text x={rLabelX} y={rLabelY} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="middle" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">{rLabel}</text>
+        {/* Arc θ haut + label */}
+        <path d={`M ${tax0} ${tay0} A ${aR} ${aR} 0 0 1 ${tax1} ${tay1}`}
+          stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        <text x={+(+top_sx + 12).toFixed(1)} y={top_sy} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="start" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">θ = {θ_deg}°</text>
+        {/* Rayon r haut */}
+        <line x1={top_sx} y1={top_sy} x2={rEndX_t} y2={rEndY_t}
+          stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+        <text x={rLabelX_t} y={rLabelY_t} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="middle" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">{rLabel}</text>
+        {/* Annotation l */}
+        {(() => {
+          const lx2 = cx - axL - 20
+          const ym  = (cy1 + cy2) / 2
+          return <>
+            <line x1={lx2 - 10} y1={cy1} x2={lx2 + 10} y2={cy1} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={lx2 - 10} y1={cy2} x2={lx2 + 10} y2={cy2} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={lx2} y1={cy1} x2={lx2} y2={cy2} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
+            <text x={lx2 - 16} y={ym} fontSize="25" fill="#64748b" textAnchor="end" dominantBaseline="middle" fontStyle="italic">{lLabel}</text>
+          </>
+        })()}
+      </>}
+    </svg>
+  )
+}
+
+// ── Schéma ASHRAE 3-13 — Dévoiement en S — RECTANGULAIRE (losanges) ─────────
+function SchemaCoudeRectS({ mini, theta_s, l_mm, h_mm, orientation, rOverWs, lOverDs }: {
+  mini?: boolean; theta_s?: number; l_mm?: number | null; h_mm?: number | null
+  orientation?: 'horizontal' | 'vertical'; rOverWs?: number; lOverDs?: number
+}) {
+  const cx   = 500
+  const cy1  = 110
+
+  const W    = orientation === 'vertical' ? (h_mm ?? null) : (l_mm ?? null)
+  const H    = orientation === 'vertical' ? (l_mm ?? null) : (h_mm ?? null)
+  const _W   = W ?? 300, _H = H ?? 150
+  const axL  = 76
+  const axC  = 38
+
+  const lOD     = Math.max(0, lOverDs ?? 1)
+  const lMaxVis = 2.5
+  const lVisLen = Math.max(10, Math.round(Math.min(lOD, lMaxVis) * 2 * axL))
+  const cy2     = cy1 + lVisLen
+
+  const rOD = rOverWs ?? 1.0
+  const _computeT90 = (L: number) => {
+    const dx = L * Math.sqrt(3) / 2 + axL / 2
+    const dy = 1.5 * L - axL * Math.sqrt(3) / 2
+    const ri = (dx * dx + dy * dy) / (2 * dx)
+    const rm = ri + axL
+    const d  = ri - L * Math.sqrt(3) / 2
+    return -L / 2 + Math.sqrt(Math.max(0, rm * rm - d * d))
+  }
+  const _targetT = rOD * 2 * axL
+  let _lo = 50, _hi = 2000
+  for (let _i = 0; _i < 60; _i++) {
+    const _m = (_lo + _hi) / 2
+    if (_computeT90(_m) < _targetT) _lo = _m; else _hi = _m
+  }
+  const len = (_lo + _hi) / 2
+
+  const lx  = cx - axL
+  const rxE = cx + axL
+
+  const dsx = +(lx - len * (Math.sqrt(3) / 2)).toFixed(1)
+  const dsy = +(cy2 + len * 0.5).toFixed(1)
+
+  const θ_deg      = Math.max(15, Math.min(90, theta_s ?? 90))
+  const arcSpanDeg = 120 * θ_deg / 90
+  const vertDirRad = (330 + arcSpanDeg) * Math.PI / 180
+
+  const nwX_90 = dsx - axL * 0.5
+  const nwY_90 = dsy + len - axL * (Math.sqrt(3) / 2)
+  const Ri   = Math.round(((lx - nwX_90) ** 2 + (cy2 - nwY_90) ** 2) / (2 * (lx - nwX_90)))
+  const Ro   = Ri + 2 * axL
+  const Cx   = lx - Ri
+  const Cy   = cy2
+  const Rmid = (Ri + Ro) / 2
+  const R_B  = Math.round(Math.hypot(axL + Ri, axC))  // rayon de l'arc "angle droit"
+
+  const cv  = Math.cos(vertDirRad)
+  const sv  = Math.sin(vertDirRad)
+  const bQ  = (dsx - Cx) * cv + (dsy - Cy) * sv
+  const cQ  = (dsx - Cx) ** 2 + (dsy - Cy) ** 2 - Rmid ** 2
+  const t   = -bQ + Math.sqrt(bQ * bQ - cQ)
+  const dex = +(dsx + t * cv).toFixed(1)
+  const dey = +(dsy + t * sv).toFixed(1)
+
+  const φ_rad  = Math.atan2(+dey - Cy, +dex - Cx)
+  const cosφ   = Math.cos(φ_rad)
+  const sinφ   = Math.sin(φ_rad)
+  // Inclinaison des losanges d'exit (~29° de décalage)
+  const φ_dia  = φ_rad - 0.5
+  const cosφd  = Math.cos(φ_dia)
+  const sinφd  = Math.sin(φ_dia)
+  const nwX   = +(+dex - axL * cosφ).toFixed(1)
+  const nwY   = +(+dey - axL * sinφ).toFixed(1)
+  const seX   = +(+dex + axL * cosφ).toFixed(1)
+  const seY   = +(+dey + axL * sinφ).toFixed(1)
+
+  // Labels avec dimensions réelles
+  const Dhyd = W != null && H != null && (W + H) > 0 ? (2 * H * W) / (H + W) : null
+  const rLabel = W != null ? `r = ${Math.round(rOD * W)} mm` : 'r'
+  const lLabel = Dhyd != null ? `l = ${Math.round(lOD * Dhyd)} mm` : 'l'
+
+  const φDeg    = (φ_rad * 180 / Math.PI).toFixed(1)
+  const annOff  = 32
+  const rEndX   = +(Cx + Rmid * Math.cos(φ_rad / 2)).toFixed(1)
+  const rEndY   = +(Cy + Rmid * Math.sin(φ_rad / 2)).toFixed(1)
+  const rLabelX = +((+dsx + +rEndX) / 2).toFixed(1)
+  const rLabelY = +((+dsy + +rEndY) / 2).toFixed(1)
+
+  const aR  = 38
+  const ax0 = +(dsx + aR * Math.cos(330 * Math.PI / 180)).toFixed(1)
+  const ay0 = +(dsy + aR * Math.sin(330 * Math.PI / 180)).toFixed(1)
+  const ax1 = +(dsx + aR * Math.cos(vertDirRad)).toFixed(1)
+  const ay1 = +(dsy + aR * Math.sin(vertDirRad)).toFixed(1)
+
+  // Virage supérieur (miroir 180°)
+  const Cx_t     = rxE + Ri
+  const dsx_t    = +(2 * cx - (+dsx)).toFixed(1)
+  const dsy_t    = +(cy1 + cy2 - (+dsy)).toFixed(1)
+  const dex_t    = +(2 * cx - (+dex)).toFixed(1)
+  const dey_t    = +(cy1 + cy2 - (+dey)).toFixed(1)
+  const nwX_t    = +(2 * cx - (+nwX)).toFixed(1)
+  const nwY_t    = +(cy1 + cy2 - (+nwY)).toFixed(1)
+  const seX_t    = +(2 * cx - (+seX)).toFixed(1)
+  const seY_t    = +(cy1 + cy2 - (+seY)).toFixed(1)
+  const rEndX_t  = +(Cx_t - Rmid * Math.cos(φ_rad / 2)).toFixed(1)
+  const rEndY_t  = +(cy1   - Rmid * Math.sin(φ_rad / 2)).toFixed(1)
+  const rLabelX_t = +((+dsx_t + +rEndX_t) / 2).toFixed(1)
+  const rLabelY_t = +((+dsy_t + +rEndY_t) / 2).toFixed(1)
+  const topArcStart = 150 * Math.PI / 180
+  const topArcEnd   = (150 + arcSpanDeg) * Math.PI / 180
+  const ax0_t = +(+dsx_t + aR * Math.cos(topArcStart)).toFixed(1)
+  const ay0_t = +(+dsy_t + aR * Math.sin(topArcStart)).toFixed(1)
+  const ax1_t = +(+dsx_t + aR * Math.cos(topArcEnd)).toFixed(1)
+  const ay1_t = +(+dsy_t + aR * Math.sin(topArcEnd)).toFixed(1)
+
+  // Sommets losange bas (dex, dey) — rotation φ_dia
+  const diR_x = +(+dex + axL * cosφd).toFixed(1)
+  const diR_y = +(+dey + axL * sinφd).toFixed(1)
+  const diT_x = +(+dex + axC * sinφd).toFixed(1)
+  const diT_y = +(+dey - axC * cosφd).toFixed(1)
+  const diL_x = +(+dex - axL * cosφd).toFixed(1)
+  const diL_y = +(+dey - axL * sinφd).toFixed(1)
+  const diB_x = +(+dex - axC * sinφd).toFixed(1)
+  const diB_y = +(+dey + axC * cosφd).toFixed(1)
+  // Sommets losange haut = rot180 exact des sommets bas (vecteurs changent de signe)
+  const diR_x_t = +(2 * cx - (+diR_x)).toFixed(1)
+  const diR_y_t = +(cy1 + cy2 - (+diR_y)).toFixed(1)
+  const diT_x_t = +(2 * cx - (+diT_x)).toFixed(1)
+  const diT_y_t = +(cy1 + cy2 - (+diT_y)).toFixed(1)
+  const diL_x_t = +(2 * cx - (+diL_x)).toFixed(1)
+  const diL_y_t = +(cy1 + cy2 - (+diL_y)).toFixed(1)
+  const diB_x_t = +(2 * cx - (+diB_x)).toFixed(1)
+  const diB_y_t = +(cy1 + cy2 - (+diB_y)).toFixed(1)
+
+  // ── Sommets mis à l'échelle H/L ──────────────────────────────────────────
+  // Facteur d'échelle : moyenne géométrique → k*H = côté H, k*L = côté L
+  const side_ref = Math.sqrt(axL**2 + axC**2)
+  const k = Math.max(0.06, Math.min(0.8, side_ref / Math.sqrt(_W * _H)))
+
+  // Vecteurs unitaires le long des côtés du rhombe (directions fixes par φ_dia)
+  // T→R : côté "L" (vers le bas sur le losange bas)
+  const uTR_x = (axL*cosφd - axC*sinφd) / side_ref
+  const uTR_y = (axL*sinφd + axC*cosφd) / side_ref
+  // T→L : côté "H" (vers la gauche sur le losange bas)
+  const uTL_x = (-axL*cosφd - axC*sinφd) / side_ref
+  const uTL_y = (-axL*sinφd + axC*cosφd) / side_ref
+
+  // Losange bas — ancre = diT (sommet NE, fixe)
+  const bR_x = +(+diT_x + k*_W*uTR_x).toFixed(1), bR_y = +(+diT_y + k*_W*uTR_y).toFixed(1)
+  const bL_x = +(+diT_x + k*_H*uTL_x).toFixed(1), bL_y = +(+diT_y + k*_H*uTL_y).toFixed(1)
+  const bB_x = +(+bR_x  + k*_H*uTL_x).toFixed(1), bB_y = +(+bR_y  + k*_H*uTL_y).toFixed(1)
+
+  // Losange haut — rotation 180° du losange bas : tR=rot(bL), tL=rot(bR), tB=rot(bB)
+  const tR_x = +(+diT_x_t - k*_H*uTL_x).toFixed(1), tR_y = +(+diT_y_t - k*_H*uTL_y).toFixed(1)
+  const tL_x = +(+diT_x_t - k*_W*uTR_x).toFixed(1), tL_y = +(+diT_y_t - k*_W*uTR_y).toFixed(1)
+  const tB_x = +(+tR_x    - k*_W*uTR_x).toFixed(1), tB_y = +(+tR_y    - k*_W*uTR_y).toFixed(1)
+
+  // Arc central top : part de rot180(cx,cy2+axC) = (cx,cy1−axC) → diT_t, même rayon R_B
+  const tCenter_y = cy1 - axC
+  const R_top_track = R_B
+
+  // Losanges milieu — ancre B = sommet Sud (cx, cy+axC), fixe
+  // B→R direction = (axL, -axC)/side_ref = côté L
+  // B→L direction = (-axL, -axC)/side_ref = côté H
+  const scL = k*_W / side_ref, scH = k*_H / side_ref
+  // cy2
+  const mR2_x = +(cx + scL*axL).toFixed(1), mR2_y = +(cy2+axC - scL*axC).toFixed(1)
+  const mL2_x = +(cx - scH*axL).toFixed(1), mL2_y = +(cy2+axC - scH*axC).toFixed(1)
+  const mT2_x = +((cx + (scL-scH)*axL)).toFixed(1), mT2_y = +(cy2+axC - (scL+scH)*axC).toFixed(1)
+  // cy1 (gardés pour annotation l)
+  const mR1_x = mR2_x, mR1_y = +(cy1+axC - scL*axC).toFixed(1)
+  const mL1_x = mL2_x, mL1_y = +(cy1+axC - scH*axC).toFixed(1)
+  const mT1_x = mT2_x, mT1_y = +(cy1+axC - (scL+scH)*axC).toFixed(1)
+
+  // Losange milieu-haut = rot180 du losange milieu-bas (centre = (cx,(cy1+cy2)/2))
+  const mT1r_x = +(cx + (scH-scL)*axL).toFixed(1)
+  const mT1r_y = +(cy1-axC + (scL+scH)*axC).toFixed(1)
+
+  // Parois droite et gauche (annotation l uniquement)
+  const rWall_x = +mR2_x, rWall_y1 = +mR1_y, rWall_y2 = +mR2_y
+  const lWall_x = +mL2_x, lWall_y1 = +mL1_y, lWall_y2 = +mL2_y
+
+  // Points de départ des arcs haut = rot180 des points de départ des arcs bas
+  const tInner_x = +(2*cx - lWall_x).toFixed(1), tInner_y = +(cy1+cy2 - lWall_y2).toFixed(1)
+  const tOuter_x = +(2*cx - rWall_x).toFixed(1), tOuter_y = +(cy1+cy2 - rWall_y2).toFixed(1)
+
+  // Arcs arrière : bB↔mT2 et mT1r↔tB (mT1r = rot180(mT2))
+  const _dxB1 = +mT2_x - +bB_x, _dyB1 = +mT2_y - +bB_y
+  const R_back1 = _dxB1 > 0 ? Math.round((_dxB1**2 + _dyB1**2) / (2*_dxB1)) : Math.round(Math.hypot(_dxB1, _dyB1))
+  const _dxB2 = +tB_x - mT1r_x, _dyB2 = +tB_y - mT1r_y
+  const R_back2 = _dxB2 > 0 ? Math.round((_dxB2**2 + _dyB2**2) / (2*_dxB2)) : Math.round(Math.hypot(_dxB2, _dyB2))
+
+  // Rayons des arcs intérieur/extérieur bas (paroi tangente verticale au départ)
+  // Ri_bi : centre à gauche de (lWall_x, lWall_y2), arc vers bL
+  const _dxBi = lWall_x - +bL_x, _dyBi = lWall_y2 - +bL_y
+  const Ri_bi = _dxBi > 0 ? Math.round((_dxBi**2 + _dyBi**2) / (2*_dxBi)) : Ri
+  // Ro_bo : centre à gauche de (rWall_x, rWall_y2), arc vers bR
+  const _dxBo = rWall_x - +bR_x, _dyBo = rWall_y2 - +bR_y
+  const Ro_bo = _dxBo > 0 ? Math.round((_dxBo**2 + _dyBo**2) / (2*_dxBo)) : Ro
+
+  // Arcs haut : mêmes rayons que bas (rot180 garantit cordes identiques)
+  const Ri_ti = Ri_bi
+  const Ro_to = Ro_bo
+
+  // Centres des losanges (milieu de la diagonale B↔T) pour les pointillés
+  const cM2x = +(cx + (mT2_x - cx) / 2).toFixed(1),  cM2y = +((cy2+axC + +mT2_y) / 2).toFixed(1)
+  const cM1x = +((cx + mT1r_x) / 2).toFixed(1),       cM1y = +((cy1-axC + mT1r_y) / 2).toFixed(1)
+  const cEx_x  = +((+diT_x   + +bB_x) / 2).toFixed(1), cEx_y  = +((+diT_y   + +bB_y) / 2).toFixed(1)
+  const cEx_xt = +((+diT_x_t + +tB_x) / 2).toFixed(1), cEx_yt = +((+diT_y_t + +tB_y) / 2).toFixed(1)
+
+  // Midpoint d'un arc SVG (sweep CW, large-arc=0) : formule centre + demi-angle
+  const _arcMid = (x1: number, y1: number, x2: number, y2: number, R: number): [number, number] => {
+    const dx2 = (x1 - x2) / 2, dy2 = (y1 - y2) / 2
+    const d = Math.hypot(dx2, dy2)
+    const h = Math.sqrt(Math.max(0, R*R - d*d))
+    const acx = (x1+x2)/2 + h * dy2 / d
+    const acy = (y1+y2)/2 - h * dx2 / d
+    const a1 = Math.atan2(y1 - acy, x1 - acx)
+    const a2r = Math.atan2(y2 - acy, x2 - acx)
+    const a2 = a2r < a1 ? a2r + 2*Math.PI : a2r
+    return [acx + R * Math.cos((a1+a2)/2), acy + R * Math.sin((a1+a2)/2)]
+  }
+  // Midpoint bas : moyenne arc intérieur (lWall→bL) et arc extérieur (rWall→bR)
+  const [_biMx, _biMy] = _arcMid(lWall_x, lWall_y2, +bL_x, +bL_y, Ri_bi)
+  const [_boMx, _boMy] = _arcMid(rWall_x, rWall_y2, +bR_x, +bR_y, Ro_bo)
+  const rMidX_B = +((_biMx + _boMx) / 2).toFixed(1)
+  const rMidY_B = +((_biMy + _boMy) / 2).toFixed(1)
+  // Midpoint haut : tInner→tR et tOuter→tL (rot180 des arcs bas)
+  const [_tiMx, _tiMy] = _arcMid(tInner_x, tInner_y, +tR_x, +tR_y, Ri_ti)
+  const [_toMx, _toMy] = _arcMid(tOuter_x, tOuter_y, +tL_x, +tL_y, Ro_to)
+  const rMidX_T = +((_tiMx + _toMx) / 2).toFixed(1)
+  const rMidY_T = +((_tiMy + _toMy) / 2).toFixed(1)
+  // Ancres annotations θ et r : aux coudes des pointillés
+  const ax0c   = +(+cEx_x  + aR * Math.cos(330 * Math.PI / 180)).toFixed(1)
+  const ax1c   = +(+cEx_x  + aR * Math.cos(vertDirRad)).toFixed(1)
+  const ax0c_t = +(+cEx_xt + aR * Math.cos(topArcStart)).toFixed(1)
+  const ax1c_t = +(+cEx_xt + aR * Math.cos(topArcEnd)).toFixed(1)
+  const rLabelXc   = +((+cEx_x  + +rMidX_B) / 2).toFixed(1)
+  const rLabelYc   = +((+dsy    + +rMidY_B) / 2).toFixed(1)
+  const rLabelXc_t = +((+cEx_xt + +rMidX_T) / 2).toFixed(1)
+  const rLabelYc_t = +((+dsy_t  + +rMidY_T) / 2).toFixed(1)
+
+  // Translation horizontale du groupe supérieur : Δx = (scL−scH)·axL
+  // Aligne le centre du losange milieu-haut sur le même axe vertical que le milieu-bas
+  // → les 3 parois de liaison entre losanges milieu deviennent strictement verticales
+  const sh_x      = (scL - scH) * axL
+  const tInner_xs  = tInner_x  + sh_x
+  const tOuter_xs  = tOuter_x  + sh_x
+  const mT1r_xs    = mT1r_x    + sh_x
+  const tR_xs      = tR_x      + sh_x
+  const tL_xs      = tL_x      + sh_x
+  const tB_xs      = tB_x      + sh_x
+  const diT_xs_t   = diT_x_t   + sh_x
+  const cx_ts      = cx         + sh_x
+  const cEx_xts    = cEx_xt    + sh_x
+  const cM1xs      = cM1x      + sh_x
+  const ax0c_ts    = ax0c_t    + sh_x
+  const ax1c_ts    = ax1c_t    + sh_x
+  const [_tiMxs, _tiMys] = _arcMid(tInner_xs, tInner_y, tR_xs, tR_y, Ri_ti)
+  const [_toMxs, _toMys] = _arcMid(tOuter_xs, tOuter_y, tL_xs, tL_y, Ro_to)
+  const rMidX_Ts    = (_tiMxs + _toMxs) / 2
+  const rMidY_Ts    = (_tiMys + _toMys) / 2
+  const rLabelXc_ts = (cEx_xts + rMidX_Ts) / 2
+
+  // ViewBox
+  const _pad  = mini ? 8 : 15
+
+  // Bornes Y des annotations H et L
+  // H : côté diT_t→tL (direction uTL), normal sortant = (-uTL_y, uTL_x)
+  const _hMidX = (tL_xs + tB_xs) / 2, _hMidY = (tL_y + tB_y) / 2
+  const _vAnnTopX = _hMidX + (-uTL_y) * 30, _vAnnTopY = _hMidY + uTL_x * 30
+  // L : côté bL→bB (direction uTR), normal sortant = (uTR_y, -uTR_x)
+  const _lMidX = (+bL_x + +bB_x) / 2, _lMidY = (+bL_y + +bB_y) / 2
+  const _vAnnBotX = _lMidX + uTR_y * 30, _vAnnBotY = _lMidY + (-uTR_x) * 30
+
+  const _allX = [+bR_x, +bL_x, +bB_x, +diT_x, tR_xs, tL_xs, tB_xs, diT_xs_t,
+                 +mR2_x, +mL2_x, +mT2_x, mT1r_xs, cx, cx_ts,
+                 tInner_xs, tOuter_xs]
+  const _allY = [+bR_y, +bL_y, +bB_y, +diT_y, +tR_y, +tL_y, +tB_y, +diT_y_t,
+                 +mR2_y, +mL2_y, +mT2_y, mT1r_y, cy2+axC,
+                 tInner_y, tOuter_y, tCenter_y]
+
+  const _xMin = Math.floor(mini
+    ? (Math.min(..._allX) - _pad)
+    : Math.min(Math.min(..._allX) - _pad, +cEx_x - 90, +dsx - 90, _vAnnTopX - 20, _vAnnBotX - 20))
+  const _xMax = Math.ceil(Math.max(
+    Math.max(..._allX) + _pad,
+    mini ? 0 : (Math.max(..._allX) + 90),
+    mini ? 0 : (rWall_x + 160)
+  ))
+  const _yMin = Math.floor(mini
+    ? (Math.min(..._allY) - _pad)
+    : Math.min(Math.min(..._allY) - _pad, _vAnnTopY - 40))
+  const _yMax = Math.ceil(Math.max(Math.max(..._allY) + _pad, mini ? 0 : _vAnnBotY + 40))
+  const _vW   = _xMax - _xMin
+  const _vH   = _yMax - _yMin
+  const sw    = +((mini ? 10 : 3.75) * _vW / 500).toFixed(1)
+  const da    = mini ? `${+(sw * 3.5).toFixed(1)} ${+(sw * 3).toFixed(1)}` : "10 9"
+
+  return (
+    <svg viewBox={`${_xMin} ${_yMin} ${_vW} ${_vH}`} width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
+      {/* ── Losange milieu haut = rot180(losange milieu bas) décalé de sh_x ── */}
+      {!mini && <polygon points={`${tOuter_xs},${tOuter_y} ${mT1r_xs},${mT1r_y} ${tInner_xs},${tInner_y} ${cx_ts},${tCenter_y}`}
+        fill="#f1f5f9" stroke="none" />}
+      {/* côtés avant B'→R' et L'→B' (pointillé) */}
+      {!mini && <polyline points={`${cx_ts},${tCenter_y} ${tOuter_xs},${tOuter_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="10 9" />}
+      {!mini && <polyline points={`${tInner_xs},${tInner_y} ${cx_ts},${tCenter_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="10 9" />}
+      {/* côtés arrière R'→T'→L' (plein) */}
+      {!mini && <polyline points={`${tOuter_xs},${tOuter_y} ${mT1r_xs},${mT1r_y} ${tInner_xs},${tInner_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />}
+      {/* ── Losange milieu bas (cy2) — ancre B=(cx,cy2+axC), Sud fixe ── */}
+      {!mini && <polygon points={`${mR2_x},${mR2_y} ${mT2_x},${mT2_y} ${mL2_x},${mL2_y} ${cx},${cy2+axC}`}
+        fill="#f1f5f9" stroke="none" />}
+      {/* côtés avant B→R et L→B (plein) */}
+      {!mini && <polyline points={`${cx},${cy2+axC} ${mR2_x},${mR2_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />}
+      {!mini && <polyline points={`${mL2_x},${mL2_y} ${cx},${cy2+axC}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />}
+      {/* côtés arrière R→T→L (pointillé) */}
+      {!mini && <polyline points={`${mR2_x},${mR2_y} ${mT2_x},${mT2_y} ${mL2_x},${mL2_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="10 9" />}
+      {/* ── Parois du tronçon droit — toutes verticales après translation sh_x ── */}
+      {/* Droite : (tInner+sh) → mR2, même abscisse x=cx+scL·axL */}
+      <line x1={tInner_xs} y1={tInner_y} x2={rWall_x} y2={rWall_y2} stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      {/* Gauche : (tOuter+sh) → mL2, même abscisse x=cx−scH·axL */}
+      <line x1={tOuter_xs} y1={tOuter_y} x2={lWall_x} y2={lWall_y2} stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      {/* Centre : T''=(mT1r+sh) → B_bas, même abscisse x=cx */}
+      <line x1={mT1r_xs} y1={mT1r_y} x2={cx} y2={cy2+axC} stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      {/* ── Virage supérieur (décalé de sh_x) ── */}
+      {/* Losange haut : ancre diT_xs_t (NE) */}
+      <polygon points={`${tR_xs},${tR_y} ${diT_xs_t},${diT_y_t} ${tL_xs},${tL_y} ${tB_xs},${tB_y}`}
+        fill="#f1f5f9" stroke="none" />
+      {/* côtés avant R→T→L (pointillé) */}
+      <polyline points={`${tR_xs},${tR_y} ${diT_xs_t},${diT_y_t} ${tL_xs},${tL_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={da} />
+      {/* côtés arrière L→B→R (plein) */}
+      <polyline points={`${tL_xs},${tL_y} ${tB_xs},${tB_y} ${tR_xs},${tR_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+      {/* Paroi intérieure top : (tInner+sh) → (tR+sh) — mêmes rayons, translation rigide */}
+      <path d={`M ${tInner_xs} ${tInner_y} A ${Ri_ti} ${Ri_ti} 0 0 1 ${tR_xs} ${tR_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Paroi extérieure top : (tOuter+sh) → (tL+sh) */}
+      <path d={`M ${tOuter_xs} ${tOuter_y} A ${Ro_to} ${Ro_to} 0 0 1 ${tL_xs} ${tL_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Arc central top : (cx+sh, cy1−axC) → (diT_t+sh) — pointillé car arrive au sommet T (2 côtés tirets) */}
+      <path d={`M ${cx_ts} ${tCenter_y} A ${R_top_track} ${R_top_track} 0 0 1 ${diT_xs_t} ${diT_y_t}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" strokeDasharray={da} />
+      {/* Pointillés top */}
+      {!mini && <>
+        <line x1={cM1xs} y1={cM1y} x2={cEx_xts} y2={dsy_t}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+        <line x1={cEx_xts} y1={dsy_t} x2={cEx_xts} y2={cEx_yt}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+      </>}
+      {/* ── Virage inférieur ── */}
+      {/* Losange bas : ancre diT (NE) */}
+      <polygon points={`${bR_x},${bR_y} ${diT_x},${diT_y} ${bL_x},${bL_y} ${bB_x},${bB_y}`}
+        fill="#f1f5f9" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+      {/* Paroi intérieure bas : lWall → bL */}
+      <path d={`M ${lWall_x} ${lWall_y2} A ${Ri_bi} ${Ri_bi} 0 0 1 ${bL_x} ${bL_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Paroi extérieure bas : rWall → bR */}
+      <path d={`M ${rWall_x} ${rWall_y2} A ${Ro_bo} ${Ro_bo} 0 0 1 ${bR_x} ${bR_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Arc central bas */}
+      <path d={`M ${cx} ${cy2+axC} A ${R_B} ${R_B} 0 0 1 ${diT_x} ${diT_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Chemin arrière bas + paroi arrière verticale : bB → mT2 → B''=(cx_ts,tCenter_y) */}
+      <path d={`M ${bB_x} ${bB_y} A ${R_back1} ${R_back1} 0 0 0 ${mT2_x} ${mT2_y} L ${cx_ts} ${tCenter_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" strokeDasharray={da} />
+      {/* Chemin arrière haut : T''=(mT1r_xs,mT1r_y) → tB_xs */}
+      <path d={`M ${mT1r_xs} ${mT1r_y} A ${R_back2} ${R_back2} 0 0 1 ${tB_xs} ${tB_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* Pointillés bas */}
+      {!mini && <>
+        <line x1={cM2x} y1={cM2y} x2={cEx_x} y2={dsy}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+        <line x1={cEx_x} y1={dsy} x2={cEx_x} y2={cEx_y}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+      </>}
+      {/* Annotations */}
+      {!mini && <>
+        {/* Arc θ haut + label */}
+        <path d={`M ${ax0c_ts} ${ay0_t} A ${aR} ${aR} 0 0 1 ${ax1c_ts} ${ay1_t}`}
+          stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        <text x={+(cEx_xts + 12).toFixed(1)} y={dsy_t} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="start" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">θ = {θ_deg}°</text>
+        {/* Rayon r haut */}
+        <line x1={cEx_xts} y1={dsy_t} x2={rMidX_Ts} y2={rMidY_Ts}
+          stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+        <text x={rLabelXc_ts} y={rLabelYc_t} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="middle" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">{rLabel}</text>
+        {/* Arc θ bas + label */}
+        <path d={`M ${ax0c} ${ay0} A ${aR} ${aR} 0 0 1 ${ax1c} ${ay1}`}
+          stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        <text x={+(+cEx_x - 12).toFixed(1)} y={dsy} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="end" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">θ = {θ_deg}°</text>
+        {/* Rayon r bas */}
+        <line x1={cEx_x} y1={dsy} x2={rMidX_B} y2={rMidY_B}
+          stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+        <text x={rLabelXc} y={rLabelYc} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="middle" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">{rLabel}</text>
+        {/* Annotation l : côté gauche de la gaine */}
+        {(() => {
+          const lx2 = lWall_x - 20
+          const ym  = (lWall_y1 + lWall_y2) / 2
+          return <>
+            <line x1={lx2 - 10} y1={lWall_y1} x2={lx2 + 10} y2={lWall_y1} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={lx2 - 10} y1={lWall_y2} x2={lx2 + 10} y2={lWall_y2} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={lx2} y1={lWall_y1} x2={lx2} y2={lWall_y2} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
+            <text x={lx2 - 16} y={ym} fontSize="25" fill="#64748b" textAnchor="end" dominantBaseline="middle" fontStyle="italic">{lLabel}</text>
+          </>
+        })()}
+        {/* Annotation H — côté parallèle tL_xs→tB_xs du losange haut décalé */}
+        {(() => {
+          const sx = tB_xs - tL_xs, sy = tB_y - tL_y
+          const sl = Math.hypot(sx, sy) || 1
+          const epX = sy / sl, epY = -sx / sl   // normale sortante vers la droite
+          const a0x = +(tL_xs + 5*epX).toFixed(1), a0y = +(tL_y + 5*epY).toFixed(1)
+          const a2x = +(tL_xs + 19*epX).toFixed(1), a2y = +(tL_y + 19*epY).toFixed(1)
+          const b0x = +(tB_xs + 5*epX).toFixed(1),  b0y = +(tB_y + 5*epY).toFixed(1)
+          const b2x = +(tB_xs + 19*epX).toFixed(1), b2y = +(tB_y + 19*epY).toFixed(1)
+          const a1x = +(tL_xs + 12*epX).toFixed(1), a1y = +(tL_y + 12*epY).toFixed(1)
+          const b1x = +(tB_xs + 12*epX).toFixed(1), b1y = +(tB_y + 12*epY).toFixed(1)
+          const mx  = +((tL_xs + tB_xs) / 2 + 30*epX).toFixed(1)
+          const my  = +((tL_y + tB_y) / 2 + 30*epY).toFixed(1)
+          const lbl = orientation === 'vertical'
+            ? (l_mm != null ? `L = ${l_mm} mm` : 'L')
+            : (h_mm != null ? `H = ${h_mm} mm` : 'H')
+          let ang = Math.atan2(sy, sx) * 180 / Math.PI
+          if (ang > 90) ang -= 180
+          if (ang < -90) ang += 180
+          return <>
+            <line x1={a0x} y1={a0y} x2={a2x} y2={a2y} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={b0x} y1={b0y} x2={b2x} y2={b2y} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={a1x} y1={a1y} x2={b1x} y2={b1y} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
+            <text x={mx} y={my} fontSize="25" fill="#64748b" fontStyle="italic"
+              textAnchor="middle" dominantBaseline="middle"
+              paintOrder="stroke" stroke="white" strokeWidth="6"
+              transform={`rotate(${ang.toFixed(1)}, ${mx}, ${my})`}>{lbl}</text>
+          </>
+        })()}
+        {/* Annotation L — côté bL→bB du losange bas (côté L proportionnel) */}
+        {(() => {
+          const sx = +bB_x - +bL_x, sy = +bB_y - +bL_y
+          const sl = Math.hypot(sx, sy) || 1
+          const epX = -uTR_y, epY = uTR_x   // normale sortante du côté L (vers l'extérieur gauche)
+          const a0x = +(+bL_x + 5*epX).toFixed(1), a0y = +(+bL_y + 5*epY).toFixed(1)
+          const a2x = +(+bL_x + 19*epX).toFixed(1), a2y = +(+bL_y + 19*epY).toFixed(1)
+          const b0x = +(+bB_x + 5*epX).toFixed(1),  b0y = +(+bB_y + 5*epY).toFixed(1)
+          const b2x = +(+bB_x + 19*epX).toFixed(1), b2y = +(+bB_y + 19*epY).toFixed(1)
+          const a1x = +(+bL_x + 12*epX).toFixed(1), a1y = +(+bL_y + 12*epY).toFixed(1)
+          const b1x = +(+bB_x + 12*epX).toFixed(1), b1y = +(+bB_y + 12*epY).toFixed(1)
+          const mx  = +((+bL_x + +bB_x) / 2 + 30*epX).toFixed(1)
+          const my  = +((+bL_y + +bB_y) / 2 + 30*epY).toFixed(1)
+          const lbl = orientation === 'vertical'
+            ? (h_mm != null ? `H = ${h_mm} mm` : 'H')
+            : (l_mm != null ? `L = ${l_mm} mm` : 'L')
+          let ang = Math.atan2(sy, sx) * 180 / Math.PI
+          if (ang > 45) ang -= 180
+          return <>
+            <line x1={a0x} y1={a0y} x2={a2x} y2={a2y} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={b0x} y1={b0y} x2={b2x} y2={b2y} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={a1x} y1={a1y} x2={b1x} y2={b1y} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
+            <text x={mx} y={my} fontSize="25" fill="#64748b" fontStyle="italic"
+              textAnchor="middle" dominantBaseline="middle"
+              paintOrder="stroke" stroke="white" strokeWidth="6"
+              transform={`rotate(${ang.toFixed(1)}, ${mx}, ${my})`}>{lbl}</text>
+          </>
+        })()}
+      </>}
+    </svg>
+  )
+}
+
+function SchemaRect314({ mini, theta_s, l_mm, h_mm, orientation, rOverWs, lOverDs }: {
+  mini?: boolean; theta_s?: number; l_mm?: number | null; h_mm?: number | null
+  orientation?: 'horizontal' | 'vertical'; rOverWs?: number; lOverDs?: number
+}) {
+  const cx   = 500
+  const cy1  = 110
+
+  const W    = orientation === 'vertical' ? (h_mm ?? null) : (l_mm ?? null)
+  const H    = orientation === 'vertical' ? (l_mm ?? null) : (h_mm ?? null)
+  const _W   = W ?? 300, _H = H ?? 150
+  const axL  = 76
+  const axC  = 38
+
+  const lOD     = Math.max(0, lOverDs ?? 1)
+  const lMaxVis = 2.5
+  const lVisLen = Math.max(10, Math.round(Math.min(lOD, lMaxVis) * 2 * axL))
+  const cy2     = cy1 + lVisLen
+
+  const rOD = rOverWs ?? 1.0
+  const _computeT90 = (L: number) => {
+    const dx = L * Math.sqrt(3) / 2 + axL / 2
+    const dy = 1.5 * L - axL * Math.sqrt(3) / 2
+    const ri = (dx * dx + dy * dy) / (2 * dx)
+    const rm = ri + axL
+    const d  = ri - L * Math.sqrt(3) / 2
+    return -L / 2 + Math.sqrt(Math.max(0, rm * rm - d * d))
+  }
+  const _targetT = rOD * 2 * axL
+  let _lo = 50, _hi = 2000
+  for (let _i = 0; _i < 60; _i++) {
+    const _m = (_lo + _hi) / 2
+    if (_computeT90(_m) < _targetT) _lo = _m; else _hi = _m
+  }
+  const len = (_lo + _hi) / 2
+
+  const lx  = cx - axL
+  const rxE = cx + axL
+
+  const dsx = +(lx - len * (Math.sqrt(3) / 2)).toFixed(1)
+  const dsy = +(cy2 + len * 0.5).toFixed(1)
+
+  const θ_deg      = Math.max(15, Math.min(90, theta_s ?? 90))
+  const arcSpanDeg = 120 * θ_deg / 90
+  const vertDirRad = (330 + arcSpanDeg) * Math.PI / 180
+
+  const nwX_90 = dsx - axL * 0.5
+  const nwY_90 = dsy + len - axL * (Math.sqrt(3) / 2)
+  const Ri   = Math.round(((lx - nwX_90) ** 2 + (cy2 - nwY_90) ** 2) / (2 * (lx - nwX_90)))
+  const Ro   = Ri + 2 * axL
+  const Cx   = lx - Ri
+  const Cy   = cy2
+  const Rmid = (Ri + Ro) / 2
+  const R_B  = Math.round(Math.hypot(axL + Ri, axC))
+
+  const cv  = Math.cos(vertDirRad)
+  const sv  = Math.sin(vertDirRad)
+  const bQ  = (dsx - Cx) * cv + (dsy - Cy) * sv
+  const cQ  = (dsx - Cx) ** 2 + (dsy - Cy) ** 2 - Rmid ** 2
+  const t   = -bQ + Math.sqrt(bQ * bQ - cQ)
+  const dex = +(dsx + t * cv).toFixed(1)
+  const dey = +(dsy + t * sv).toFixed(1)
+
+  const φ_rad  = Math.atan2(+dey - Cy, +dex - Cx)
+  const cosφ   = Math.cos(φ_rad)
+  const sinφ   = Math.sin(φ_rad)
+  const φ_dia  = φ_rad - 0.5
+  const cosφd  = Math.cos(φ_dia)
+  const sinφd  = Math.sin(φ_dia)
+  const nwX   = +(+dex - axL * cosφ).toFixed(1)
+  const nwY   = +(+dey - axL * sinφ).toFixed(1)
+  const seX   = +(+dex + axL * cosφ).toFixed(1)
+  const seY   = +(+dey + axL * sinφ).toFixed(1)
+
+  const Dhyd = W != null && H != null && (W + H) > 0 ? (2 * H * W) / (H + W) : null
+  const rLabel = W != null ? `r = ${Math.round(rOD * W)} mm` : 'r'
+  const lLabel = Dhyd != null ? `l = ${Math.round(lOD * Dhyd)} mm` : 'l'
+
+  const φDeg    = (φ_rad * 180 / Math.PI).toFixed(1)
+  const annOff  = 32
+  const rEndX   = +(Cx + Rmid * Math.cos(φ_rad / 2)).toFixed(1)
+  const rEndY   = +(Cy + Rmid * Math.sin(φ_rad / 2)).toFixed(1)
+  const rLabelX = +((+dsx + +rEndX) / 2).toFixed(1)
+  const rLabelY = +((+dsy + +rEndY) / 2).toFixed(1)
+
+  const aR  = 38
+  const ax0 = +(dsx + aR * Math.cos(330 * Math.PI / 180)).toFixed(1)
+  const ay0 = +(dsy + aR * Math.sin(330 * Math.PI / 180)).toFixed(1)
+  const ax1 = +(dsx + aR * Math.cos(vertDirRad)).toFixed(1)
+  const ay1 = +(dsy + aR * Math.sin(vertDirRad)).toFixed(1)
+
+  const Cx_t     = rxE + Ri
+  const dsx_t    = +(2 * cx - (+dsx)).toFixed(1)
+  const dsy_t    = +(cy1 + cy2 - (+dsy)).toFixed(1)
+  const dex_t    = +(2 * cx - (+dex)).toFixed(1)
+  const dey_t    = +(cy1 + cy2 - (+dey)).toFixed(1)
+  const nwX_t    = +(2 * cx - (+nwX)).toFixed(1)
+  const nwY_t    = +(cy1 + cy2 - (+nwY)).toFixed(1)
+  const seX_t    = +(2 * cx - (+seX)).toFixed(1)
+  const seY_t    = +(cy1 + cy2 - (+seY)).toFixed(1)
+  const topArcStart = 150 * Math.PI / 180
+  const topArcEnd   = (150 + arcSpanDeg) * Math.PI / 180
+
+  const diR_x = +(+dex + axL * cosφd).toFixed(1)
+  const diR_y = +(+dey + axL * sinφd).toFixed(1)
+  const diT_x = +(+dex + axC * sinφd).toFixed(1)
+  const diT_y = +(+dey - axC * cosφd).toFixed(1)
+  const diL_x = +(+dex - axL * cosφd).toFixed(1)
+  const diL_y = +(+dey - axL * sinφd).toFixed(1)
+  const diB_x = +(+dex - axC * sinφd).toFixed(1)
+  const diB_y = +(+dey + axC * cosφd).toFixed(1)
+  const diR_x_t = +(2 * cx - (+diR_x)).toFixed(1)
+  const diR_y_t = +(cy1 + cy2 - (+diR_y)).toFixed(1)
+  const diT_x_t = +(2 * cx - (+diT_x)).toFixed(1)
+  const diT_y_t = +(cy1 + cy2 - (+diT_y)).toFixed(1)
+  const diL_x_t = +(2 * cx - (+diL_x)).toFixed(1)
+  const diL_y_t = +(cy1 + cy2 - (+diL_y)).toFixed(1)
+  const diB_x_t = +(2 * cx - (+diB_x)).toFixed(1)
+  const diB_y_t = +(cy1 + cy2 - (+diB_y)).toFixed(1)
+
+  const side_ref = Math.sqrt(axL**2 + axC**2)
+  const k = Math.max(0.06, Math.min(0.8, side_ref / Math.sqrt(_W * _H)))
+
+  const uTR_x = (axL*cosφd - axC*sinφd) / side_ref
+  const uTR_y = (axL*sinφd + axC*cosφd) / side_ref
+  const uTL_x = (-axL*cosφd - axC*sinφd) / side_ref
+  const uTL_y = (-axL*sinφd + axC*cosφd) / side_ref
+
+  const bR_x = +(+diT_x + k*_W*uTR_x).toFixed(1), bR_y = +(+diT_y + k*_W*uTR_y).toFixed(1)
+  const bL_x = +(+diT_x + k*_H*uTL_x).toFixed(1), bL_y = +(+diT_y + k*_H*uTL_y).toFixed(1)
+  const bB_x = +(+bR_x  + k*_H*uTL_x).toFixed(1), bB_y = +(+bR_y  + k*_H*uTL_y).toFixed(1)
+
+  const tR_x = +(+diT_x_t - k*_H*uTL_x).toFixed(1), tR_y = +(+diT_y_t - k*_H*uTL_y).toFixed(1)
+  const tL_x = +(+diT_x_t - k*_W*uTR_x).toFixed(1), tL_y = +(+diT_y_t - k*_W*uTR_y).toFixed(1)
+  const tB_x = +(+tR_x    - k*_W*uTR_x).toFixed(1), tB_y = +(+tR_y    - k*_W*uTR_y).toFixed(1)
+
+  const tCenter_y = cy1 - axC
+  const R_top_track = R_B
+
+  const scL = k*_W / side_ref, scH = k*_H / side_ref
+  const mR2_x = +(cx + scL*axL).toFixed(1), mR2_y = +(cy2+axC - scL*axC).toFixed(1)
+  const mL2_x = +(cx - scH*axL).toFixed(1), mL2_y = +(cy2+axC - scH*axC).toFixed(1)
+  const mT2_x = +((cx + (scL-scH)*axL)).toFixed(1), mT2_y = +(cy2+axC - (scL+scH)*axC).toFixed(1)
+  const mR1_x = mR2_x, mR1_y = +(cy1+axC - scL*axC).toFixed(1)
+  const mL1_x = mL2_x, mL1_y = +(cy1+axC - scH*axC).toFixed(1)
+  const mT1_x = mT2_x, mT1_y = +(cy1+axC - (scL+scH)*axC).toFixed(1)
+
+  const mT1r_x = +(cx + (scH-scL)*axL).toFixed(1)
+  const mT1r_y = +(cy1-axC + (scL+scH)*axC).toFixed(1)
+
+  const rWall_x = +mR2_x, rWall_y1 = +mR1_y, rWall_y2 = +mR2_y
+  const lWall_x = +mL2_x, lWall_y1 = +mL1_y, lWall_y2 = +mL2_y
+
+  const tInner_x = +(2*cx - lWall_x).toFixed(1), tInner_y = +(cy1+cy2 - lWall_y2).toFixed(1)
+  const tOuter_x = +(2*cx - rWall_x).toFixed(1), tOuter_y = +(cy1+cy2 - rWall_y2).toFixed(1)
+
+  const _dxB1 = +mT2_x - +bB_x, _dyB1 = +mT2_y - +bB_y
+  const R_back1 = _dxB1 > 0 ? Math.round((_dxB1**2 + _dyB1**2) / (2*_dxB1)) : Math.round(Math.hypot(_dxB1, _dyB1))
+
+  const _dxBi = lWall_x - +bL_x, _dyBi = lWall_y2 - +bL_y
+  const Ri_bi = _dxBi > 0 ? Math.round((_dxBi**2 + _dyBi**2) / (2*_dxBi)) : Ri
+  const _dxBo = rWall_x - +bR_x, _dyBo = rWall_y2 - +bR_y
+  const Ro_bo = _dxBo > 0 ? Math.round((_dxBo**2 + _dyBo**2) / (2*_dxBo)) : Ro
+
+  const cM2x = +(cx + (mT2_x - cx) / 2).toFixed(1),  cM2y = +((cy2+axC + +mT2_y) / 2).toFixed(1)
+  const cEx_x  = +((+diT_x   + +bB_x) / 2).toFixed(1), cEx_y  = +((+diT_y   + +bB_y) / 2).toFixed(1)
+
+  const _arcMid = (x1: number, y1: number, x2: number, y2: number, R: number): [number, number] => {
+    const dx2 = (x1 - x2) / 2, dy2 = (y1 - y2) / 2
+    const d = Math.hypot(dx2, dy2)
+    const h = Math.sqrt(Math.max(0, R*R - d*d))
+    const acx = (x1+x2)/2 + h * dy2 / d
+    const acy = (y1+y2)/2 - h * dx2 / d
+    const a1 = Math.atan2(y1 - acy, x1 - acx)
+    const a2r = Math.atan2(y2 - acy, x2 - acx)
+    const a2 = a2r < a1 ? a2r + 2*Math.PI : a2r
+    return [acx + R * Math.cos((a1+a2)/2), acy + R * Math.sin((a1+a2)/2)]
+  }
+  const [_biMx, _biMy] = _arcMid(lWall_x, lWall_y2, +bL_x, +bL_y, Ri_bi)
+  const [_boMx, _boMy] = _arcMid(rWall_x, rWall_y2, +bR_x, +bR_y, Ro_bo)
+  const rMidX_B = +((_biMx + _boMx) / 2).toFixed(1)
+  const rMidY_B = +((_biMy + _boMy) / 2).toFixed(1)
+
+  const ax0c   = +(+cEx_x  + aR * Math.cos(330 * Math.PI / 180)).toFixed(1)
+  const ax1c   = +(+cEx_x  + aR * Math.cos(vertDirRad)).toFixed(1)
+  const rLabelXc   = +((+cEx_x  + +rMidX_B) / 2).toFixed(1)
+  const rLabelYc   = +((+dsy    + +rMidY_B) / 2).toFixed(1)
+
+  const sh_x      = (scL - scH) * axL
+  const tInner_xs  = tInner_x  + sh_x
+  const tOuter_xs  = tOuter_x  + sh_x
+  const mT1r_xs    = mT1r_x    + sh_x
+  const cx_ts      = cx         + sh_x
+  // x du losange haut : identique à la rotation 180° (2*cx - x_bas + sh_x)
+  const tR_xs      = tR_x      + sh_x
+  const tL_xs      = tL_x      + sh_x
+  const tB_xs      = tB_x      + sh_x
+  const diT_xs_t   = diT_x_t   + sh_x
+  // Losange haut — sommet NW (bas-gauche) ancré à distance fixe du losange milieu-haut
+  // Les 3 autres sommets sont déduits de NW via les dimensions H et L (uTR / uTL)
+  const nw_x    = +(+tInner_xs + 65).toFixed(1)
+  const nw_y    = +(+tInner_y - 87).toFixed(1)
+  const _dxA1   = +nw_x - +mT1r_xs
+  const _dyA1   = +nw_y - +mT1r_y
+  const R_arc1  = _dxA1 > 0 ? Math.round((_dxA1**2 + _dyA1**2) / (2*_dxA1)) : Math.round(Math.hypot(_dxA1, _dyA1))
+  const htAnc_x = +(+nw_x + k*_W*uTR_x).toFixed(1)
+  const htAnc_y = +(+nw_y - k*_W*uTR_y).toFixed(1)
+  const htNE_x  = +(+htAnc_x - k*_H*uTL_x).toFixed(1)
+  const htNE_y  = +(+htAnc_y + k*_H*uTL_y).toFixed(1)
+  const htSE_x  = +(+nw_x   - k*_H*uTL_x).toFixed(1)
+  const htSE_y  = +(+nw_y   + k*_H*uTL_y).toFixed(1)
+  const _dxA2   = +htSE_x - +tInner_xs
+  const _dyA2   = +htSE_y - +tInner_y
+  const R_arc2  = _dxA2 > 0 ? Math.round((_dxA2**2 + _dyA2**2) / (2*_dxA2)) : Math.round(Math.hypot(_dxA2, _dyA2))
+  // Centre arc 2, puis intersection avec arc 1 (continu → pointillé au croisement)
+  const _ell2_a2  = (_dxA2**2 + _dyA2**2) / 4
+  const _sq_a2    = Math.sqrt(Math.max(0, R_arc2**2 - _ell2_a2) / _ell2_a2)
+  const cx_a2     = -_sq_a2 * _dyA2 / 2 + (+tInner_xs + +htSE_x) / 2
+  const cy_a2     = +_sq_a2 * _dxA2 / 2 + (+tInner_y  + +htSE_y) / 2
+  const _th1_a2   = Math.atan2(+tInner_y - cy_a2, +tInner_xs - cx_a2)
+  let   _th2_a2   = Math.atan2(+htSE_y   - cy_a2, +htSE_x    - cx_a2)
+  if (_th2_a2 < _th1_a2) _th2_a2 += 2 * Math.PI
+  // Centre arc 1 (mT1r → nw, sweep=1)
+  const _ell2_a1  = (_dxA1**2 + _dyA1**2) / 4
+  const _sq_a1    = Math.sqrt(Math.max(0, R_arc1**2 - _ell2_a1) / _ell2_a1)
+  const cx_a1     = -_sq_a1 * _dyA1 / 2 + (+mT1r_xs + +nw_x) / 2
+  const cy_a1     = +_sq_a1 * _dxA1 / 2 + (+mT1r_y  + +nw_y) / 2
+  const _th1_a1   = Math.atan2(+mT1r_y - cy_a1, +mT1r_xs - cx_a1)
+  let   _th2_a1   = Math.atan2(+nw_y   - cy_a1, +nw_x    - cx_a1)
+  if (_th2_a1 < _th1_a1) _th2_a1 += 2 * Math.PI
+  // Intersection des deux cercles
+  const _d12  = Math.hypot(cx_a1 - cx_a2, cy_a1 - cy_a2)
+  let cross2_x: number | null = null, cross2_y: number | null = null
+  if (_d12 > 0 && _d12 < R_arc1 + R_arc2 && _d12 > Math.abs(R_arc1 - R_arc2)) {
+    const _a12 = (R_arc2**2 - R_arc1**2 + _d12**2) / (2 * _d12)
+    const _h12 = Math.sqrt(Math.max(0, R_arc2**2 - _a12**2))
+    const _mx  = cx_a2 + _a12 * (cx_a1 - cx_a2) / _d12
+    const _my  = cy_a2 + _a12 * (cy_a1 - cy_a2) / _d12
+    for (const _s12 of [1, -1] as const) {
+      const _px = _mx + _s12 * _h12 * (cy_a1 - cy_a2) / _d12
+      const _py = _my - _s12 * _h12 * (cx_a1 - cx_a2) / _d12
+      // Vérifie que le point est sur l'arc 2 (avant htSE) ET sur l'arc 1
+      let _thP2 = Math.atan2(_py - cy_a2, _px - cx_a2)
+      if (_thP2 < _th1_a2) _thP2 += 2 * Math.PI
+      if (_thP2 <= _th1_a2 + 0.01 || _thP2 >= _th2_a2 - 0.01) continue
+      let _thP1 = Math.atan2(_py - cy_a1, _px - cx_a1)
+      if (_thP1 < _th1_a1) _thP1 += 2 * Math.PI
+      if (_thP1 <= _th1_a1 + 0.01 || _thP1 >= _th2_a1 - 0.01) continue
+      cross2_x = +_px.toFixed(1); cross2_y = +_py.toFixed(1); break
+    }
+  }
+  // Arcs 3 & 4 : partent tous deux de tOuter (sommet gauche milieu-haut)
+  // Tangente de départ horizontale → superposés au début, divergent ensuite
+  // Formule R = (dx²+dy²)/(2·|dy|) → grand rayon = peu courbé à l'arrivée
+  const _dxA3   = +htAnc_x - +tOuter_xs
+  const _dyA3   = +htAnc_y - +tOuter_y
+  const R_arc3  = Math.abs(_dyA3) > 0 ? Math.round((_dxA3**2 + _dyA3**2) / (2 * Math.abs(_dyA3)) * 0.82) : Math.round(Math.hypot(_dxA3, _dyA3))
+  const _dxA4   = +htNE_x  - +tOuter_xs
+  const _dyA4   = +htNE_y  - +tOuter_y
+  const R_arc4  = Math.abs(_dyA4) > 0 ? Math.round((_dxA4**2 + _dyA4**2) / (2 * Math.abs(_dyA4)) * 0.82) : Math.round(Math.hypot(_dxA4, _dyA4))
+  // Centre de l'arc 4 (formule SVG générale — valide pour tout R_arc4)
+  const _ell2_a4  = (_dxA4**2 + _dyA4**2) / 4
+  const _sq_a4    = Math.sqrt(Math.max(0, R_arc4**2 - _ell2_a4) / _ell2_a4)
+  const cx_a4     = -_sq_a4 * _dyA4 / 2 + (+tOuter_xs + +htNE_x) / 2
+  const cy_a4     = +_sq_a4 * _dxA4 / 2 + (+tOuter_y  + +htNE_y) / 2
+  const _th1_a4   = Math.atan2(+tOuter_y - cy_a4, +tOuter_xs - cx_a4)
+  let   _th2_a4   = Math.atan2(+htNE_y   - cy_a4, +htNE_x    - cx_a4)
+  if (_th2_a4 < _th1_a4) _th2_a4 += 2 * Math.PI
+  // Centre arc 3 + 2e intersection des cercles arc3 & arc4 (après tOuter)
+  const _ell2_a3  = (_dxA3**2 + _dyA3**2) / 4
+  const _sq_a3    = Math.sqrt(Math.max(0, R_arc3**2 - _ell2_a3) / _ell2_a3)
+  const cx_a3     = -_sq_a3 * _dyA3 / 2 + (+tOuter_xs + +htAnc_x) / 2
+  const cy_a3     = +_sq_a3 * _dxA3 / 2 + (+tOuter_y  + +htAnc_y) / 2
+  const _th1_a3   = Math.atan2(+tOuter_y - cy_a3, +tOuter_xs - cx_a3)
+  let   _th2_a3   = Math.atan2(+htAnc_y  - cy_a3, +htAnc_x   - cx_a3)
+  if (_th2_a3 < _th1_a3) _th2_a3 += 2 * Math.PI
+  const _d34      = Math.hypot(cx_a4 - cx_a3, cy_a4 - cy_a3)
+  let sep34_x: number | null = null, sep34_y: number | null = null
+  if (_d34 > 0 && _d34 < R_arc3 + R_arc4 && _d34 > Math.abs(R_arc3 - R_arc4)) {
+    const _a34  = (R_arc3**2 - R_arc4**2 + _d34**2) / (2 * _d34)
+    const _h34  = Math.sqrt(Math.max(0, R_arc3**2 - _a34**2))
+    const _mx34 = cx_a3 + _a34 * (cx_a4 - cx_a3) / _d34
+    const _my34 = cy_a3 + _a34 * (cy_a4 - cy_a3) / _d34
+    for (const _s34 of [1, -1] as const) {
+      const _px = _mx34 + _s34 * _h34 * (cy_a4 - cy_a3) / _d34
+      const _py = _my34 - _s34 * _h34 * (cx_a4 - cx_a3) / _d34
+      if (Math.hypot(_px - +tOuter_xs, _py - +tOuter_y) < 5) continue  // skip tOuter
+      let _thP3 = Math.atan2(_py - cy_a3, _px - cx_a3)
+      if (_thP3 < _th1_a3) _thP3 += 2 * Math.PI
+      if (_thP3 <= _th1_a3 + 0.01 || _thP3 >= _th2_a3 - 0.01) continue
+      let _thP4 = Math.atan2(_py - cy_a4, _px - cx_a4)
+      if (_thP4 < _th1_a4) _thP4 += 2 * Math.PI
+      if (_thP4 <= _th1_a4 + 0.01 || _thP4 >= _th2_a4 - 0.01) continue
+      sep34_x = +_px.toFixed(1); sep34_y = +_py.toFixed(1); break
+    }
+  }
+  // Arc 5 (pointillé) : sommet nord milieu-haut → arc 4 à t=0.7
+  const _t5       = 0.7
+  const _th_j5    = _th1_a4 + _t5 * (_th2_a4 - _th1_a4)
+  const jct5_x    = +(cx_a4 + R_arc4 * Math.cos(_th_j5)).toFixed(1)
+  const jct5_y    = +(cy_a4 + R_arc4 * Math.sin(_th_j5)).toFixed(1)
+  const _dxA5   = +jct5_x - +cx_ts
+  const _dyA5   = +jct5_y - +tCenter_y
+  const R_arc5  = Math.round(Math.hypot(_dxA5, _dyA5) * 1.0)
+  const _sw5    = 1
+  // Centre arc 5 (sweep=1) pour intersection avec arc 3
+  const _ell2_a5  = (_dxA5**2 + _dyA5**2) / 4
+  const _sq_a5    = Math.sqrt(Math.max(0, R_arc5**2 - _ell2_a5) / _ell2_a5)
+  const cx_a5     = -_sq_a5 * _dyA5 / 2 + (+cx_ts + +jct5_x) / 2
+  const cy_a5     = +_sq_a5 * _dxA5 / 2 + (+tCenter_y + +jct5_y) / 2
+  const _th1_a5   = Math.atan2(+tCenter_y - cy_a5, +cx_ts - cx_a5)
+  let   _th2_a5   = Math.atan2(+jct5_y - cy_a5, +jct5_x - cx_a5)
+  if (_th2_a5 < _th1_a5) _th2_a5 += 2 * Math.PI
+  // Intersection cercle arc5 ∩ cercle arc4 → endpoint de l'arc 5
+  const _d54   = Math.hypot(cx_a4 - cx_a5, cy_a4 - cy_a5)
+  let stop5_x  = +jct5_x, stop5_y = +jct5_y   // fallback
+  if (_d54 > 0 && _d54 < R_arc5 + R_arc4 && _d54 > Math.abs(R_arc5 - R_arc4)) {
+    const _a54 = (R_arc5**2 - R_arc4**2 + _d54**2) / (2 * _d54)
+    const _h54 = Math.sqrt(Math.max(0, R_arc5**2 - _a54**2))
+    const _mx5 = cx_a5 + _a54 * (cx_a4 - cx_a5) / _d54
+    const _my5 = cy_a5 + _a54 * (cy_a4 - cy_a5) / _d54
+    for (const _s54 of [1, -1] as const) {
+      const _px = _mx5 + _s54 * _h54 * (cy_a4 - cy_a5) / _d54
+      const _py = _my5 - _s54 * _h54 * (cx_a4 - cx_a5) / _d54
+      let _thP5 = Math.atan2(_py - cy_a5, _px - cx_a5)
+      if (_thP5 < _th1_a5) _thP5 += 2 * Math.PI
+      if (_thP5 <= _th1_a5 + 0.01 || _thP5 >= _th2_a5 - 0.01) continue
+      let _thP4 = Math.atan2(_py - cy_a4, _px - cx_a4)
+      if (_thP4 < _th1_a4) _thP4 += 2 * Math.PI
+      if (_thP4 <= _th1_a4 + 0.01 || _thP4 >= _th2_a4 - 0.01) continue
+      stop5_x = +_px.toFixed(1); stop5_y = +_py.toFixed(1); break
+    }
+  }
+
+  const _lMidX = (+bL_x + +bB_x) / 2, _lMidY = (+bL_y + +bB_y) / 2
+  const _vAnnBotX = _lMidX + uTR_y * 30, _vAnnBotY = _lMidY + (-uTR_x) * 30
+
+  const _allX = [+bR_x, +bL_x, +bB_x, +diT_x,
+                 +mR2_x, +mL2_x, +mT2_x, mT1r_xs, cx, cx_ts,
+                 tInner_xs, tOuter_xs,
+                 +nw_x, +htAnc_x, +htNE_x, +htSE_x]
+  const _allY = [+bR_y, +bL_y, +bB_y, +diT_y,
+                 +mR2_y, +mL2_y, +mT2_y, mT1r_y, cy2+axC,
+                 tInner_y, tOuter_y, tCenter_y,
+                 +nw_y, +htAnc_y, +htNE_y, +htSE_y]
+
+  const _pad  = mini ? 8 : 15
+  const _xMin = Math.floor(mini
+    ? (Math.min(..._allX) - _pad)
+    : Math.min(Math.min(..._allX) - _pad, +cEx_x - 90, +dsx - 90, _vAnnBotX - 20))
+  const _xMax = Math.ceil(Math.max(
+    Math.max(..._allX) + _pad,
+    mini ? 0 : (Math.max(..._allX) + 90),
+    mini ? 0 : (rWall_x + 160)
+  ))
+  const _yMin = Math.floor(mini
+    ? (Math.min(..._allY) - _pad)
+    : Math.min(Math.min(..._allY) - _pad, +htAnc_y - 35))
+  const _yMax = Math.ceil(Math.max(Math.max(..._allY) + _pad, mini ? 0 : _vAnnBotY + 40))
+  const _vW   = _xMax - _xMin
+  const _vH   = _yMax - _yMin
+  const sw    = +((mini ? 10 : 3.75) * _vW / 500).toFixed(1)
+  const da    = mini ? `${+(sw * 3.5).toFixed(1)} ${+(sw * 3).toFixed(1)}` : "10 9"
+
+  return (
+    <svg viewBox={`${_xMin} ${_yMin} ${_vW} ${_vH}`} width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
+      {/* ── Losange milieu haut ── */}
+      {!mini && <polygon points={`${tOuter_xs},${tOuter_y} ${mT1r_xs},${mT1r_y} ${tInner_xs},${tInner_y} ${cx_ts},${tCenter_y}`}
+        fill="#f1f5f9" stroke="none" />}
+      {!mini && <polyline points={`${cx_ts},${tCenter_y} ${tOuter_xs},${tOuter_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="10 9" />}
+      {!mini && <polyline points={`${tInner_xs},${tInner_y} ${cx_ts},${tCenter_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="10 9" />}
+      {!mini && <polyline points={`${tOuter_xs},${tOuter_y} ${mT1r_xs},${mT1r_y} ${tInner_xs},${tInner_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />}
+      {/* ── Losange milieu bas ── */}
+      {!mini && <polygon points={`${mR2_x},${mR2_y} ${mT2_x},${mT2_y} ${mL2_x},${mL2_y} ${cx},${cy2+axC}`}
+        fill="#f1f5f9" stroke="none" />}
+      {!mini && <polyline points={`${cx},${cy2+axC} ${mR2_x},${mR2_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />}
+      {!mini && <polyline points={`${mL2_x},${mL2_y} ${cx},${cy2+axC}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />}
+      {!mini && <polyline points={`${mR2_x},${mR2_y} ${mT2_x},${mT2_y} ${mL2_x},${mL2_y}`}
+        fill="none" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="10 9" />}
+      {/* ── Parois du tronçon droit ── */}
+      <line x1={tInner_xs} y1={tInner_y} x2={rWall_x} y2={rWall_y2} stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      <line x1={tOuter_xs} y1={tOuter_y} x2={lWall_x} y2={lWall_y2} stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      <line x1={mT1r_xs} y1={mT1r_y} x2={cx} y2={cy2+axC} stroke="#374151" strokeWidth={sw} strokeLinecap="round" />
+      {/* ── Losange haut — fond d'abord pour que les arcs soient visibles par-dessus ── */}
+      <polygon points={`${nw_x},${nw_y} ${htAnc_x},${htAnc_y} ${htNE_x},${htNE_y} ${htSE_x},${htSE_y}`}
+        fill="#f1f5f9" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+      {/* ── Arc 1 : sommet sud milieu-haut → sommet SW losange haut ── */}
+      <path d={`M ${mT1r_xs} ${mT1r_y} A ${R_arc1} ${R_arc1} 0 0 1 ${nw_x} ${nw_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* ── Arc 2 : sommet est milieu-haut → sommet SE losange haut (pointillé après croisement) ── */}
+      {cross2_x !== null
+        ? <><path d={`M ${tInner_xs} ${tInner_y} A ${R_arc2} ${R_arc2} 0 0 1 ${cross2_x} ${cross2_y}`}
+              stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+            <path d={`M ${cross2_x} ${cross2_y} A ${R_arc2} ${R_arc2} 0 0 1 ${htSE_x} ${htSE_y}`}
+              stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" strokeDasharray={da} /></>
+        : <path d={`M ${tInner_xs} ${tInner_y} A ${R_arc2} ${R_arc2} 0 0 1 ${htSE_x} ${htSE_y}`}
+            stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      }
+      {/* ── Arc 3 : démarre à la 2e intersection avec arc 4, → htAnc ── */}
+      <path d={`M ${sep34_x ?? tOuter_xs} ${sep34_y ?? tOuter_y} A ${R_arc3} ${R_arc3} 0 0 1 ${htAnc_x} ${htAnc_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* ── Arc 4 : sommet gauche milieu-haut → htNE (losange haut) ── */}
+      <path d={`M ${tOuter_xs} ${tOuter_y} A ${R_arc4} ${R_arc4} 0 0 1 ${htNE_x} ${htNE_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      {/* ── Arc 5 : sommet nord milieu-haut → croisement arc 3 — pointillé ── */}
+      <path d={`M ${cx_ts} ${tCenter_y} A ${R_arc5} ${R_arc5} 0 0 ${_sw5} ${stop5_x} ${stop5_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" strokeDasharray={da} />
+      {/* ── Virage inférieur ── */}
+      <polygon points={`${bR_x},${bR_y} ${diT_x},${diT_y} ${bL_x},${bL_y} ${bB_x},${bB_y}`}
+        fill="#f1f5f9" stroke="#374151" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+      <path d={`M ${lWall_x} ${lWall_y2} A ${Ri_bi} ${Ri_bi} 0 0 1 ${bL_x} ${bL_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      <path d={`M ${rWall_x} ${rWall_y2} A ${Ro_bo} ${Ro_bo} 0 0 1 ${bR_x} ${bR_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      <path d={`M ${cx} ${cy2+axC} A ${R_B} ${R_B} 0 0 1 ${diT_x} ${diT_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" />
+      <path d={`M ${bB_x} ${bB_y} A ${R_back1} ${R_back1} 0 0 0 ${mT2_x} ${mT2_y} L ${cx_ts} ${tCenter_y}`}
+        stroke="#374151" strokeWidth={sw} fill="none" strokeLinecap="round" strokeDasharray={da} />
+      {/* Pointillés bas */}
+      {!mini && <>
+        <line x1={cM2x} y1={cM2y} x2={cEx_x} y2={dsy}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+        <line x1={cEx_x} y1={dsy} x2={cEx_x} y2={cEx_y}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+      </>}
+      {/* Annotations */}
+      {!mini && <>
+        <path d={`M ${ax0c} ${ay0} A ${aR} ${aR} 0 0 1 ${ax1c} ${ay1}`}
+          stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        <text x={+(+cEx_x - 12).toFixed(1)} y={dsy} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="end" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">θ = {θ_deg}°</text>
+        <line x1={cEx_x} y1={dsy} x2={rMidX_B} y2={rMidY_B}
+          stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+        <text x={rLabelXc} y={rLabelYc} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="middle" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">{rLabel}</text>
+        {(() => {
+          const lx2 = lWall_x - 20
+          const ym  = (lWall_y1 + lWall_y2) / 2
+          return <>
+            <line x1={lx2 - 10} y1={lWall_y1} x2={lx2 + 10} y2={lWall_y1} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={lx2 - 10} y1={lWall_y2} x2={lx2 + 10} y2={lWall_y2} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={lx2} y1={lWall_y1} x2={lx2} y2={lWall_y2} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
+            <text x={lx2 - 16} y={ym} fontSize="25" fill="#64748b" textAnchor="end" dominantBaseline="middle" fontStyle="italic">{lLabel}</text>
+          </>
+        })()}
+        {(() => {
+          const sx = +bB_x - +bL_x, sy = +bB_y - +bL_y
+          const sl = Math.hypot(sx, sy) || 1
+          const epX = -uTR_y, epY = uTR_x
+          const a0x = +(+bL_x + 5*epX).toFixed(1), a0y = +(+bL_y + 5*epY).toFixed(1)
+          const a2x = +(+bL_x + 19*epX).toFixed(1), a2y = +(+bL_y + 19*epY).toFixed(1)
+          const b0x = +(+bB_x + 5*epX).toFixed(1),  b0y = +(+bB_y + 5*epY).toFixed(1)
+          const b2x = +(+bB_x + 19*epX).toFixed(1), b2y = +(+bB_y + 19*epY).toFixed(1)
+          const a1x = +(+bL_x + 12*epX).toFixed(1), a1y = +(+bL_y + 12*epY).toFixed(1)
+          const b1x = +(+bB_x + 12*epX).toFixed(1), b1y = +(+bB_y + 12*epY).toFixed(1)
+          const mx  = +((+bL_x + +bB_x) / 2 + 30*epX).toFixed(1)
+          const my  = +((+bL_y + +bB_y) / 2 + 30*epY).toFixed(1)
+          const lbl = orientation === 'vertical'
+            ? (h_mm != null ? `H = ${h_mm} mm` : 'H')
+            : (l_mm != null ? `L = ${l_mm} mm` : 'L')
+          let ang = Math.atan2(sy, sx) * 180 / Math.PI
+          if (ang > 45) ang -= 180
+          return <>
+            <line x1={a0x} y1={a0y} x2={a2x} y2={a2y} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={b0x} y1={b0y} x2={b2x} y2={b2y} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={a1x} y1={a1y} x2={b1x} y2={b1y} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
+            <text x={mx} y={my} fontSize="25" fill="#64748b" fontStyle="italic"
+              textAnchor="middle" dominantBaseline="middle"
+              paintOrder="stroke" stroke="white" strokeWidth="6"
+              transform={`rotate(${ang.toFixed(1)}, ${mx}, ${my})`}>{lbl}</text>
+          </>
+        })()}
       </>}
     </svg>
   )
@@ -484,10 +2026,10 @@ function SchemaRectOnglet({ angle, orientation = 'horizontal', l_mm, h_mm, mini 
   // Mise à l'échelle — identique à SchemaRectRayonLisse (viewBox "30 140 430 390")
   const xRight_w = Math.max(eoEnd[0], cx)
   const yTop_w   = Math.min(oRef1[1], eoEnd[1])
-  const vbL = 143, vbT = 143, vbR = 456, vbB = 525, M = 8
-  const scl = Math.min((vbR - vbL - 2*M) / (xRight_w - 150), (vbB - vbT - 2*M) / (510 - yTop_w))
+  const vbL = 0, vbT = 0, vbR = 500, vbB = 420, M = 16
+  const scl = Math.min((vbR - vbL - 2*M) / (xRight_w - 150), (vbB - vbT - 2*M) / (510 - yTop_w)) * (mini ? 1 : 0.88)
   const tx  = vbL + M + ((vbR - vbL - 2*M) - (xRight_w - 150) * scl) / 2 - 150 * scl
-  const ty  = vbT + M + ((vbB - vbT - 2*M) - (500 - yTop_w) * scl) / 2 - yTop_w * scl + (mini ? 0 : 10)
+  const ty  = vbT + M + ((vbB - vbT - 2*M) - (500 - yTop_w) * scl) / 2 - yTop_w * scl
   const vx  = (wx: number) => +(tx + wx * scl).toFixed(1)
   const vy  = (wy: number) => +(ty + wy * scl).toFixed(1)
 
@@ -505,7 +2047,7 @@ function SchemaRectOnglet({ angle, orientation = 'horizontal', l_mm, h_mm, mini 
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <svg viewBox="30 140 430 390" width="100%" height="100%" style={{ display: 'block' }}>
+      <svg viewBox="0 0 500 420" width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
         <g transform={`translate(${tx.toFixed(1)} ${ty.toFixed(1)}) scale(${scl.toFixed(4)})`}>
           <path d={pathD} fill={fill} stroke={stroke}
             strokeWidth={mini ? +(10/scl).toFixed(2) : +(3/scl).toFixed(3)}
@@ -519,41 +2061,13 @@ function SchemaRectOnglet({ angle, orientation = 'horizontal', l_mm, h_mm, mini 
           <path d={`M ${cx_v - arcR} ${cy_v} A ${arcR} ${arcR} 0 0 1 ${annBx} ${annBy}`}
             stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
           <text x={cx_v} y={+(cy_v + 20).toFixed(1)} fontSize="15" fill="#374151" fontWeight="600"
-            textAnchor="middle" dominantBaseline="middle">δ = {angle}°</text>
+            textAnchor="middle" dominantBaseline="middle">θ = {angle}°</text>
           <line x1={vx(150)} y1={vy(478)} x2={vx(150)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
           <line x1={vx(230)} y1={vy(478)} x2={vx(230)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
           <line x1={vx(150)} y1={vy(484)} x2={vx(230)} y2={vy(484)} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-          <text x={vx(190)} y={vy(506)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{dimLabel}</text>
+          <text x={vx(190)} y={+(vy(484) + 16).toFixed(1)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{dimLabel}</text>
         </>}
       </svg>
-      {!mini && (() => {
-        const lv = l_mm ?? 300, hv = h_mm ?? 200
-        const pad = 5
-        const maxCsW = 100, maxCsH = 80
-        const sc = Math.min(maxCsW / lv, maxCsH / hv)
-        const csW = Math.max(8, Math.round(sc * lv))
-        const csH = Math.max(6, Math.round(sc * hv))
-        const csX1 = pad + csW, csY1 = pad + csH
-        const lLbl = l_mm != null ? `L = ${l_mm} mm` : 'L'
-        const hLbl = h_mm != null ? `H = ${h_mm} mm` : 'H'
-        return (
-          <svg style={{ position: 'absolute', top: -10, left: 0, width: '51%', height: '33%', pointerEvents: 'none' }}
-            viewBox="0 0 220 130" preserveAspectRatio="xMinYMin meet">
-            <rect x={pad} y={pad} width={csW} height={csH}
-              fill="#f1f5f9" stroke="#374151" strokeWidth="1.5" strokeLinejoin="round" />
-            <line x1={pad}  y1={csY1 + 8}  x2={pad}  y2={csY1 + 20} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1} y1={csY1 + 8}  x2={csX1} y2={csY1 + 20} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={pad}  y1={csY1 + 14} x2={csX1} y2={csY1 + 14} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-            <text x={pad + csW / 2} y={csY1 + 36} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic"
-              paintOrder="stroke" stroke="white" strokeWidth="4">{lLbl}</text>
-            <line x1={csX1 + 8}  y1={pad}  x2={csX1 + 20} y2={pad}  stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1 + 8}  y1={csY1} x2={csX1 + 20} y2={csY1} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1 + 14} y1={pad}  x2={csX1 + 14} y2={csY1} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-            <text x={csX1 + 26} y={pad + csH / 2} fontSize="15" fill="#64748b" textAnchor="start" dominantBaseline="middle" fontStyle="italic"
-              paintOrder="stroke" stroke="white" strokeWidth="4">{hLbl}</text>
-          </svg>
-        )
-      })()}
     </div>
   )
 }
@@ -589,10 +2103,10 @@ function SchemaRectRayonLisse({ angle, orientation = 'horizontal', l_mm, h_mm, r
   const arcTop   = δ >= Math.PI / 2 ? cy - R : oy2
   const xRight_w = Math.max(oEx, iEx, cx + R * Math.max(0, -Math.cos(δ)))
   const yTop_w   = Math.min(arcTop, oEy, iEy)
-  const vbL = 143, vbT = 143, vbR = 456, vbB = 525, M = 8
-  const scl = Math.min((vbR - vbL - 2*M) / (xRight_w - xO), (vbB - vbT - 2*M) / (510 - yTop_w))
+  const vbL = 0, vbT = 0, vbR = 500, vbB = 420, M = 16
+  const scl = Math.min((vbR - vbL - 2*M) / (xRight_w - xO), (vbB - vbT - 2*M) / (510 - yTop_w)) * (mini ? 1 : 0.88)
   const tx  = vbL + M + ((vbR - vbL - 2*M) - (xRight_w - xO) * scl) / 2 - xO * scl
-  const ty  = vbT + M + ((vbB - vbT - 2*M) - (500 - yTop_w) * scl) / 2 - yTop_w * scl + (mini ? 0 : 10)
+  const ty  = vbT + M + ((vbB - vbT - 2*M) - (500 - yTop_w) * scl) / 2 - yTop_w * scl
   const vx  = (wx: number) => +(tx + wx * scl).toFixed(1)
   const vy  = (wy: number) => +(ty + wy * scl).toFixed(1)
 
@@ -604,7 +2118,7 @@ function SchemaRectRayonLisse({ angle, orientation = 'horizontal', l_mm, h_mm, r
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       {/* SVG principal — coude centré (preserveAspectRatio par défaut xMidYMid meet) */}
-      <svg viewBox="30 140 430 390" width="100%" height="100%" style={{ display: 'block' }}>
+      <svg viewBox="0 0 500 420" width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
         <g transform={`translate(${tx.toFixed(1)} ${ty.toFixed(1)}) scale(${scl.toFixed(4)})`}>
           <path d={pathD} fill={fill} stroke={stroke} strokeWidth={mini ? +(10/scl).toFixed(2) : +(3/scl).toFixed(3)}
             strokeLinejoin="round" strokeLinecap="round" />
@@ -635,11 +2149,11 @@ function SchemaRectRayonLisse({ angle, orientation = 'horizontal', l_mm, h_mm, r
             <path d={`M ${+(cx_vb - arcR).toFixed(1)} ${cy_vb} A ${arcR} ${arcR} 0 0 1 ${annBx} ${annBy}`}
               stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
             <text x={cx_vb} y={+(cy_vb + 20).toFixed(1)} fontSize="15" fill="#374151" fontWeight="600"
-              textAnchor="middle" dominantBaseline="middle">δ = {angle}°</text>
+              textAnchor="middle" dominantBaseline="middle">θ = {angle}°</text>
             <line x1={vx(xO)} y1={vy(478)} x2={vx(xO)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
             <line x1={vx(xI)} y1={vy(478)} x2={vx(xI)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
             <line x1={vx(xO)} y1={vy(484)} x2={vx(xI)} y2={vy(484)} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-            <text x={vx(xO + w / 2)} y={vy(506)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{dimLabel}</text>
+            <text x={vx(xO + w / 2)} y={+(vy(484) + 16).toFixed(1)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{dimLabel}</text>
             <line x1={cx_vb} y1={cy_vb} x2={Px_vb} y2={Py_vb} stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
             <line x1={Px_vb} y1={Py_vb} x2={arr1x} y2={arr1y} stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
             <line x1={Px_vb} y1={Py_vb} x2={arr2x} y2={arr2y} stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
@@ -649,40 +2163,6 @@ function SchemaRectRayonLisse({ angle, orientation = 'horizontal', l_mm, h_mm, r
           </>
         })()}
       </svg>
-      {/* Section transversale — SVG indépendant, ancré coin top-left du conteneur */}
-      {!mini && (() => {
-        const lv = l_mm ?? 300, hv = h_mm ?? 200
-        const pad = 5
-        const maxCsW = 100, maxCsH = 80
-        const sc = Math.min(maxCsW / lv, maxCsH / hv)
-        const csW = Math.max(8, Math.round(sc * lv))
-        const csH = Math.max(6, Math.round(sc * hv))
-        const csX1 = pad + csW, csY1 = pad + csH
-        const lLbl = l_mm != null ? `L = ${l_mm} mm` : 'L'
-        const hLbl = h_mm != null ? `H = ${h_mm} mm` : 'H'
-        return (
-          <svg
-            style={{ position: 'absolute', top: -10, left: 0, width: '51%', height: '33%', pointerEvents: 'none' }}
-            viewBox="0 0 220 130"
-            preserveAspectRatio="xMinYMin meet"
-          >
-            <rect x={pad} y={pad} width={csW} height={csH}
-              fill="#f1f5f9" stroke="#374151" strokeWidth="1.5" strokeLinejoin="round" />
-            {/* Cote L — en dessous, même espacement que coude circulaire : gap=8, tick=8→20, ligne=14, label=36 */}
-            <line x1={pad}  y1={csY1 + 8}  x2={pad}  y2={csY1 + 20} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1} y1={csY1 + 8}  x2={csX1} y2={csY1 + 20} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={pad}  y1={csY1 + 14} x2={csX1} y2={csY1 + 14} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-            <text x={pad + csW / 2} y={csY1 + 36} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic"
-              paintOrder="stroke" stroke="white" strokeWidth="4">{lLbl}</text>
-            {/* Cote H — à droite, même espacement : gap=8, tick=8→20, ligne=14, label à 26 */}
-            <line x1={csX1 + 8}  y1={pad}  x2={csX1 + 20} y2={pad}  stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1 + 8}  y1={csY1} x2={csX1 + 20} y2={csY1} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1 + 14} y1={pad}  x2={csX1 + 14} y2={csY1} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-            <text x={csX1 + 26} y={pad + csH / 2} fontSize="15" fill="#64748b" textAnchor="start" dominantBaseline="middle" fontStyle="italic"
-              paintOrder="stroke" stroke="white" strokeWidth="4">{hLbl}</text>
-          </svg>
-        )
-      })()}
     </div>
   )
 }
@@ -737,10 +2217,10 @@ function SchemaRectAubes({ angle, orientation = 'horizontal', l_mm, h_mm, rOverB
   const arcTop   = δ >= Math.PI / 2 ? cy - R : oy2
   const xRight_w = Math.max(oEx, iEx, cx + R * Math.max(0, -Math.cos(δ)))
   const yTop_w   = Math.min(arcTop, oEy, iEy)
-  const vbL = 143, vbT = 143, vbR = 456, vbB = 525, M = 8
-  const scl = Math.min((vbR - vbL - 2*M) / (xRight_w - xO), (vbB - vbT - 2*M) / (510 - yTop_w))
+  const vbL = 0, vbT = 0, vbR = 500, vbB = 420, M = 16
+  const scl = Math.min((vbR - vbL - 2*M) / (xRight_w - xO), (vbB - vbT - 2*M) / (510 - yTop_w)) * (mini ? 1 : 0.88)
   const tx  = vbL + M + ((vbR - vbL - 2*M) - (xRight_w - xO) * scl) / 2 - xO * scl
-  const ty  = vbT + M + ((vbB - vbT - 2*M) - (500 - yTop_w) * scl) / 2 - yTop_w * scl + (mini ? 0 : 10)
+  const ty  = vbT + M + ((vbB - vbT - 2*M) - (500 - yTop_w) * scl) / 2 - yTop_w * scl
   const vx  = (wx: number) => +(tx + wx * scl).toFixed(1)
   const vy  = (wy: number) => +(ty + wy * scl).toFixed(1)
 
@@ -757,11 +2237,11 @@ function SchemaRectAubes({ angle, orientation = 'horizontal', l_mm, h_mm, rOverB
   )
   const vaneRadii = Array.from({ length: nVanes }, (_, k) => r / Math.pow(CR, k + 1))
   const vaneW = +(2 / scl).toFixed(3)
-  const vaneWMini = +(8 / scl).toFixed(2)
+  const vaneWMini = +(10 / scl).toFixed(2)
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <svg viewBox="30 140 430 390" width="100%" height="100%" style={{ display: 'block' }}>
+      <svg viewBox="0 0 500 420" width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
         <g transform={`translate(${tx.toFixed(1)} ${ty.toFixed(1)}) scale(${scl.toFixed(4)})`}>
           <path d={pathD} fill={fill} stroke={stroke}
             strokeWidth={mini ? +(10/scl).toFixed(2) : +(3/scl).toFixed(3)}
@@ -795,11 +2275,11 @@ function SchemaRectAubes({ angle, orientation = 'horizontal', l_mm, h_mm, rOverB
             <line x1={vx(ox2)} y1={vy(oy2)} x2={cx_vb} y2={cy_vb}
               stroke="#94a3b8" strokeWidth="1" strokeDasharray="5 4" strokeLinecap="round" />
             <text x={cx_vb} y={+(cy_vb + 20).toFixed(1)} fontSize="15" fill="#374151" fontWeight="600"
-              textAnchor="middle" dominantBaseline="middle">δ = {angle}°</text>
+              textAnchor="middle" dominantBaseline="middle">θ = {angle}°</text>
             <line x1={vx(xO)} y1={vy(478)} x2={vx(xO)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
             <line x1={vx(xI)} y1={vy(478)} x2={vx(xI)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
             <line x1={vx(xO)} y1={vy(484)} x2={vx(xI)} y2={vy(484)} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-            <text x={vx(xO + w / 2)} y={vy(506)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{dimLabel}</text>
+            <text x={vx(xO + w / 2)} y={+(vy(484) + 16).toFixed(1)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{dimLabel}</text>
             <line x1={cx_vb} y1={cy_vb} x2={Px_vb} y2={Py_vb} stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
             <line x1={Px_vb} y1={Py_vb} x2={arr1x} y2={arr1y} stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
             <line x1={Px_vb} y1={Py_vb} x2={arr2x} y2={arr2y} stroke="#374151" strokeWidth="1.5" strokeLinecap="round" />
@@ -844,48 +2324,6 @@ function SchemaRectAubes({ angle, orientation = 'horizontal', l_mm, h_mm, rOverB
           </>
         })()}
       </svg>
-      {!mini && (() => {
-        const lv = l_mm ?? 300, hv = h_mm ?? 200
-        const pad = 5
-        const maxCsW = 100, maxCsH = 80
-        const sc = Math.min(maxCsW / lv, maxCsH / hv)
-        const csW = Math.max(8, Math.round(sc * lv))
-        const csH = Math.max(6, Math.round(sc * hv))
-        const csX1 = pad + csW, csY1 = pad + csH
-        const lLbl = l_mm != null ? `L = ${l_mm} mm` : 'L'
-        const hLbl = h_mm != null ? `H = ${h_mm} mm` : 'H'
-        return (
-          <svg
-            style={{ position: 'absolute', top: -10, left: 0, width: '51%', height: '33%', pointerEvents: 'none' }}
-            viewBox="0 0 220 130"
-            preserveAspectRatio="xMinYMin meet"
-          >
-            <rect x={pad} y={pad} width={csW} height={csH}
-              fill="#f1f5f9" stroke="#374151" strokeWidth="1.5" strokeLinejoin="round" />
-            {vaneFracs.map((frac, k) => {
-              if (orientation === 'vertical') {
-                const yv = +(csY1 - frac * csH).toFixed(1)
-                return <line key={k} x1={pad} y1={yv} x2={csX1} y2={yv}
-                  stroke="#374151" strokeWidth="1" strokeLinecap="round" />
-              } else {
-                const xv = +(csX1 - frac * csW).toFixed(1)
-                return <line key={k} x1={xv} y1={pad} x2={xv} y2={csY1}
-                  stroke="#374151" strokeWidth="1" strokeLinecap="round" />
-              }
-            })}
-            <line x1={pad}  y1={csY1 + 8}  x2={pad}  y2={csY1 + 20} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1} y1={csY1 + 8}  x2={csX1} y2={csY1 + 20} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={pad}  y1={csY1 + 14} x2={csX1} y2={csY1 + 14} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-            <text x={pad + csW / 2} y={csY1 + 36} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic"
-              paintOrder="stroke" stroke="white" strokeWidth="4">{lLbl}</text>
-            <line x1={csX1 + 8}  y1={pad}  x2={csX1 + 20} y2={pad}  stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1 + 8}  y1={csY1} x2={csX1 + 20} y2={csY1} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1 + 14} y1={pad}  x2={csX1 + 14} y2={csY1} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-            <text x={csX1 + 26} y={pad + csH / 2} fontSize="15" fill="#64748b" textAnchor="start" dominantBaseline="middle" fontStyle="italic"
-              paintOrder="stroke" stroke="white" strokeWidth="4">{hLbl}</text>
-          </svg>
-        )
-      })()}
     </div>
   )
 }
@@ -909,10 +2347,10 @@ function SchemaRectOngletAubes({
 
   // Auto-scaling (fixed values for 90°)
   const xRight_w = 430, yTop_w = 190
-  const vbL = 143, vbT = 143, vbR = 456, vbB = 525, Mg = 8
-  const scl = Math.min((vbR-vbL-2*Mg)/(xRight_w-150), (vbB-vbT-2*Mg)/(510-yTop_w))
+  const vbL = 0, vbT = 0, vbR = 500, vbB = 420, Mg = 16
+  const scl = Math.min((vbR-vbL-2*Mg)/(xRight_w-150), (vbB-vbT-2*Mg)/(510-yTop_w)) * (mini ? 1 : 0.88)
   const tx   = vbL+Mg+((vbR-vbL-2*Mg)-(xRight_w-150)*scl)/2 - 150*scl
-  const ty   = vbT+Mg+((vbB-vbT-2*Mg)-(500-yTop_w)*scl)/2  - yTop_w*scl + (mini ? 0 : 10)
+  const ty   = vbT+Mg+((vbB-vbT-2*Mg)-(500-yTop_w)*scl)/2  - yTop_w*scl
   const vx   = (wx: number) => +(tx + wx * scl).toFixed(1)
   const vy   = (wy: number) => +(ty + wy * scl).toFixed(1)
 
@@ -929,21 +2367,22 @@ function SchemaRectOngletAubes({
   const dkStroke = '#374151', dkFill = '#f1f5f9'
 
   // ASHRAE design parameters (inches)
-  const DESIGNS_38: Record<1|2|3, { r: number; s: number; L: number }> = {
-    1: { r: 2.0, s: 1.5,  L: 0.75 },
-    2: { r: 4.5, s: 2.25, L: 0 },
-    3: { r: 4.5, s: 3.25, L: 1.60 },
+  const DESIGNS_38: Record<1|2|3, { r: number; s: number; L: number; label: string }> = {
+    1: { r: 2.0, s: 1.5,  L: 0.75, label: 'r = 2,0" · s = 1,5" · L = 0,75"' },
+    2: { r: 4.5, s: 2.25, L: 0,    label: 'r = 4,5" · s = 2,25"' },
+    3: { r: 4.5, s: 3.25, L: 1.60, label: 'r = 4,5" · s = 3,25" · L = 1,60"' },
   }
-  const DESIGNS_39: Record<1|2|3|4, { r: number; s: number }> = {
-    1: { r: 2.0, s: 1.5 },
-    2: { r: 2.0, s: 1.5 },
-    3: { r: 2.0, s: 2.13 },
-    4: { r: 4.5, s: 3.25 },
+  const DESIGNS_39: Record<1|2|3|4, { r: number; s: number; label: string }> = {
+    1: { r: 2.0, s: 1.5,  label: 'r = 2,0" · s = 1,5" · Runner : Embossed' },
+    2: { r: 2.0, s: 1.5,  label: 'r = 2,0" · s = 1,5" · Runner : Push-On' },
+    3: { r: 2.0, s: 2.13, label: 'r = 2,0" · s = 2,13" · Runner : Embossed' },
+    4: { r: 4.5, s: 3.25, label: 'r = 4,5" · s = 3,25" · Runner : Embossed' },
   }
 
   const isDouble = vaneThickness === 'double'
   const dp  = isDouble ? DESIGNS_39[design39 as 1|2|3|4] : DESIGNS_38[design38 as 1|2|3]
   const L_in = isDouble ? 0 : DESIGNS_38[design38 as 1|2|3].L
+  const infoText = dp.label
 
   const W_phys  = (orientation === 'vertical' ? h_mm : l_mm) ?? 300
   const sc_vane = 80 / W_phys        // world units per mm
@@ -1010,7 +2449,7 @@ function SchemaRectOngletAubes({
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <svg viewBox="30 140 430 390" width="100%" height="100%" style={{ display: 'block' }}>
+      <svg viewBox="0 0 500 420" width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
         <defs>
           <clipPath id={clipId}>
             <path d={pathD} />
@@ -1032,58 +2471,328 @@ function SchemaRectOngletAubes({
           <path d={`M ${+(cx_v - arcR).toFixed(1)} ${cy_v} A ${arcR} ${arcR} 0 0 1 ${cx_v} ${+(cy_v - arcR).toFixed(1)}`}
             stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
           <text x={cx_v} y={+(cy_v + 20).toFixed(1)} fontSize="15" fill="#374151" fontWeight="600"
-            textAnchor="middle" dominantBaseline="middle">δ = 90°</text>
+            textAnchor="middle" dominantBaseline="middle">θ = 90°</text>
           <line x1={vx(150)} y1={vy(478)} x2={vx(150)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
           <line x1={vx(230)} y1={vy(478)} x2={vx(230)} y2={vy(490)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
           <line x1={vx(150)} y1={vy(484)} x2={vx(230)} y2={vy(484)} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-          <text x={vx(190)} y={vy(506)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{dimLabel}</text>
+          <text x={vx(190)} y={+(vy(484) + 16).toFixed(1)} fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic">{dimLabel}</text>
+          <text x="250" y="408" fontSize="11" fill="#64748b" textAnchor="middle" dominantBaseline="middle" fontStyle="italic">{infoText}</text>
         </>}
       </svg>
-      {!mini && (() => {
-        const lv = l_mm ?? 300, hv = h_mm ?? 200
-        const pad = 5, maxCsW = 100, maxCsH = 80
-        const sc2 = Math.min(maxCsW / lv, maxCsH / hv)
-        const csW = Math.max(8, Math.round(sc2 * lv))
-        const csH = Math.max(6, Math.round(sc2 * hv))
-        const csX1 = pad + csW, csY1 = pad + csH
-        const lLbl = l_mm != null ? `L = ${l_mm} mm` : 'L'
-        const hLbl = h_mm != null ? `H = ${h_mm} mm` : 'H'
-        return (
-          <svg style={{ position: 'absolute', top: -10, left: 0, width: '51%', height: '33%', pointerEvents: 'none' }}
-            viewBox="0 0 220 130" preserveAspectRatio="xMinYMin meet">
-            <rect x={pad} y={pad} width={csW} height={csH} fill="#f1f5f9" stroke="none" />
-            {orientation === 'vertical'
-              ? <path d={`M ${pad} ${csY1} L ${pad} ${pad} L ${csX1} ${pad} L ${csX1} ${csY1}`}
-                  fill="none" stroke="#374151" strokeWidth="1.5" strokeLinejoin="round" />
-              : <path d={`M ${csX1} ${pad} L ${pad} ${pad} L ${pad} ${csY1} L ${csX1} ${csY1}`}
-                  fill="none" stroke="#374151" strokeWidth="1.5" strokeLinejoin="round" />
-            }
-            {Array.from({ length: N_total }, (_, k) => {
-              const d = k * s_w
-              if (d >= 80) return null
-              if (orientation === 'vertical') {
-                const yv = +(csY1 - d / 80 * csH).toFixed(1)
-                return <line key={k} x1={pad} y1={yv} x2={csX1} y2={yv}
-                  stroke="#374151" strokeWidth="1" strokeLinecap="round" />
-              } else {
-                const xv = +(csX1 - d / 80 * csW).toFixed(1)
-                return <line key={k} x1={xv} y1={pad} x2={xv} y2={csY1}
-                  stroke="#374151" strokeWidth="1" strokeLinecap="round" />
-              }
-            })}
-            <line x1={pad}      y1={csY1+8}  x2={pad}      y2={csY1+20} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1}     y1={csY1+8}  x2={csX1}     y2={csY1+20} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={pad}      y1={csY1+14} x2={csX1}     y2={csY1+14} stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-            <text x={pad+csW/2} y={csY1+36}  fontSize="15" fill="#64748b" textAnchor="middle" fontStyle="italic"
-              paintOrder="stroke" stroke="white" strokeWidth="4">{lLbl}</text>
-            <line x1={csX1+8}  y1={pad}      x2={csX1+20} y2={pad}      stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1+8}  y1={csY1}     x2={csX1+20} y2={csY1}     stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1={csX1+14} y1={pad}      x2={csX1+14} y2={csY1}     stroke="#64748b" strokeWidth="1"   strokeLinecap="round" />
-            <text x={csX1+26}  y={pad+csH/2} fontSize="15" fill="#64748b" textAnchor="start" dominantBaseline="middle" fontStyle="italic"
-              paintOrder="stroke" stroke="white" strokeWidth="4">{hLbl}</text>
-          </svg>
-        )
-      })()}
+    </div>
+  )
+}
+
+// ── Schéma Z rectangulaire (ASHRAE 3-11) ──────────────────────────────────────
+
+function SchemaRectZ({
+  orientation = 'horizontal', l_mm, h_mm, lOverH = 1.0, mini,
+}: {
+  orientation?: 'horizontal' | 'vertical'
+  l_mm?: number | null
+  h_mm?: number | null
+  lOverH?: number
+  mini?: boolean
+}) {
+  const a0_mm = (orientation === 'vertical' ? h_mm : l_mm) ?? 300
+
+  // Symmetric geometry: equal arm lengths on each side of the connecting section
+  const w       = 80   // duct height in world units
+  const arm     = 1.2 * w  // horizontal arm length = 1.2× la dimension de la gaine
+  const x_b1    = 200  // inner corner x (entry meets connecting)
+  const x_start = x_b1 - arm      // = 80
+  const x_exit  = x_b1 + w + arm  // = 400
+  const L_draw  = Math.min(lOverH * w, 400)  // cap display height (annotations stay visible)
+
+  // Space outside the duct for annotations (left = entry, right = exit)
+  const annLeft  = mini ? 0 : 52
+  const annRight = mini ? 0 : 52
+  const totalW   = annLeft + (x_exit - x_start) + annRight
+
+  const VW = 500, VH = 420, M = 16
+  const scl = Math.min((VW - 2*M) / totalW, (VH - 2*M) / (L_draw + w))
+  const tx  = M + ((VW - 2*M) - totalW * scl) / 2 + annLeft * scl - x_start * scl
+  const ty  = M + ((VH - 2*M) - (L_draw + w) * scl) / 2
+  const vx  = (wx: number) => +(tx + wx * scl).toFixed(1)
+  const vy  = (wy: number) => +(ty + wy * scl).toFixed(1)
+  const sw  = mini ? +(10 / scl).toFixed(2) : '3'
+
+  const fill = '#f1f5f9', stroke = '#374151'
+
+  // Z-shape: union of 3 rectangles, 90° corners, straight ends
+  const pathD = [
+    `M ${vx(x_start)} ${vy(0)}`,
+    `L ${vx(x_b1 + w)} ${vy(0)}`,       // top wall: entry + connecting combined
+    `L ${vx(x_b1 + w)} ${vy(L_draw)}`,  // connecting right wall
+    `L ${vx(x_exit)} ${vy(L_draw)}`,    // exit top (right of connecting)
+    `L ${vx(x_exit)} ${vy(L_draw + w)}`,// exit right end (straight)
+    `L ${vx(x_b1)} ${vy(L_draw + w)}`,  // exit bottom going LEFT
+    `L ${vx(x_b1)} ${vy(w)}`,           // combined left wall going UP
+    `L ${vx(x_start)} ${vy(w)}`,        // entry bottom
+    'Z',                                 // entry left end (straight)
+  ].join(' ')
+
+  // a0 = dimension dans le plan de courbure : L (largeur) pour horizontal, H (hauteur) pour vertical
+  const dimLbl = orientation === 'vertical'
+    ? (h_mm != null ? `H = ${h_mm} mm` : 'H')
+    : (l_mm != null ? `L = ${l_mm} mm` : 'L')
+  const cx = x_b1 + w / 2  // centre horizontal de la gaine verticale
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
+        <path d={pathD} fill={fill} stroke={stroke} strokeWidth={sw}
+          strokeLinejoin="round" strokeLinecap="round" />
+
+        {!mini && <>
+          {/* Annotation l — au centre de la gaine verticale, entre les axes des gaines horizontales */}
+          {L_draw > 20 && (<>
+            <line x1={vx(cx - 8)} y1={vy(w / 2)} x2={vx(cx + 8)} y2={vy(w / 2)}
+              stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={vx(cx - 8)} y1={vy(L_draw + w / 2)} x2={vx(cx + 8)} y2={vy(L_draw + w / 2)}
+              stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={vx(cx)} y1={vy(w / 2)} x2={vx(cx)} y2={vy(L_draw + w / 2)}
+              stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
+          </>)}
+          {L_draw > 5 && (
+            <text x={+(vx(cx) + 16).toFixed(1)} y={vy((L_draw + w) / 2)} fontSize="13" fill="#64748b"
+              textAnchor="middle" dominantBaseline="middle" fontStyle="italic"
+              paintOrder="stroke" stroke="white" strokeWidth="5"
+              transform={`rotate(-90, ${+(vx(cx) + 16).toFixed(1)}, ${vy((L_draw + w) / 2)})`}>
+              {`l = ${Math.round(lOverH * a0_mm)} mm`}
+            </text>
+          )}
+
+          {/* Annotation L ou H — gaine d'entrée (haut), à gauche en dehors */}
+          <line x1={vx(x_start - 8)}  y1={vy(0)} x2={vx(x_start - 20)} y2={vy(0)}
+            stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={vx(x_start - 8)}  y1={vy(w)} x2={vx(x_start - 20)} y2={vy(w)}
+            stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={vx(x_start - 14)} y1={vy(0)} x2={vx(x_start - 14)} y2={vy(w)}
+            stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
+          <text x={+(vx(x_start - 14) - 16).toFixed(1)} y={vy(w / 2)} fontSize="13" fill="#64748b"
+            textAnchor="middle" dominantBaseline="middle" fontStyle="italic"
+            paintOrder="stroke" stroke="white" strokeWidth="4"
+            transform={`rotate(-90, ${+(vx(x_start - 14) - 16).toFixed(1)}, ${vy(w / 2)})`}>{dimLbl}</text>
+        </>}
+      </svg>
+    </div>
+  )
+}
+
+// ── Schéma ASHRAE 3-12 — Coudes 90° plans croisés (construction itérative) ───
+
+function SchemaRect312({ mini, orientation = 'horizontal', l_mm, h_mm, lOverW = 1.0 }: {
+  mini?: boolean
+  orientation?: 'horizontal' | 'vertical'
+  l_mm?: number | null
+  h_mm?: number | null
+  lOverW?: number
+}) {
+  // Profondeur proportionnelle à √(b0/a0) : visuellement cohérente sans distorsion
+  // dep_ref=35 pour une gaine carrée (ratio=1), varie entre ~18 et ~70 pour ratio [0.25, 4]
+  const a0    = orientation === 'vertical' ? (h_mm ?? 300) : (l_mm ?? 300)
+  const b0    = orientation === 'vertical' ? (l_mm ?? 200) : (h_mm ?? 200)
+  const ratio = a0 > 0 ? b0 / a0 : 1
+  const w     = 75
+  // dep tel que longueur visuelle diagonale = ratio × w × scl (proportionnel à b0/a0)
+  const dep   = Math.max(12, Math.min(150, Math.round(ratio * w / Math.SQRT2)))
+
+  const arm_h = w   // = L (ou H) : même longueur que la face
+  const lOverW_vis = Math.min(lOverW, 3)  // plafond visuel à 3, texte garde la vraie valeur
+  // arm_v = (lOverW_vis + ratio)*w : la paroi gauche visible (P6→P1e) vaut lOverW_vis*w ∝ l
+  const arm_v = Math.max(w * 0.3, (lOverW_vis + ratio) * w)
+
+  const VW = 500, VH = 420, M = 16
+  const annRectRight = mini ? 0 : 36   // espace pour l'annotation à droite du rectangle
+  const scl = Math.min((VW - 2*M - annRectRight) / (dep + arm_h + w + w / Math.SQRT2), (VH - 2*M) / (dep + arm_v + w))
+  const tx  = M + ((VW - 2*M) - (dep + arm_h + w + w / Math.SQRT2) * scl) / 2 + dep * scl
+  const ty  = M + ((VH - 2*M) - (dep + arm_v + w) * scl) / 2 + (dep + arm_v) * scl
+  const vx  = (wx: number) => +(tx + wx * scl).toFixed(1)
+  const vy  = (wy: number) => +(ty + wy * scl).toFixed(1)
+  const sw  = mini ? +(10 / scl).toFixed(2) : '3'
+
+  const dd = +(dep * scl).toFixed(1)
+
+  const P1: [number, number] = [vx(arm_h),     vy(-arm_v)]
+  const P2: [number, number] = [vx(arm_h + w), vy(-arm_v)]
+  const P3: [number, number] = [vx(arm_h + w), vy(w)]
+  const P4: [number, number] = [vx(0),         vy(w)]
+  const P5: [number, number] = [vx(0),         vy(0)]
+  const P6: [number, number] = [vx(arm_h),     vy(0)]
+
+  const bk = ([x, y]: [number, number]): [number, number] => [+(x - dd).toFixed(1), +(y - dd).toFixed(1)]
+  const P1b = bk(P1), P2b = bk(P2), P3b = bk(P3), P4b = bk(P4), P5b = bk(P5), P6b = bk(P6)
+
+  // Deuxième tronçon : diagonale symétrique vers le bas-droite depuis P1/P2, puis verticales
+  const diagLen = +(ratio * w * scl).toFixed(1)
+  const fwdStep = +(w * scl / Math.SQRT2).toFixed(1)
+  const P1c: [number, number] = [+(P1[0] + fwdStep).toFixed(1), +(P1[1] + fwdStep).toFixed(1)]
+  const P2c: [number, number] = [+(P2[0] + fwdStep).toFixed(1), +(P2[1] + fwdStep).toFixed(1)]
+  const P1cd: [number, number] = [P1c[0], +(P1c[1] + diagLen).toFixed(1)]
+  const P2cd: [number, number] = [P2c[0], +(P2c[1] + diagLen).toFixed(1)]
+  // Diagonale remontant vers la gauche depuis P1cd jusqu'à la paroi verticale gauche de la gaine
+  const P1e: [number, number] = [P1[0], +(P1[1] + diagLen).toFixed(1)]
+  // Intersection de l'horizontale P1c→P2c avec le mur droit de la gaine (x=P2[0])
+  const P2x: [number, number] = [P2[0], P1c[1]]
+  // Intersection de l'horizontale P1cd→P2cd avec le mur droit de la gaine (x=P2[0])
+  const P2y: [number, number] = [P2[0], P1cd[1]]
+
+  const pathD = [
+    `M ${P1[0]} ${P1[1]}`,
+    `L ${P2[0]} ${P2[1]}`,
+    `L ${P3[0]} ${P3[1]}`,
+    `L ${vx(0)} ${vy(w)}`,
+    `L ${P5[0]} ${P5[1]}`,
+    `L ${P6[0]} ${P6[1]}`,
+    'Z',
+  ].join(' ')
+
+  const str = '#374151'
+  const ann = '#64748b'
+  const seg = (a: [number,number], b: [number,number]) =>
+    <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={str} strokeWidth={sw} strokeLinecap="round" />
+
+  // Labels : face (L ou H visible) et profondeur (H ou L en diagonal)
+  const faceLbl  = orientation === 'horizontal'
+    ? (l_mm != null ? `L = ${l_mm} mm` : 'L')
+    : (h_mm != null ? `H = ${h_mm} mm` : 'H')
+  const depthLbl = orientation === 'horizontal'
+    ? (h_mm != null ? `H = ${h_mm} mm` : 'H')
+    : (l_mm != null ? `L = ${l_mm} mm` : 'L')
+
+  // — Annotation face — à droite du mur gauche (x = 0), même style que les autres coudes
+  const xF0 = vx(6)    // tick intérieur
+  const xF1 = vx(18)   // tick extérieur
+  const xFL = vx(12)   // trait de cote vertical
+  const xFT = +(xFL + 16).toFixed(1)   // texte à 14 px du trait de cote
+  const yF0 = vy(0)
+  const yFm = vy(w / 2)
+  const yFw = vy(w)
+
+  // — Annotation profondeur — à droite de la diagonale P4→P4b (coin bas-gauche)
+  // Direction perpendiculaire vers le haut-droit : (+1/√2, −1/√2) en SVG
+  const d45 = 1 / Math.SQRT2
+  const dp = (pt: [number,number], o: number): [number,number] =>
+    [+(pt[0] + o * d45).toFixed(1), +(pt[1] - o * d45).toFixed(1)]
+
+  const dTi0 = dp(P5,  4);  const dTi1 = dp(P5b,  4)
+  const dTo0 = dp(P5, 16);  const dTo1 = dp(P5b, 16)
+  const dL0  = dp(P5, 10);  const dL1  = dp(P5b, 10)
+  const dTmx = +((P5[0] + P5b[0]) / 2 + 26 * d45).toFixed(1)
+  const dTmy = +((P5[1] + P5b[1]) / 2 - 26 * d45).toFixed(1)
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" style={{ display: 'block' }} overflow="visible">
+
+        {/* Remplissages gris des faces latérales visibles (avant tous les traits) */}
+        <polygon points={`${P1[0]},${P1[1]} ${P2[0]},${P2[1]} ${P2b[0]},${P2b[1]} ${P1b[0]},${P1b[1]}`} fill="#f1f5f9" stroke="none" />
+        <polygon points={`${P1b[0]},${P1b[1]} ${P2b[0]},${P2b[1]} ${P2c[0]},${P2c[1]} ${P1c[0]},${P1c[1]}`} fill="#f1f5f9" stroke="none" />
+        <polygon points={`${P5[0]},${P5[1]} ${P6[0]},${P6[1]} ${P6b[0]},${P6b[1]} ${P5b[0]},${P5b[1]}`} fill="#f1f5f9" stroke="none" />
+        <polygon points={`${P4[0]},${P4[1]} ${P5[0]},${P5[1]} ${P5b[0]},${P5b[1]} ${P4b[0]},${P4b[1]}`} fill="#f1f5f9" stroke="none" />
+        <polygon points={`${P6[0]},${P6[1]} ${P1[0]},${P1[1]} ${P1b[0]},${P1b[1]} ${P6b[0]},${P6b[1]}`} fill="#f1f5f9" stroke="none" />
+
+        {/* Segments obliques 45° haut-gauche depuis chaque coin */}
+        {seg(P1, P1b)} {seg(P2, P2b)} {seg(P3, P3b)} {seg(P4, P4b)} {seg(P5, P5b)} {seg(P6, P6b)}
+
+        {/* Arêtes arrière du tronçon principal */}
+        {seg(P1b, P2b)}
+        {seg(P5b, P6b)}
+        {seg(P4b, P5b)}
+        {seg(P1b, P6b)}
+
+        {/* Forme L — fill seulement ; arêtes dessinées séparément sauf P1→P2 */}
+        <path d={pathD} fill="#f1f5f9" stroke="none" />
+        <line x1={P2y[0]} y1={P2y[1]} x2={P3[0]} y2={P3[1]} stroke={str} strokeWidth={sw} strokeLinecap="round" />
+        <line x1={P3[0]} y1={P3[1]} x2={P4[0]} y2={P4[1]} stroke={str} strokeWidth={sw} strokeLinecap="round" />
+        <line x1={P4[0]} y1={P4[1]} x2={P5[0]} y2={P5[1]} stroke={str} strokeWidth={sw} strokeLinecap="round" />
+        <line x1={P5[0]} y1={P5[1]} x2={P6[0]} y2={P6[1]} stroke={str} strokeWidth={sw} strokeLinecap="round" />
+        <line x1={P6[0]} y1={P6[1]} x2={P1e[0]} y2={P1e[1]} stroke={str} strokeWidth={sw} strokeLinecap="round" />
+
+        {/* Remplissage gris du second tronçon (rectangle P1c→P2c→P2cd→P1cd) */}
+        <polygon points={`${P1c[0]},${P1c[1]} ${P2c[0]},${P2c[1]} ${P2cd[0]},${P2cd[1]} ${P1cd[0]},${P1cd[1]}`} fill="#f1f5f9" stroke="none" />
+
+        {/* Diagonales bas-droite depuis P1/P2 + horizontale du haut + verticales + horizontale du bas */}
+        {seg(P1, P1c)}
+        {seg(P2, P2c)}
+        {seg(P1c, P2c)}
+        {seg(P1c, P1cd)}
+        {seg(P2c, P2cd)}
+        {seg(P1cd, P2cd)}
+        {seg(P1cd, P1e)}
+
+        {!mini && <>
+          {/* Annotation l — bas au milieu de P6→P6b (diagonale oblique au coin intérieur du coude) */}
+          {lOverW > 0.05 && (() => {
+            const annSpan = P6[1] - P1e[1]  // = lOverW*w*scl
+            const annBot  = +((P6[1] + P6b[1]) / 2).toFixed(1)
+            const annTop  = +(+annBot - annSpan).toFixed(1)
+            const annMid  = +((+annTop + +annBot) / 2).toFixed(1)
+            const ax      = +((P6[0] + P6b[0]) / 2).toFixed(1)  // milieu x de P6→P6b
+            return (<>
+              <line x1={+(ax - 8).toFixed(1)} y1={annTop} x2={+(ax + 8).toFixed(1)} y2={annTop} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+              <line x1={+(ax - 8).toFixed(1)} y1={annBot} x2={+(ax + 8).toFixed(1)} y2={annBot} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+              <line x1={ax}                   y1={annTop} x2={ax}                   y2={annBot} stroke={ann} strokeWidth="1"   strokeLinecap="round" />
+              {annSpan > 20 && (
+                <text x={+(ax - 14).toFixed(1)} y={annMid} fontSize="12" fill={ann} fontStyle="italic"
+                  textAnchor="middle" dominantBaseline="middle"
+                  paintOrder="stroke" stroke="white" strokeWidth="4"
+                  transform={`rotate(-90, ${+(ax - 14).toFixed(1)}, ${annMid})`}>
+                  {`l = ${Math.round(lOverW * a0)} mm`}
+                </text>
+              )}
+            </>)
+          })()}
+
+          {/* Annotation face (L ou H) — à droite du mur gauche (x=0), hauteur y=0..w */}
+          <line x1={xF0} y1={yF0} x2={xF1} y2={yF0} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={xF0} y1={yFw} x2={xF1} y2={yFw} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={xFL} y1={yF0} x2={xFL} y2={yFw} stroke={ann} strokeWidth="1"   strokeLinecap="round" />
+          <text x={xFT} y={yFm} fontSize="12" fill={ann} fontStyle="italic"
+            textAnchor="middle" dominantBaseline="middle"
+            paintOrder="stroke" stroke="white" strokeWidth="4"
+            transform={`rotate(-90, ${xFT}, ${yFm})`}>
+            {faceLbl}
+          </text>
+
+          {/* Annotation profondeur (H ou L) — à droite de la diagonale P4→P4b */}
+          <line x1={dTi0[0]} y1={dTi0[1]} x2={dTo0[0]} y2={dTo0[1]} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={dTi1[0]} y1={dTi1[1]} x2={dTo1[0]} y2={dTo1[1]} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={dL0[0]}  y1={dL0[1]}  x2={dL1[0]}  y2={dL1[1]}  stroke={ann} strokeWidth="1"   strokeLinecap="round" />
+          <text x={dTmx} y={dTmy} fontSize="12" fill={ann} fontStyle="italic"
+            textAnchor="middle" dominantBaseline="middle"
+            paintOrder="stroke" stroke="white" strokeWidth="4"
+            transform={`rotate(-45, ${dTmx}, ${dTmy})`}>
+            {depthLbl}
+          </text>
+
+          {/* Annotation face (L ou H) — en haut du rectangle (P1c→P2c) */}
+          <line x1={P1c[0]} y1={+(P1c[1]-6).toFixed(1)}  x2={P1c[0]} y2={+(P1c[1]-18).toFixed(1)} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={P2c[0]} y1={+(P1c[1]-6).toFixed(1)}  x2={P2c[0]} y2={+(P1c[1]-18).toFixed(1)} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+          <line x1={P1c[0]} y1={+(P1c[1]-12).toFixed(1)} x2={P2c[0]} y2={+(P1c[1]-12).toFixed(1)} stroke={ann} strokeWidth="1"   strokeLinecap="round" />
+          <text x={+((P1c[0]+P2c[0])/2).toFixed(1)} y={+(P1c[1]-28).toFixed(1)}
+            fontSize="12" fill={ann} fontStyle="italic"
+            textAnchor="middle" dominantBaseline="middle"
+            paintOrder="stroke" stroke="white" strokeWidth="4">
+            {faceLbl}
+          </text>
+
+          {/* Annotation profondeur (H ou L) — à droite du rectangle (P2c→P2cd) */}
+          {diagLen > 12 && (<>
+            <line x1={+(P2c[0]+6).toFixed(1)}  y1={P2c[1]}  x2={+(P2c[0]+18).toFixed(1)} y2={P2c[1]}  stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={+(P2c[0]+6).toFixed(1)}  y1={P2cd[1]} x2={+(P2c[0]+18).toFixed(1)} y2={P2cd[1]} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+            <line x1={+(P2c[0]+12).toFixed(1)} y1={P2c[1]}  x2={+(P2c[0]+12).toFixed(1)} y2={P2cd[1]} stroke={ann} strokeWidth="1"   strokeLinecap="round" />
+            <text x={+(P2c[0]+28).toFixed(1)} y={+((P2c[1]+P2cd[1])/2).toFixed(1)}
+              fontSize="12" fill={ann} fontStyle="italic"
+              textAnchor="middle" dominantBaseline="middle"
+              paintOrder="stroke" stroke="white" strokeWidth="4"
+              transform={`rotate(-90, ${+(P2c[0]+28).toFixed(1)}, ${+((P2c[1]+P2cd[1])/2).toFixed(1)})`}>
+              {depthLbl}
+            </text>
+          </>)}
+        </>}
+      </svg>
     </div>
   )
 }
@@ -1103,11 +2812,17 @@ const FULL_LABELS: Record<SingularityType, string[]> = {
   'coude-lisse':       ['Coude', 'lisse à rayon'],
   'coude-segmente':   ['Coude', 'segmenté'],
   'coude-onglet':     ['Coude', 'à onglet'],
-  'coude-z':          ['Dévoi.', 'Z (2×30°)'],
+  'coude-z':          ['Dévoi. en Z', '(2×30°)'],
+  'coude-s':          ['Dévoi. en S', '(col de cygne)'],
+  'coude-3-14':       ['Dévoi. en S', '2 plans (3-14)'],
   'rect-rayon-lisse': ['Coude', 'rayon lisse'],
   'rect-onglet':      ['Coude', 'à onglet'],
   'rect-aubes':        ['Coude aubes', 'séparatrices'],
   'rect-onglet-aubes': ['Coude onglet', 'avec aubes'],
+  'rect-z':            ['Dévoi. en Z', '(2×90°)'],
+  'rect-3-12':         ['Coudes 90°', 'plans croisés'],
+  'rect-s':            ['Dévoi. en S', '(col de cygne)'],
+  'rect-3-14':         ['Dévoi. en S', '2 plans (3-14)'],
 }
 
 function TypeCard({ type, selected, onClick, orientation = 'horizontal', l_mm, h_mm }: TypeCardProps) {
@@ -1116,34 +2831,38 @@ function TypeCard({ type, selected, onClick, orientation = 'horizontal', l_mm, h
     'coude-segmente':   <SchemaCoudeSegmente angle={90} nPieces={3} mini />,
     'coude-onglet':     <SchemaCoudeOnglet angle={90} mini />,
     'coude-z':          <SchemaCoudeZ mini />,
+    'coude-s':          <SchemaCoudeS mini lOverDs={1} rOverDs={1} />,
+    'coude-3-14':       <SchemaCoude314 mini lOverDs={1} rOverDs={1} />,
     'rect-rayon-lisse': <SchemaRectRayonLisse angle={90} orientation="horizontal" mini />,
     'rect-onglet':      <SchemaRectOnglet angle={90} orientation="horizontal" mini />,
     'rect-aubes':        <SchemaRectAubes angle={90} orientation="horizontal" rOverB={1.0} nVanes={1} mini />,
     'rect-onglet-aubes': <SchemaRectOngletAubes angle={90} orientation="horizontal" l_mm={300} vaneThickness="simple" design38={2} mini />,
+    'rect-z':            <SchemaRectZ orientation="horizontal" l_mm={300} h_mm={200} lOverH={1.0} mini />,
+    'rect-3-12':         <SchemaRect312 mini orientation="horizontal" l_mm={300} h_mm={200} lOverW={2.0} />,
+    'rect-s':            <SchemaCoudeRectS mini lOverDs={1} rOverWs={1.0} l_mm={400} h_mm={200} orientation="vertical" />,
+    'rect-3-14':         <SchemaRect314 mini lOverDs={1} rOverWs={1.0} l_mm={400} h_mm={200} orientation="vertical" />,
   }
   return (
-    <button onClick={onClick} style={{
+    <button onClick={onClick} title={FULL_LABELS[type].join(' ')} style={{
       flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-      padding: '7px 5px 6px',
+      padding: '7px 5px 7px',
       border: `1.5px solid ${selected ? '#2563eb' : '#e2e8f0'}`,
       borderRadius: 8,
       background: selected ? '#eff6ff' : '#f8fafc',
-      cursor: 'pointer', gap: 3, transition: 'all 0.12s',
+      cursor: 'pointer', transition: 'all 0.12s',
       boxShadow: selected ? '0 0 0 3px #2563eb22' : 'none',
     }}>
       <div style={{ width: '100%', height: 58 }}>
         {miniSchemas[type]}
       </div>
-      <div style={{ textAlign: 'center', lineHeight: 1.25 }}>
-        <span style={{ fontSize: 9.5, fontWeight: selected ? 700 : 500,
-          color: selected ? '#1d4ed8' : '#64748b', display: 'block' }}>
-          {FULL_LABELS[type][0]}
-        </span>
-        <span style={{ fontSize: 9.5, fontWeight: selected ? 700 : 500,
-          color: selected ? '#1d4ed8' : '#64748b', display: 'block' }}>
-          {FULL_LABELS[type][1]}
-        </span>
-      </div>
+      <span style={{
+        fontSize: 9, fontWeight: selected ? 700 : 500,
+        color: selected ? '#1d4ed8' : '#64748b',
+        textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden',
+        textOverflow: 'ellipsis', width: '100%', display: 'block',
+      }}>
+        {FULL_LABELS[type].join(' ')}
+      </span>
     </button>
   )
 }
@@ -1163,8 +2882,12 @@ interface Props {
   h_mm?:       number | null
 }
 
-const CIRC_TYPES: SingularityType[] = ['coude-lisse', 'coude-segmente', 'coude-onglet', 'coude-z']
-const RECT_TYPES: SingularityType[] = ['rect-rayon-lisse', 'rect-onglet', 'rect-aubes', 'rect-onglet-aubes']
+const CIRC_SIMPLE:  SingularityType[] = ['coude-lisse', 'coude-segmente', 'coude-onglet']
+const CIRC_COMPOSE: SingularityType[] = ['coude-z', 'coude-s', 'coude-3-14']
+const CIRC_TYPES:   SingularityType[] = [...CIRC_SIMPLE, ...CIRC_COMPOSE]
+const RECT_SIMPLE:  SingularityType[] = ['rect-rayon-lisse', 'rect-onglet', 'rect-aubes', 'rect-onglet-aubes']
+const RECT_COMPOSE: SingularityType[] = ['rect-z', 'rect-3-12', 'rect-s', 'rect-3-14']
+const RECT_TYPES:   SingularityType[] = [...RECT_SIMPLE, ...RECT_COMPOSE]
 
 export default function SingularityModal({ isOpen, onClose, onSave, editing, di_mm, dynPressure, ductInfo, ductShape = 'circular', l_mm, h_mm }: Props) {
   const [selType,     setSelType]     = useState<SingularityType | null>(null)
@@ -1180,6 +2903,16 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
   const [vaneThickness, setVaneThickness] = useState<'simple' | 'double'>('simple')
   const [design38,      setDesign38]      = useState<1 | 2 | 3>(1)
   const [design39,      setDesign39]      = useState<1 | 2 | 3 | 4>(1)
+  const [lOverH_ratio,  setLOverH_ratio]  = useState<number>(1.0)
+  const [lOverW_ratio,  setLOverW_ratio]  = useState<number>(1.0)
+  const [thetaS,        setThetaS]        = useState<number>(90)
+  const [lOverDS,       setLOverDS]       = useState<number>(1)
+  const [elbowTypeS,    setElbowTypeS]    = useState<'lisse' | 'segmente'>('lisse')
+  const [rOverDs,       setROverDs]       = useState<number>(1.0)
+  const [nPiecesS,      setNPiecesS]      = useState<3 | 4 | 5>(3)
+  const [rOverWs,       setROverWs]       = useState<number>(1.0)
+  const [lDistSmm,      setLDistSmm]      = useState<number>(500)
+  const [coudeCategory, setCoudeCategory] = useState<'simple' | 'compose'>('simple')
   const [mounted,       setMounted]       = useState(false)
 
   useEffect(() => {
@@ -1190,6 +2923,8 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
   useEffect(() => {
     if (!isOpen) return
     if (editing) {
+      const isCompose = CIRC_COMPOSE.includes(editing.type) || RECT_COMPOSE.includes(editing.type)
+      setCoudeCategory(isCompose ? 'compose' : 'simple')
       setSelType(editing.type); setAngle(editing.angle)
       setROverD(editing.rOverD ?? 1.5)
       setNPieces((editing.nPieces ?? 3) as 3 | 4 | 5)
@@ -1202,10 +2937,26 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
       setVaneThickness(editing.vaneThickness ?? 'simple')
       setDesign38((editing.design38 ?? 1) as 1 | 2 | 3)
       setDesign39((editing.design39 ?? 1) as 1 | 2 | 3 | 4)
+      setLOverH_ratio(editing.lOverH ?? (editing.offset_mm != null && (editing.l_mm ?? 300) > 0 ? editing.offset_mm / (editing.l_mm ?? 300) : 1.0))
+      setLOverW_ratio(editing.lOverW ?? 1.0)
+      setThetaS(editing.theta_s ?? 90)
+      setLOverDS(editing.lOverD_s ?? (() => {
+        if (editing.lDistS_mm != null && editing.l_mm != null && editing.h_mm != null) {
+          const Dhyd = (2 * editing.l_mm * editing.h_mm) / (editing.l_mm + editing.h_mm)
+          return Dhyd > 0 ? Math.round(editing.lDistS_mm / Dhyd * 100) / 100 : 1
+        }
+        return 1
+      })())
+      setElbowTypeS(editing.elbowTypeS ?? 'lisse')
+      setROverDs(editing.rOverDs ?? 1.0)
+      setNPiecesS((editing.nPiecesS ?? 3) as 3 | 4 | 5)
+      setROverWs(editing.rOverWs ?? 1.0)
+      setLDistSmm(editing.lDistS_mm ?? 500)
     } else {
+      setCoudeCategory('simple')
       setSelType(null); setAngle(90); setROverD(1.5); setNPieces(3)
       setTypeAubes('simple'); setNVanes(1); setOrientation('horizontal'); setROverA(1.5); setROverB(0.70); setLOverD(1.5)
-      setVaneThickness('simple'); setDesign38(1); setDesign39(1)
+      setVaneThickness('simple'); setDesign38(1); setDesign39(1); setLOverH_ratio(1.0); setLOverW_ratio(1.0)
     }
   }, [isOpen, editing])
 
@@ -1217,7 +2968,9 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
   const angleMin = selType && ANGLE_MIN_20.includes(selType) ? 20 : 1
 
   const isRectMode = ductShape === 'rectangular'
-  const activeTypes = isRectMode ? RECT_TYPES : CIRC_TYPES
+  const activeTypes = isRectMode
+    ? (coudeCategory === 'simple' ? RECT_SIMPLE : RECT_COMPOSE)
+    : (coudeCategory === 'simple' ? CIRC_SIMPLE : CIRC_COMPOSE)
 
   const RHO_AIR = 1.2, NU_AIR = 15e-6
   const v_ms   = dynPressure != null ? Math.sqrt(2 * dynPressure / RHO_AIR) : null
@@ -1232,7 +2985,9 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
   const singObj: VentSingularity | null = selType ? {
     id: '', type: selType, angle, rOverD, nPieces, lOverD,
     typeAubes, nVanes, orientation, l_mm: l_mm ?? undefined, h_mm: h_mm ?? undefined, rOverA, rOverB,
-    vaneThickness, design38, design39,
+    vaneThickness, design38, design39, lOverH: lOverH_ratio, lOverW: lOverW_ratio,
+    theta_s: thetaS, lOverD_s: lOverDS,
+    elbowTypeS, rOverDs, nPiecesS, rOverWs, lDistS_mm: lDistSmm,
   } : null
   const xiParts = singObj ? computeXiSingularityFull(singObj, lambda, Re_duct ?? undefined, di_mm ?? undefined, v_ms) : null
   const xi      = xiParts?.ksi_total ?? null
@@ -1242,7 +2997,7 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
     if (!selType) return
     onSave({
       id: editing?.id ?? newSingId(), type: selType,
-      angle: selType === 'coude-z' ? 30 : selType === 'rect-onglet-aubes' ? 90 : angle,
+      angle: selType === 'coude-z' ? 30 : selType === 'rect-onglet-aubes' || selType === 'rect-z' || selType === 'rect-3-12' ? 90 : selType === 'coude-s' || selType === 'rect-s' || selType === 'coude-3-14' || selType === 'rect-3-14' ? thetaS : angle,
       ...(selType === 'coude-lisse'      ? { rOverD }           : {}),
       ...(selType === 'coude-segmente'   ? { nPieces, rOverD }  : {}),
       ...(selType === 'coude-z'          ? { lOverD }           : {}),
@@ -1250,6 +3005,12 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
       ...(selType === 'rect-onglet'       ? { orientation, l_mm: l_mm ?? undefined, h_mm: h_mm ?? undefined } : {}),
       ...(selType === 'rect-aubes'        ? { orientation, nVanes, rOverB, l_mm: l_mm ?? undefined, h_mm: h_mm ?? undefined } : {}),
       ...(selType === 'rect-onglet-aubes' ? { orientation, vaneThickness, design38, design39, l_mm: l_mm ?? undefined, h_mm: h_mm ?? undefined } : {}),
+      ...(selType === 'rect-z'            ? { orientation, lOverH: lOverH_ratio, l_mm: l_mm ?? undefined, h_mm: h_mm ?? undefined } : {}),
+      ...(selType === 'rect-3-12'         ? { orientation, lOverW: lOverW_ratio, l_mm: l_mm ?? undefined, h_mm: h_mm ?? undefined } : {}),
+      ...(selType === 'coude-s'           ? { theta_s: thetaS, lOverD_s: lOverDS, rOverDs, elbowTypeS, ...(elbowTypeS === 'segmente' ? { nPiecesS } : {}) } : {}),
+      ...(selType === 'coude-3-14'        ? { theta_s: thetaS, lOverD_s: lOverDS, rOverDs, elbowTypeS, ...(elbowTypeS === 'segmente' ? { nPiecesS } : {}) } : {}),
+      ...(selType === 'rect-s'            ? { orientation, theta_s: thetaS, rOverWs, lOverD_s: lOverDS, l_mm: l_mm ?? undefined, h_mm: h_mm ?? undefined } : {}),
+      ...(selType === 'rect-3-14'         ? { orientation, theta_s: thetaS, rOverWs, lOverD_s: lOverDS, l_mm: l_mm ?? undefined, h_mm: h_mm ?? undefined } : {}),
     })
     onClose()
   }
@@ -1266,6 +3027,12 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
       case 'rect-onglet':       return <SchemaRectOnglet {...rp} />
       case 'rect-aubes':        return <SchemaRectAubes {...rp} nVanes={nVanes} rOverB={rOverB} />
       case 'rect-onglet-aubes': return <SchemaRectOngletAubes {...rp} angle={90} vaneThickness={vaneThickness} design38={design38} design39={design39} />
+      case 'rect-z':            return <SchemaRectZ orientation={orientation} l_mm={l_mm} h_mm={h_mm} lOverH={lOverH_ratio} />
+      case 'rect-3-12':         return <SchemaRect312 orientation={orientation} l_mm={l_mm} h_mm={h_mm} lOverW={lOverW_ratio} />
+      case 'coude-s':           return <SchemaCoudeS mini={false} theta_s={thetaS} di_mm={di_mm} rOverDs={rOverDs} lOverDs={lOverDS} elbowTypeS={elbowTypeS} nPiecesS={nPiecesS} />
+      case 'coude-3-14':        return <SchemaCoude314 mini={false} theta_s={thetaS} di_mm={di_mm} rOverDs={rOverDs} lOverDs={lOverDS} elbowTypeS={elbowTypeS} nPiecesS={nPiecesS} />
+      case 'rect-s':            return <SchemaCoudeRectS mini={false} theta_s={thetaS} l_mm={l_mm} h_mm={h_mm} orientation={orientation} rOverWs={rOverWs} lOverDs={lOverDS} />
+      case 'rect-3-14':         return <SchemaRect314 mini={false} theta_s={thetaS} l_mm={l_mm} h_mm={h_mm} orientation={orientation} rOverWs={rOverWs} lOverDs={lOverDS} />
     }
   }
 
@@ -1332,11 +3099,37 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
               textTransform: 'uppercase' as const, letterSpacing: '0.07em' }}>
               {isRectMode ? 'Type de coude — rectangulaire' : 'Type de coude — circulaire'}
             </div>
+            <div style={{ display: 'flex', borderRadius: 6, border: '1px solid #e2e8f0', overflow: 'hidden', marginLeft: 'auto', gap: 1, background: '#f1f5f9', padding: 2 }}>
+              {(['simple', 'compose'] as const).map(cat => {
+                const active = coudeCategory === cat
+                return (
+                  <button key={cat} onClick={() => {
+                    if (active) return
+                    const newActive = isRectMode
+                      ? (cat === 'simple' ? RECT_SIMPLE : RECT_COMPOSE)
+                      : (cat === 'simple' ? CIRC_SIMPLE : CIRC_COMPOSE)
+                    setCoudeCategory(cat)
+                    if (selType && !newActive.includes(selType)) setSelType(null)
+                  }} style={{
+                    background: active ? '#fff' : 'transparent',
+                    color: active ? '#2563eb' : '#94a3b8',
+                    border: active ? '1px solid #e2e8f0' : '1px solid transparent',
+                    borderRadius: 4, cursor: 'pointer', padding: '2px 9px',
+                    fontSize: 10.5, fontWeight: active ? 600 : 500,
+                    boxShadow: active ? '0 1px 3px #0001' : 'none',
+                    transition: 'all 0.12s',
+                  }}>
+                    {cat === 'simple' ? 'Simple' : 'Composé'}
+                  </button>
+                )
+              })}
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: 7 }}>
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'stretch' }}>
             {activeTypes.map(t => <TypeCard key={t} type={t} selected={selType === t} onClick={() => {
               setSelType(t)
               if (t === 'coude-z') { setAngle(30); return }
+              if (t === 'coude-s' || t === 'rect-s' || t === 'coude-3-14' || t === 'rect-3-14') { return }
               if (selType === 'coude-z') setAngle(90)
               if (ANGLE_MAX_90.includes(t)) setAngle(a => Math.min(a, 90))
               if (ANGLE_MIN_20.includes(t)) setAngle(a => Math.max(a, 20))
@@ -1371,7 +3164,7 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
                 display: 'flex', flexDirection: 'column',
                 borderRight: '1px solid #f1f5f9', background: '#f8fafd',
               }}>
-                {isRectMode && (selType === 'rect-rayon-lisse' || selType === 'rect-onglet' || selType === 'rect-aubes') && (
+                {isRectMode && (selType === 'rect-rayon-lisse' || selType === 'rect-onglet' || selType === 'rect-aubes' || selType === 'rect-onglet-aubes' || selType === 'rect-z') && (
                   <div style={{
                     position: 'absolute', top: 0, right: 0, zIndex: 2, pointerEvents: 'none',
                     background: '#f1f5f9', borderBottom: '1px solid #cbd5e1', borderLeft: '1px solid #cbd5e1',
@@ -1382,21 +3175,24 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
                     {orientation === 'vertical' ? 'Vue de profil' : 'Vue de dessus'}
                   </div>
                 )}
-                <div style={{ flex: 1, padding: '18px 14px 10px 18px', minHeight: 0 }}>
+                <div style={{ flex: 1, padding: 0, minHeight: 0, overflow: 'hidden' }}>
                   <BigSchema />
                 </div>
               </div>
 
               {/* ── Paramètres ── */}
               <div style={{
-                flex: 1, display: 'flex', flexDirection: 'column',
-                padding: '16px 16px 14px 16px', overflowY: 'auto',
+                flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0,
               }}>
-                {/* Nom du type */}
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#1e293b', marginBottom: 10 }}>
-                  {SING_LABELS[selType]}
+                {/* Nom fixe — hors scroll */}
+                <div style={{ padding: '12px 16px 0 16px', flexShrink: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#1e293b', marginBottom: 10 }}>
+                    {SING_LABELS[selType]}
+                  </div>
+                  <div style={{ borderTop: '1px solid #f1f5f9', marginBottom: 0 }} />
                 </div>
-                <div style={{ borderTop: '1px solid #f1f5f9', marginBottom: 14 }} />
+                {/* Zone scrollable */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 14px 16px' }}>
 
                 {/* Orientation — rectangulaire uniquement */}
                 {isRectMode && (
@@ -1439,9 +3235,9 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
                   display: 'grid', gridTemplateColumns: '1fr 74px',
                   rowGap: 10, columnGap: 8, alignItems: 'center',
                 }}>
-                  {selType !== 'coude-z' && selType !== 'rect-onglet-aubes' && <>
+                  {selType !== 'coude-z' && selType !== 'rect-onglet-aubes' && selType !== 'rect-z' && selType !== 'rect-3-12' && selType !== 'coude-s' && selType !== 'rect-s' && selType !== 'coude-3-14' && selType !== 'rect-3-14' && <>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                      <span style={lbl}>Angle δ (°)</span>
+                      <span style={lbl}>Angle θ</span>
                       {(selType === 'coude-onglet' || selType === 'rect-onglet')
                         ? <span style={{ fontSize: 9, color: '#94a3b8' }}>20° – 90°</span>
                         : angleMax === 90
@@ -1494,6 +3290,178 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
                     </div>
                     <NumInput min={0} max={3} step={0.1} value={lOverD}
                       onChange={v => setLOverD(Math.max(0, Math.min(3, v ?? 1.5)))} style={inp} />
+                  </>)}
+
+                  {/* Circulaire — dévoiement en S (ASHRAE 3-13) */}
+                  {selType === 'coude-s' && (<>
+                    <span style={lbl}>Angle θ</span>
+                    <select value={thetaS} onChange={e => setThetaS(Number(e.target.value))}
+                      style={{ ...inp, width: 74, cursor: 'pointer' }}>
+                      {[15, 30, 45, 60, 75, 90].map(θ => <option key={θ} value={θ}>{θ}°</option>)}
+                    </select>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={lbl}>l/D</span>
+                      <span style={{ fontSize: 9, color: '#94a3b8' }}>≥ 0</span>
+                    </div>
+                    <NumInput min={0} step={0.5} value={lOverDS}
+                      onChange={v => setLOverDS(Math.max(0, v ?? 1))} style={inp} />
+                    <div style={{ gridColumn: '1/-1', display: 'flex', gap: 6, marginTop: 2, marginBottom: 6 }}>
+                      {(['lisse', 'segmente'] as const).map(t => (
+                        <button key={t} onClick={() => {
+                          setElbowTypeS(t)
+                          if (t === 'segmente') setROverDs(v => Math.min(v, 2.0))
+                        }} style={{
+                          flex: 1, padding: '5px 0', borderRadius: 6,
+                          fontSize: 11, fontWeight: elbowTypeS === t ? 700 : 500,
+                          border: `1.5px solid ${elbowTypeS === t ? '#2563eb' : '#e2e8f0'}`,
+                          background: elbowTypeS === t ? '#eff6ff' : '#f8fafc',
+                          color: elbowTypeS === t ? '#1d4ed8' : '#64748b',
+                          cursor: 'pointer', transition: 'all 0.1s',
+                        }}>
+                          {t === 'lisse' ? 'Lisse à rayon' : 'Segmenté'}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={lbl}>r/D</span>
+                      <span style={{ fontSize: 9, color: '#94a3b8' }}>
+                        {elbowTypeS === 'lisse' ? '1,0 – 2,50' : '1,0 – 2,00'}
+                      </span>
+                    </div>
+                    <NumInput
+                      min={1.0} max={elbowTypeS === 'lisse' ? 2.5 : 2.0} step={0.05}
+                      value={rOverDs}
+                      onChange={v => setROverDs(Math.max(1.0, Math.min(elbowTypeS === 'lisse' ? 2.5 : 2.0, v ?? 1.0)))}
+                      style={{ ...inp, ...(elbowTypeS === 'lisse' ? { marginBottom: 10 } : {}) }} />
+                    {elbowTypeS === 'segmente' && (<>
+                      <label style={{ ...lbl, marginTop: 4 }}>Nb. d'éléments</label>
+                      <div style={{ display: 'flex', gap: 5, marginTop: 4, marginBottom: 10 }}>
+                        {([3, 4, 5] as const).map(n => (
+                          <button key={n} onClick={() => setNPiecesS(n)} style={{
+                            flex: 1, padding: '5px 0', borderRadius: 6,
+                            fontSize: 12, fontWeight: 700,
+                            border: `1.5px solid ${nPiecesS === n ? '#2563eb' : '#e2e8f0'}`,
+                            background: nPiecesS === n ? '#eff6ff' : '#f8fafc',
+                            color: nPiecesS === n ? '#1d4ed8' : '#64748b',
+                            cursor: 'pointer', transition: 'all 0.1s',
+                          }}>{n}</button>
+                        ))}
+                      </div>
+                    </>)}
+                  </>)}
+
+                  {/* Circulaire — dévoiement en S, 2 plans (ASHRAE 3-14) */}
+                  {selType === 'coude-3-14' && (<>
+                    <span style={lbl}>Angle θ</span>
+                    <select value={thetaS} onChange={e => setThetaS(Number(e.target.value))}
+                      style={{ ...inp, width: 74, cursor: 'pointer' }}>
+                      {[60, 90].map(θ => <option key={θ} value={θ}>{θ}°</option>)}
+                    </select>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={lbl}>L/D</span>
+                      <span style={{ fontSize: 9, color: '#94a3b8' }}>≥ 0</span>
+                    </div>
+                    <NumInput min={0} step={0.5} value={lOverDS}
+                      onChange={v => setLOverDS(Math.max(0, v ?? 1))} style={inp} />
+                    <div style={{ gridColumn: '1/-1', display: 'flex', gap: 6, marginTop: 2, marginBottom: 6 }}>
+                      {(['lisse', 'segmente'] as const).map(t => (
+                        <button key={t} onClick={() => {
+                          setElbowTypeS(t)
+                          if (t === 'segmente') setROverDs(v => Math.min(v, 2.0))
+                        }} style={{
+                          flex: 1, padding: '5px 0', borderRadius: 6,
+                          fontSize: 11, fontWeight: elbowTypeS === t ? 700 : 500,
+                          border: `1.5px solid ${elbowTypeS === t ? '#2563eb' : '#e2e8f0'}`,
+                          background: elbowTypeS === t ? '#eff6ff' : '#f8fafc',
+                          color: elbowTypeS === t ? '#1d4ed8' : '#64748b',
+                          cursor: 'pointer', transition: 'all 0.1s',
+                        }}>
+                          {t === 'lisse' ? 'Lisse à rayon' : 'Segmenté'}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={lbl}>r/D</span>
+                      <span style={{ fontSize: 9, color: '#94a3b8' }}>
+                        {elbowTypeS === 'lisse' ? '1,0 – 2,50' : '1,0 – 2,00'}
+                      </span>
+                    </div>
+                    <NumInput
+                      min={1.0} max={elbowTypeS === 'lisse' ? 2.5 : 2.0} step={0.05}
+                      value={rOverDs}
+                      onChange={v => setROverDs(Math.max(1.0, Math.min(elbowTypeS === 'lisse' ? 2.5 : 2.0, v ?? 1.0)))}
+                      style={{ ...inp, ...(elbowTypeS === 'lisse' ? { marginBottom: 10 } : {}) }} />
+                    {elbowTypeS === 'segmente' && (<>
+                      <label style={{ ...lbl, marginTop: 4 }}>Nb. d'éléments</label>
+                      <div style={{ display: 'flex', gap: 5, marginTop: 4, marginBottom: 10 }}>
+                        {([3, 4, 5] as const).map(n => (
+                          <button key={n} onClick={() => setNPiecesS(n)} style={{
+                            flex: 1, padding: '5px 0', borderRadius: 6,
+                            fontSize: 12, fontWeight: 700,
+                            border: `1.5px solid ${nPiecesS === n ? '#2563eb' : '#e2e8f0'}`,
+                            background: nPiecesS === n ? '#eff6ff' : '#f8fafc',
+                            color: nPiecesS === n ? '#1d4ed8' : '#64748b',
+                            cursor: 'pointer', transition: 'all 0.1s',
+                          }}>{n}</button>
+                        ))}
+                      </div>
+                    </>)}
+                  </>)}
+
+                  {/* Rectangulaire — dévoiement en S (ASHRAE 3-13) */}
+                  {selType === 'rect-s' && (<>
+                    <span style={lbl}>Angle θ</span>
+                    <select value={thetaS} onChange={e => setThetaS(Number(e.target.value))}
+                      style={{ ...inp, width: 74, cursor: 'pointer' }}>
+                      {[15, 30, 45, 60, 75, 90].map(θ => <option key={θ} value={θ}>{θ}°</option>)}
+                    </select>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={lbl}>l/D</span>
+                      <span style={{ fontSize: 9, color: '#94a3b8' }}>≥ 0</span>
+                    </div>
+                    <NumInput min={0} step={0.5} value={lOverDS}
+                      onChange={v => setLOverDS(Math.max(0, v ?? 1))} style={inp} />
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={lbl}>{orientation === 'vertical' ? 'r/H' : 'r/L'}</span>
+                      <span style={{ fontSize: 9, color: '#94a3b8' }}>1,0 – 2,0</span>
+                    </div>
+                    <NumInput min={1.0} max={2.0} step={0.05} value={rOverWs}
+                      onChange={v => setROverWs(Math.max(1.0, Math.min(2.0, v ?? 1.0)))} style={inp} />
+                  </>)}
+
+                  {/* Rectangulaire — dévoiement en S, 2 plans perpendiculaires (ASHRAE 3-14) */}
+                  {selType === 'rect-3-14' && (<>
+                    <span style={lbl}>Angle θ</span>
+                    <select value={thetaS} onChange={e => setThetaS(Number(e.target.value))}
+                      style={{ ...inp, width: 74, cursor: 'pointer' }}>
+                      {[60, 90].map(θ => <option key={θ} value={θ}>{θ}°</option>)}
+                    </select>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={lbl}>L/D</span>
+                      <span style={{ fontSize: 9, color: '#94a3b8' }}>≥ 0</span>
+                    </div>
+                    <NumInput min={0} step={0.5} value={lOverDS}
+                      onChange={v => setLOverDS(Math.max(0, v ?? 1))} style={inp} />
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={lbl}>{orientation === 'vertical' ? 'r/H' : 'r/L'}</span>
+                      <span style={{ fontSize: 9, color: '#94a3b8' }}>≥ 1,0</span>
+                    </div>
+                    <NumInput min={1.0} max={2.0} step={0.05} value={rOverWs}
+                      onChange={v => setROverWs(Math.max(1.0, Math.min(2.0, v ?? 1.0)))} style={inp} />
+                  </>)}
+
+                  {/* Rectangulaire — dévoiement Z (ASHRAE 3-11) */}
+                  {selType === 'rect-z' && (<>
+                    <span style={lbl}>{orientation === 'horizontal' ? 'l/L' : 'l/H'}</span>
+                    <NumInput min={0} step={0.1} value={lOverH_ratio}
+                      onChange={v => setLOverH_ratio(Math.max(0, v ?? 1.0))} style={inp} />
+                  </>)}
+
+                  {/* Rectangulaire — coudes 90° plans croisés (ASHRAE 3-12) */}
+                  {selType === 'rect-3-12' && (<>
+                    <span style={lbl}>{orientation === 'horizontal' ? 'l/L' : 'l/H'}</span>
+                    <NumInput min={0} step={0.1} value={lOverW_ratio}
+                      onChange={v => setLOverW_ratio(Math.max(0, v ?? 1.0))} style={inp} />
                   </>)}
 
                   {/* Rectangulaire — r/a₀ (rayon lisse uniquement) */}
@@ -1592,18 +3560,6 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
                             ))}
                           </div>
                         </div>
-                        {vaneThickness === 'simple' ? (
-                          <div style={infoStyle}>
-                            r = {info38[design38].r} · s = {info38[design38].s} · L = {info38[design38].L}
-                          </div>
-                        ) : (<>
-                          <div style={infoStyle}>
-                            r = {info39[design39].r} · s = {info39[design39].s} · Runner : {info39[design39].runner}
-                          </div>
-                          <div style={{ ...infoStyle, marginTop: 4 }}>
-                            V₀ = {v_ms != null ? v_ms.toFixed(2) + ' m/s' : '— m/s'}
-                          </div>
-                        </>)}
                       </div>
                     )
                   })()}
@@ -1653,7 +3609,8 @@ export default function SingularityModal({ isOpen, onClose, onSave, editing, di_
                     </div>
                   </div>
                 )}
-              </div>
+                </div>{/* fin zone scrollable */}
+              </div>{/* fin panneau paramètres */}
             </>
           )}
         </div>

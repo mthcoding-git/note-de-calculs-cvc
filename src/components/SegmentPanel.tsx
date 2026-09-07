@@ -968,9 +968,9 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                     </select>}
               </Field>
 
-              {/* Circulaire : DN + Di */}
+              {/* Circulaire : Diamètre + Di */}
               {ductShape === 'circular' && shapeMat && (<>
-                <Field label="DN">
+                <Field label="Diamètre">
                   <select value={seg.dn || ''}
                     onChange={e => { set('dn', e.target.value || null); set('di_override', null) }}>
                     <option value="">— Choisir —</option>
@@ -1030,14 +1030,23 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             </>)
           })()}
 
+          {/* Coefficient de foisonnement */}
+          <hr className="rp-divider" />
+          <Field label="Coeff. foisonnement" unit="%">
+            <NumInput min={0} max={100} step={1} allowEmpty
+              value={(seg as any).coeffFoisonnement != null ? Math.round((seg as any).coeffFoisonnement * 100) : null}
+              placeholder="100 (aucun)"
+              onChange={v => set('coeffFoisonnement', v != null ? v / 100 : null)} />
+          </Field>
+
           {pdcParams && (pdcParams.methodeSing === 'accessoires' || pdcParams.equipementsActifs) && (<>
             <hr className="rp-divider" />
             <SectionLabel>Singularités &amp; équipements</SectionLabel>
             {pdcParams.methodeSing === 'accessoires' && (() => {
               const ductShape: 'circular' | 'rectangular' = (seg as any).ductShape ?? 'circular'
               const ventSings = (seg as any).ventSingularites as VentSingularity[] ?? []
-              const dynP      = vr ? 0.5 * vr.rho * vr.v_ms ** 2 : null
-              const Re_seg    = vr ? vr.v_ms * (vr.di_mm / 1000) / 15e-6 : null
+              const dynP      = vr?.dimensioned ? 0.5 * vr.rho * vr.v_ms ** 2 : null
+              const Re_seg    = vr?.dimensioned ? vr.v_ms * (vr.di_mm / 1000) / 15e-6 : null
               const singMat   = materials.find(m => m.id === seg.materialId)
               const singDnDef = singMat?.dns?.find((d: any) => d.dn === seg.dn) as any
 
@@ -1138,17 +1147,27 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                         textTransform: 'uppercase', letterSpacing: '0.05em' }}>Débit</div>
                       {sourceBadge}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                      <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{Q.toFixed(0)}</span>
-                      <span style={{ fontSize: 11, color: '#9ca3af' }}>m³/h</span>
-                    </div>
+                    {vr?.Q_foisonne_m3h != null ? (<>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                        <span style={{ fontSize: 13, fontWeight: 500, color: '#6b7280' }}>{Q.toFixed(0)}</span>
+                        <span style={{ fontSize: 10, color: '#9ca3af' }}>m³/h</span>
+                        <span style={{ fontSize: 10, color: '#9ca3af', margin: '0 2px' }}>→</span>
+                        <span style={{ fontSize: 20, fontWeight: 700, color: '#0284c7' }}>{vr.Q_foisonne_m3h.toFixed(0)}</span>
+                        <span style={{ fontSize: 11, color: '#9ca3af' }}>m³/h foisonné</span>
+                      </div>
+                    </>) : (
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                        <span style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{Q.toFixed(0)}</span>
+                        <span style={{ fontSize: 11, color: '#9ca3af' }}>m³/h</span>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <p className="lp-hint">Débit non calculé — saisir les débits aux bouches ou nœuds d'extrémité.</p>
                 )}
 
                 {/* Vitesse + di — uniquement si matériau et DN sélectionnés */}
-                {vr ? (<>
+                {vr?.dimensioned ? (<>
                   <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
                     {dRow('Vitesse', `${vr.v_ms.toFixed(2)} m/s`)}
                     {vr.shape === 'rectangular' && vr.a_mm && vr.b_mm
@@ -1165,7 +1184,7 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
                       : !seg.materialId
                         ? 'Vitesse non calculable — choisir un matériau.'
                         : !seg.dn
-                          ? 'Vitesse non calculable — choisir un DN / section.'
+                          ? 'Vitesse non calculable — choisir un Diamètre / section.'
                           : null}
                   </p>
                 )}
@@ -1173,14 +1192,14 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
             })()}
 
             {/* ── Pertes de charge ── */}
-            {resultsView === 'pdc' && (vr
+            {resultsView === 'pdc' && (vr?.dimensioned
               ? <VentPdcResults vr={vr} pdcParams={pdcParams} seg={seg} />
               : (
                 <p className="lp-hint">
                   {enabledMats.length === 0
                     ? 'Aucun matériau activé — configurez les matériaux ventilation.'
                     : !seg.materialId ? 'Choisir un matériau.'
-                    : !seg.dn ? 'Choisir un DN / section.'
+                    : !seg.dn ? 'Choisir un Diamètre / section.'
                     : 'Débit non calculé — saisir les débits aux bouches ou nœuds d\'extrémité.'}
                 </p>
               )
