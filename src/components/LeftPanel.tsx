@@ -582,7 +582,7 @@ function AlimentationParamsSection({ params, onChange }) {
 }
 
 // ── Materials ──────────────────────────────────────────
-function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon = false, compact = false, isChauffage = false }) {
+function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon = false, compact = false, isChauffage = false, isVentilation = false }) {
   const [expanded, setExpanded] = useState(null)
 
   const toggle      = id      => onChange(m => m.map(x => x.id === id ? { ...x, enabled: !x.enabled } : x))
@@ -594,10 +594,32 @@ function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon 
   const setEncrassementEpaisseur = (id, v) => onChange(m => m.map(x => x.id === id ? { ...x, encrassementEpaisseur: v } : x))
   const setDnField  = (mid, idx, key, v) => onChange(m => m.map(x => {
     if (x.id !== mid) return x
-    const dns = x.dns.map((d, i) => i === idx ? { ...d, [key]: key === 'dn' ? v : (typeof v === 'number' ? v : parseFloat(v) || 0) } : d)
+    const dns = x.dns.map((d, i) => {
+      if (i !== idx) return d
+      const val = key === 'dn' ? v : (typeof v === 'number' ? v : parseFloat(v) || 0)
+      // Ventilation rectangulaire : auto-recalcul dn, dh, di quand largeur ou hauteur change
+      if ((key === 'a' || key === 'b') && x.shapeType === 'rectangular') {
+        const a = key === 'a' ? val : (d.a ?? 0)
+        const b = key === 'b' ? val : (d.b ?? 0)
+        const dh = a > 0 && b > 0 ? Math.round(2 * a * b / (a + b)) : 0
+        return { ...d, a, b, dh, di: dh, de: dh + 1, dn: `${a}×${b}` }
+      }
+      // Ventilation circulaire : auto-recalcul dn quand di change
+      if (key === 'di' && x.shapeType !== 'rectangular') {
+        return { ...d, di: val, de: val + 1, dn: `Ø${val}` }
+      }
+      return { ...d, [key]: val }
+    })
     return { ...x, dns }
   }))
   const addDnRow    = id      => onChange(m => m.map(x => x.id === id ? { ...x, dns: [...x.dns, { dn: '', di: 0, de: 0 }] } : x))
+  const addDnRowVent = (id, shapeType) => onChange(m => m.map(x => {
+    if (x.id !== id) return x
+    const row = shapeType === 'rectangular'
+      ? { dn: '100×100', a: 100, b: 100, dh: 100, di: 100, de: 101 }
+      : { dn: 'Ø100', di: 100, de: 101 }
+    return { ...x, dns: [...x.dns, row] }
+  }))
   const removeDnRow = (id, i) => onChange(m => m.map(x => x.id === id ? { ...x, dns: x.dns.filter((_, j) => j !== i) } : x))
   const addCustom   = ()      => onChange(m => [...m, { id: uid('mat'), name: '', enabled: true, lambda: '', dns: [], custom: true }])
 
@@ -668,31 +690,77 @@ function MaterialsSection({ materials, onChange, showLambda = true, showEpsilon 
                   </>)}
                 </div>
               )}
-              <table className="lp-dn-table">
-                {mat.custom
-                  ? <colgroup><col style={{width:'68px'}}/><col style={{width:'64px'}}/><col style={{width:'64px'}}/><col style={{width:'22px'}}/></colgroup>
-                  : <colgroup><col style={{width:'72px'}}/><col style={{width:'68px'}}/><col style={{width:'68px'}}/></colgroup>
-                }
-                <thead>
-                  <tr><th>DN</th><th>Di (mm)</th><th>De (mm)</th>{mat.custom && <th></th>}</tr>
-                </thead>
-                <tbody>
-                  {mat.dns.map((d, i) => (
-                    <tr key={i}>
-                      <td>{mat.custom
-                        ? <input type="text" value={d.dn} onChange={e => setDnField(mat.id, i, 'dn', e.target.value)} />
-                        : d.dn}
-                      </td>
-                      <td><NumInput value={asNum(d.di)} onChange={v => { if (v != null) setDnField(mat.id, i, 'di', v) }} /></td>
-                      <td><NumInput value={asNum(d.de)} onChange={v => { if (v != null) setDnField(mat.id, i, 'de', v) }} /></td>
-                      {mat.custom && (
+              {/* Table rectangulaire ventilation : Largeur × Hauteur → Dh auto */}
+              {isVentilation && mat.shapeType === 'rectangular' && (
+                <table className="lp-dn-table">
+                  <colgroup><col style={{width:'72px'}}/><col style={{width:'72px'}}/><col style={{width:'56px'}}/><col style={{width:'22px'}}/></colgroup>
+                  <thead>
+                    <tr><th>Larg. (mm)</th><th>Haut. (mm)</th><th>Dh (mm)</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {mat.dns.map((d, i) => {
+                      const dh = d.dh ?? (d.a && d.b ? Math.round(2 * d.a * d.b / (d.a + d.b)) : null)
+                      return (
+                        <tr key={i}>
+                          <td><NumInput min={1} value={asNum(d.a)} onChange={v => { if (v != null) setDnField(mat.id, i, 'a', v) }} /></td>
+                          <td><NumInput min={1} value={asNum(d.b)} onChange={v => { if (v != null) setDnField(mat.id, i, 'b', v) }} /></td>
+                          <td style={{ textAlign: 'center', color: '#6b7280', fontSize: 11 }}>{dh ?? '—'}</td>
+                          <td><button className="lp-icon-btn danger" onClick={() => removeDnRow(mat.id, i)}>✕</button></td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+              {/* Table circulaire ventilation : Ø / Di */}
+              {isVentilation && mat.shapeType !== 'rectangular' && (
+                <table className="lp-dn-table">
+                  <colgroup><col style={{width:'100px'}}/><col style={{width:'64px'}}/><col style={{width:'22px'}}/></colgroup>
+                  <thead>
+                    <tr><th>Ø / Di (mm)</th><th>De (mm)</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {mat.dns.map((d, i) => (
+                      <tr key={i}>
+                        <td><NumInput min={1} value={asNum(d.di)} onChange={v => { if (v != null) setDnField(mat.id, i, 'di', v) }} /></td>
+                        <td style={{ textAlign: 'center', color: '#9ca3af', fontSize: 11 }}>{d.de ?? (d.di != null ? d.di + 1 : '—')}</td>
                         <td><button className="lp-icon-btn danger" onClick={() => removeDnRow(mat.id, i)}>✕</button></td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {mat.custom && (
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {/* Table standard (hors ventilation) */}
+              {!isVentilation && (
+                <table className="lp-dn-table">
+                  {mat.custom
+                    ? <colgroup><col style={{width:'68px'}}/><col style={{width:'64px'}}/><col style={{width:'64px'}}/><col style={{width:'22px'}}/></colgroup>
+                    : <colgroup><col style={{width:'72px'}}/><col style={{width:'68px'}}/><col style={{width:'68px'}}/></colgroup>
+                  }
+                  <thead>
+                    <tr><th>DN</th><th>Di (mm)</th><th>De (mm)</th>{mat.custom && <th></th>}</tr>
+                  </thead>
+                  <tbody>
+                    {mat.dns.map((d, i) => (
+                      <tr key={i}>
+                        <td>{mat.custom
+                          ? <input type="text" value={d.dn} onChange={e => setDnField(mat.id, i, 'dn', e.target.value)} />
+                          : d.dn}
+                        </td>
+                        <td><NumInput value={asNum(d.di)} onChange={v => { if (v != null) setDnField(mat.id, i, 'di', v) }} /></td>
+                        <td><NumInput value={asNum(d.de)} onChange={v => { if (v != null) setDnField(mat.id, i, 'de', v) }} /></td>
+                        {mat.custom && (
+                          <td><button className="lp-icon-btn danger" onClick={() => removeDnRow(mat.id, i)}>✕</button></td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {isVentilation && (
+                <button className="lp-add-btn small" onClick={() => addDnRowVent(mat.id, mat.shapeType)}>+ Ajouter dimension</button>
+              )}
+              {!isVentilation && mat.custom && (
                 <button className="lp-add-btn small" onClick={() => addDnRow(mat.id)}>+ Ajouter DN</button>
               )}
             </>
@@ -2447,7 +2515,7 @@ export default function LeftPanel({
       />
       break
     case 'materiaux':
-      content = <MaterialsSection materials={activeMaterials} onChange={activeMaterialsChange} showEpsilon={true} showLambda={!isVentilation} isChauffage={isChauffage || isEauGlacee || isVentilation} />
+      content = <MaterialsSection materials={activeMaterials} onChange={activeMaterialsChange} showEpsilon={true} showLambda={!isVentilation} isChauffage={isChauffage || isEauGlacee || isVentilation} isVentilation={isVentilation} />
       break
     case 'isolation':
       if (isAlimEF) {
