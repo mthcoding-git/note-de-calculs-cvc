@@ -33,6 +33,7 @@ import { uid } from './utils/idGen'
 import { findMidpointLevelIndexAt } from './utils/levelUtils'
 import { LOCAL_W, LOCAL_GAP, COL_PIPE_W, COL_LOCAL_OFFSET, expandZone, removeGapColumn, removeRegularColumn, moveGaine, adjustPPZone, removeGroupeBranch } from './utils/projectActions'
 import { useVariantHistory } from './hooks/useProjectHistory'
+import { exportSynopticPNG } from './utils/exportSynoptic'
 import './App.css'
 const snapG = v => Math.round(v / 10) * 10
 
@@ -2029,6 +2030,17 @@ export default function App() {
     a.click()
   }
 
+  const handleExportImage = async () => {
+    const variantName = meta.find((v: any) => v.id === activeId)?.name
+    const slug = [projectName || 'synoptique', variantName]
+      .filter(Boolean).join('-').replace(/[^a-z0-9]/gi, '_').toLowerCase()
+    try {
+      await exportSynopticPNG(`${slug}.png`)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Export impossible.")
+    }
+  }
+
   const handleLoad = () => {
     const input = Object.assign(document.createElement('input'), { type: 'file', accept: '.json' })
     input.onchange = e => {
@@ -2103,6 +2115,7 @@ export default function App() {
         <div className="app-hd-right">
           <button onClick={handleSave} className="btn btn-secondary">💾 Sauvegarder</button>
           <button onClick={handleLoad} className="btn btn-secondary">📂 Charger</button>
+          <button onClick={handleExportImage} className="btn btn-secondary">🖼️ Export image</button>
           <button className="btn btn-success" disabled>📊 Export Excel</button>
         </div>
       </header>

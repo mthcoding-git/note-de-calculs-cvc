@@ -1890,6 +1890,7 @@ if (drawing) commitDrawing()
   return (
     <svg
       ref={svgRef}
+      data-synoptic=""
       style={{ width: '100%', height: '100%', display: 'block', background: '#f8fafc', cursor }}
       onMouseMove={onMouseMove}
       onMouseDown={onMouseDown}
