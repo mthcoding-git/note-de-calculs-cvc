@@ -1627,6 +1627,15 @@ function SchemaRect314({ mini, theta_s, l_mm, h_mm, orientation, rOverWs, lOverD
   const tR_x = +(+diT_x_t - k*_H*uTL_x).toFixed(1), tR_y = +(+diT_y_t - k*_H*uTL_y).toFixed(1)
   const tL_x = +(+diT_x_t - k*_W*uTR_x).toFixed(1), tL_y = +(+diT_y_t - k*_W*uTR_y).toFixed(1)
   const tB_x = +(+tR_x    - k*_W*uTR_x).toFixed(1), tB_y = +(+tR_y    - k*_W*uTR_y).toFixed(1)
+  // Vecteurs unitaires figés à θ=90° (cv=0, sv=1) pour geler la géométrie du virage haut
+  const _bQ90   = dsy - Cy
+  const _t90    = -_bQ90 + Math.sqrt(_bQ90 * _bQ90 - cQ)
+  const _φ90    = Math.atan2(dsy + _t90 - Cy, dsx - Cx)
+  const _cd90   = Math.cos(_φ90 - 0.5), _sd90 = Math.sin(_φ90 - 0.5)
+  const uTR_x_t = (axL*_cd90 - axC*_sd90) / side_ref
+  const uTR_y_t = (axL*_sd90 + axC*_cd90) / side_ref
+  const uTL_x_t = (-axL*_cd90 - axC*_sd90) / side_ref
+  const uTL_y_t = (-axL*_sd90 + axC*_cd90) / side_ref
 
   const tCenter_y = cy1 - axC
   const R_top_track = R_B
@@ -1690,19 +1699,45 @@ function SchemaRect314({ mini, theta_s, l_mm, h_mm, orientation, rOverWs, lOverD
   const tL_xs      = tL_x      + sh_x
   const tB_xs      = tB_x      + sh_x
   const diT_xs_t   = diT_x_t   + sh_x
-  // Losange haut — sommet NW (bas-gauche) ancré à distance fixe du losange milieu-haut
-  // Les 3 autres sommets sont déduits de NW via les dimensions H et L (uTR / uTL)
-  const nw_x    = +(+tInner_xs + 65).toFixed(1)
-  const nw_y    = +(+tInner_y - 87).toFixed(1)
+  // Losange haut de référence (θ=90°) — sommet NW ancré à distance fixe du losange milieu-haut
+  // Les 3 autres sommets sont déduits de NW via les dimensions H et L (uTR / uTL figés)
+  const _nw_x0    = +tInner_xs + 65
+  const _nw_y0    = +tInner_y - 87
+  const _htAnc_x0 = _nw_x0 + k*_W*uTR_x_t
+  const _htAnc_y0 = _nw_y0 - k*_W*uTR_y_t
+  const _htNE_x0  = _htAnc_x0 - k*_H*uTL_x_t
+  const _htNE_y0  = _htAnc_y0 + k*_H*uTL_y_t
+  const _htSE_x0  = _nw_x0 - k*_H*uTL_x_t
+  const _htSE_y0  = _nw_y0 + k*_H*uTL_y_t
+  // Centre de référence : le bras 2 part de (apexTopX, topAnnY) et y arrive à θ=90°
+  const _c0x      = (_nw_x0 + _htNE_x0) / 2
+  const _c0y      = (_nw_y0 + _htNE_y0) / 2
+  const topAnnY   = +(cy1 + (+dsy - cy2)).toFixed(1)
+  const apexTopX  = +_c0x.toFixed(1)
+  const _arm2Len  = topAnnY - _c0y
+  // Bras 1 (vers le losange milieu-haut) : référence d'ouverture de l'angle θ
+  const cM1x      = +((+cx_ts + +mT1r_xs) / 2).toFixed(1)
+  const cM1y      = +((+tCenter_y + +mT1r_y) / 2).toFixed(1)
+  const _tA0r     = Math.atan2(+cM1y - topAnnY, +cM1x - +apexTopX)
+  const _topAng0  = _tA0r < 0 ? _tA0r + 2 * Math.PI : _tA0r
+  // Bras 2 : l'ouverture vaut θ_deg/90 de celle à 90° (bras vertical, 3π/2)
+  const _arm2Dir  = _topAng0 + (3 * Math.PI / 2 - _topAng0) * (θ_deg / 90)
+  const arm2EndX  = +(_c0x + _arm2Len * Math.cos(_arm2Dir)).toFixed(1)
+  const arm2EndY  = +(topAnnY + _arm2Len * Math.sin(_arm2Dir)).toFixed(1)
+  // Le losange haut suit le bras 2, incliné de la moitié de son écart à la verticale
+  const _rot      = (_arm2Dir - 3 * Math.PI / 2) / 2
+  const _cr       = Math.cos(_rot), _sr = Math.sin(_rot)
+  const _xfTop = (px: number, py: number): [number, number] => {
+    const dx = px - _c0x, dy = py - _c0y
+    return [+(+arm2EndX + dx*_cr - dy*_sr).toFixed(1), +(+arm2EndY + dx*_sr + dy*_cr).toFixed(1)]
+  }
+  const [nw_x, nw_y]       = _xfTop(_nw_x0, _nw_y0)
+  const [htAnc_x, htAnc_y] = _xfTop(_htAnc_x0, _htAnc_y0)
+  const [htNE_x, htNE_y]   = _xfTop(_htNE_x0, _htNE_y0)
+  const [htSE_x, htSE_y]   = _xfTop(_htSE_x0, _htSE_y0)
   const _dxA1   = +nw_x - +mT1r_xs
   const _dyA1   = +nw_y - +mT1r_y
   const R_arc1  = _dxA1 > 0 ? Math.round((_dxA1**2 + _dyA1**2) / (2*_dxA1)) : Math.round(Math.hypot(_dxA1, _dyA1))
-  const htAnc_x = +(+nw_x + k*_W*uTR_x).toFixed(1)
-  const htAnc_y = +(+nw_y - k*_W*uTR_y).toFixed(1)
-  const htNE_x  = +(+htAnc_x - k*_H*uTL_x).toFixed(1)
-  const htNE_y  = +(+htAnc_y + k*_H*uTL_y).toFixed(1)
-  const htSE_x  = +(+nw_x   - k*_H*uTL_x).toFixed(1)
-  const htSE_y  = +(+nw_y   + k*_H*uTL_y).toFixed(1)
   const _dxA2   = +htSE_x - +tInner_xs
   const _dyA2   = +htSE_y - +tInner_y
   const R_arc2  = _dxA2 > 0 ? Math.round((_dxA2**2 + _dyA2**2) / (2*_dxA2)) : Math.round(Math.hypot(_dxA2, _dyA2))
@@ -1746,12 +1781,15 @@ function SchemaRect314({ mini, theta_s, l_mm, h_mm, orientation, rOverWs, lOverD
   // Arcs 3 & 4 : partent tous deux de tOuter (sommet gauche milieu-haut)
   // Tangente de départ horizontale → superposés au début, divergent ensuite
   // Formule R = (dx²+dy²)/(2·|dy|) → grand rayon = peu courbé à l'arrivée
+  // À θ<90° le losange haut se rapproche de tOuter : dx chute et les arcs s'enroulent.
+  // On relève le rayon proportionnellement à l'écart à 90° pour les garder plats.
+  const _flatL  = 0.82 * (1 + 2 * (90 - θ_deg) / 90)
   const _dxA3   = +htAnc_x - +tOuter_xs
   const _dyA3   = +htAnc_y - +tOuter_y
-  const R_arc3  = Math.abs(_dyA3) > 0 ? Math.round((_dxA3**2 + _dyA3**2) / (2 * Math.abs(_dyA3)) * 0.82) : Math.round(Math.hypot(_dxA3, _dyA3))
+  const R_arc3  = Math.abs(_dyA3) > 0 ? Math.round((_dxA3**2 + _dyA3**2) / (2 * Math.abs(_dyA3)) * _flatL) : Math.round(Math.hypot(_dxA3, _dyA3))
   const _dxA4   = +htNE_x  - +tOuter_xs
   const _dyA4   = +htNE_y  - +tOuter_y
-  const R_arc4  = Math.abs(_dyA4) > 0 ? Math.round((_dxA4**2 + _dyA4**2) / (2 * Math.abs(_dyA4)) * 0.82) : Math.round(Math.hypot(_dxA4, _dyA4))
+  const R_arc4  = Math.abs(_dyA4) > 0 ? Math.round((_dxA4**2 + _dyA4**2) / (2 * Math.abs(_dyA4)) * _flatL) : Math.round(Math.hypot(_dxA4, _dyA4))
   // Centre de l'arc 4 (formule SVG générale — valide pour tout R_arc4)
   const _ell2_a4  = (_dxA4**2 + _dyA4**2) / 4
   const _sq_a4    = Math.sqrt(Math.max(0, R_arc4**2 - _ell2_a4) / _ell2_a4)
@@ -1828,6 +1866,23 @@ function SchemaRect314({ mini, theta_s, l_mm, h_mm, orientation, rOverWs, lOverD
 
   const _lMidX = (+bL_x + +bB_x) / 2, _lMidY = (+bL_y + +bB_y) / 2
   const _vAnnBotX = _lMidX + uTR_y * 30, _vAnnBotY = _lMidY + (-uTR_x) * 30
+
+  // ── Annotations partie haute (perpendiculaire au bas, comme circulaire) ──
+  // topAnnY est symétrique de dsy par rapport à cy1 (même distance en-dessous de cy1
+  // que dsy est en-dessous de cy2) → les deux bras descendent dans des directions ⊥
+  // Midpoint arc intérieur haut (arc1) + arc extérieur haut (arc4), comme rMidX/Y_B pour le bas
+  const [_arc1Mx, _arc1My] = _arcMid(+mT1r_xs, mT1r_y, +nw_x, +nw_y, R_arc1)
+  const [_arc4Mx, _arc4My] = _arcMid(+tOuter_xs, tOuter_y, +htNE_x, +htNE_y, R_arc4)
+  const rMidX_T    = +((_arc1Mx + _arc4Mx) / 2).toFixed(1)
+  const rMidY_T    = +((_arc1My + _arc4My) / 2).toFixed(1)
+  const rLabelX_T  = +((+apexTopX + +rMidX_T) / 2).toFixed(1)
+  const rLabelY_T  = +((+topAnnY + +rMidY_T) / 2).toFixed(1)
+  // Arc angle haut : borné par les directions réelles des deux bras pointillés
+  const _topAng1  = _arm2Dir                                            // suit la direction du bras 2
+  const tax0_top  = +(+apexTopX + aR * Math.cos(_topAng0)).toFixed(1)
+  const tay0_top  = +(+topAnnY  + aR * Math.sin(_topAng0)).toFixed(1)
+  const tax1_top  = +(+apexTopX + aR * Math.cos(_topAng1)).toFixed(1)
+  const tay1_top  = +(+topAnnY  + aR * Math.sin(_topAng1)).toFixed(1)
 
   const _allX = [+bR_x, +bL_x, +bB_x, +diT_x,
                  +mR2_x, +mL2_x, +mT2_x, mT1r_xs, cx, cx_ts,
@@ -1922,8 +1977,16 @@ function SchemaRect314({ mini, theta_s, l_mm, h_mm, orientation, rOverWs, lOverD
         <line x1={cEx_x} y1={dsy} x2={cEx_x} y2={cEx_y}
           stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
       </>}
+      {/* Pointillés haut */}
+      {!mini && <>
+        <line x1={cM1x} y1={cM1y} x2={apexTopX} y2={topAnnY}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+        <line x1={apexTopX} y1={topAnnY} x2={arm2EndX} y2={arm2EndY}
+          stroke="#64748b" strokeWidth={sw} strokeDasharray="12 8" strokeLinecap="round" />
+      </>}
       {/* Annotations */}
       {!mini && <>
+        {/* Arc θ bas + label */}
         <path d={`M ${ax0c} ${ay0} A ${aR} ${aR} 0 0 1 ${ax1c} ${ay1}`}
           stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
         <text x={+(+cEx_x - 12).toFixed(1)} y={dsy} fontSize="25" fill="#374151" fontWeight="600"
@@ -1932,6 +1995,18 @@ function SchemaRect314({ mini, theta_s, l_mm, h_mm, orientation, rOverWs, lOverD
         <line x1={cEx_x} y1={dsy} x2={rMidX_B} y2={rMidY_B}
           stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
         <text x={rLabelXc} y={rLabelYc} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="middle" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">{rLabel}</text>
+        {/* Arc θ haut + label */}
+        <path d={`M ${tax0_top} ${tay0_top} A ${aR} ${aR} 0 0 1 ${tax1_top} ${tay1_top}`}
+          stroke="#374151" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        <text x={+(+apexTopX + 12).toFixed(1)} y={topAnnY} fontSize="25" fill="#374151" fontWeight="600"
+          textAnchor="start" dominantBaseline="middle"
+          paintOrder="stroke" stroke="white" strokeWidth="6">θ = {θ_deg}°</text>
+        {/* Rayon r haut */}
+        <line x1={apexTopX} y1={topAnnY} x2={rMidX_T} y2={rMidY_T}
+          stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+        <text x={rLabelX_T} y={rLabelY_T} fontSize="25" fill="#374151" fontWeight="600"
           textAnchor="middle" dominantBaseline="middle"
           paintOrder="stroke" stroke="white" strokeWidth="6">{rLabel}</text>
         {(() => {
@@ -2822,7 +2897,7 @@ const FULL_LABELS: Record<SingularityType, string[]> = {
   'rect-z':            ['Dévoi. en Z', '(2×90°)'],
   'rect-3-12':         ['Coudes 90°', 'plans croisés'],
   'rect-s':            ['Dévoi. en S', '(col de cygne)'],
-  'rect-3-14':         ['Dévoi. en S', '2 plans (3-14)'],
+  'rect-3-14':         ['Dévoi. en S', '2 plans perp.'],
 }
 
 function TypeCard({ type, selected, onClick, orientation = 'horizontal', l_mm, h_mm }: TypeCardProps) {
@@ -2840,7 +2915,7 @@ function TypeCard({ type, selected, onClick, orientation = 'horizontal', l_mm, h
     'rect-z':            <SchemaRectZ orientation="horizontal" l_mm={300} h_mm={200} lOverH={1.0} mini />,
     'rect-3-12':         <SchemaRect312 mini orientation="horizontal" l_mm={300} h_mm={200} lOverW={2.0} />,
     'rect-s':            <SchemaCoudeRectS mini lOverDs={1} rOverWs={1.0} l_mm={400} h_mm={200} orientation="vertical" />,
-    'rect-3-14':         <SchemaRect314 mini lOverDs={1} rOverWs={1.0} l_mm={400} h_mm={200} orientation="vertical" />,
+    'rect-3-14':         <SchemaRect314 mini theta_s={90} lOverDs={1} rOverWs={1.0} l_mm={400} h_mm={250} orientation="horizontal" />,
   }
   return (
     <button onClick={onClick} title={FULL_LABELS[type].join(' ')} style={{
