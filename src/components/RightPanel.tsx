@@ -478,7 +478,6 @@ interface RightPanelProps {
   calcConstants?: import('../types').CalcConstants
   ventilationResults?: Map<string, any>
   ventilationFlows?: Map<string, any>
-  ventilationNodeTransitionDp?: Map<string, number>
   ventilationNodeJunctionDp?: Map<string, number>
   displayPrefs?: any
 }
@@ -517,7 +516,6 @@ export default function RightPanel({
   calcConstants,
   ventilationResults,
   ventilationFlows,
-  ventilationNodeTransitionDp,
   ventilationNodeJunctionDp,
   displayPrefs,
 }: RightPanelProps) {
@@ -732,7 +730,6 @@ export default function RightPanel({
         customTerminalFroidTypes={customTerminalFroidTypes}
         calcConstants={calcConstants}
         ventilationResults={ventilationResults}
-        ventilationNodeTransitionDp={ventilationNodeTransitionDp}
         ventilationNodeJunctionDp={ventilationNodeJunctionDp}
       />
     )

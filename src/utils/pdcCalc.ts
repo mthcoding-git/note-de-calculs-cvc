@@ -38,11 +38,6 @@ export const FITTING_TYPES = [
   { id: 'cv_te_passage',         label: 'Piquage en T — passage direct',            xi: 0.10, modes: VENT },
   { id: 'cv_culotte',            label: 'Culotte / bifurcation symétrique',         xi: 0.50, modes: VENT },
 
-  // ── Ventilation — Transitions section ────────────────────────────────────
-  // Source : ASHRAE SR6-x (contractions/expansions)
-  { id: 'cv_reduction',          label: 'Réduction concentrique',                   xi: 0.05, modes: VENT },
-  { id: 'cv_expansion',          label: 'Expansion progressive (diffuseur)',        xi: 0.25, modes: VENT },
-
   // ── Ventilation — Accessoires spécifiques ────────────────────────────────
   // Sources : EN 15650 (coupe-feu), EN 13779, abaques fabricants TROX/FRANCE AIR
   { id: 'cv_registre_reglage',   label: 'Registre de réglage (volet)',              xi: 0.50, modes: VENT },

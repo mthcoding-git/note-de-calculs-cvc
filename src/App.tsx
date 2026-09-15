@@ -2639,7 +2639,6 @@ export default function App() {
             customTerminalFroidTypes={project.customTerminalFroidTypes ?? []}
             ventilationResults={ventilationResults ?? undefined}
             ventilationFlows={ventilationFlows ?? undefined}
-            ventilationNodeTransitionDp={ventilationNodeTransitionDp ?? undefined}
             ventilationNodeJunctionDp={ventilationNodeJunctionDp ?? undefined}
             displayPrefs={displayPrefs}
           />

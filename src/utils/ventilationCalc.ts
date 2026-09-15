@@ -1,12 +1,12 @@
 import type { Material, Segment, Point, FlowDirections } from '../types'
 import { FITTING_TYPES, EQUIPMENT_TYPES } from './pdcCalc'
 import { computeXiSingularityFull } from './singularityCalc'
-import { computeXiTransition, computeXiTransitionRect, computeXiTransitionMixed } from './transitionCalc'
 import {
-  computeXiJunction, computeXiJunctionRect,
-  type VentNodeJunction, type JunctionBranchInput,
-  type RectNodeJunction, type JunctionBranchRectInput,
-} from './junctionCalc'
+  computeXiTransition, refIsDownstream,
+  type VentNodeTransition, type TransitionShape,
+} from './transitionCalc'
+import { computeXiJunction, resolveArmsFor, junctionShapes, shapeLibre,
+  type VentNodeJunction } from './junctionCalc'
 
 // ── Directions d'écoulement ventilation ─────────────────────────────────────
 
@@ -308,9 +308,14 @@ export function getVentDi(seg: Segment, materials: Material[]): VentDiResult | n
 
   if (mat.shapeType === 'rectangular') {
     const dnDef = mat.dns.find(d => d.dn === (seg as any).dn) as any
-    if (!dnDef) return null
-    const a_mm = (seg as any).a_override ?? dnDef.a
-    const b_mm = (seg as any).b_override ?? dnDef.b
+    const aOv = (seg as any).a_override, bOv = (seg as any).b_override
+    // Saisir directement L ou H suffit à dimensionner, sans passer par le catalogue.
+    // La dimension non saisie retombe sur l'entrée choisie, sinon sur la 1re du matériau.
+    if (!dnDef && aOv == null && bOv == null) return null
+    const base  = (dnDef ?? mat.dns[0]) as any
+    const a_mm = aOv ?? base?.a
+    const b_mm = bOv ?? base?.b
+    if (a_mm == null || b_mm == null) return null
     const dhCalc = Math.round(2 * a_mm * b_mm / (a_mm + b_mm))
     const dh = (seg as any).di_override ?? dhCalc
     if (dh == null) return null
@@ -364,11 +369,27 @@ function computeVentSingDP(seg: Segment, dynPressure: number, pdcParams: any, la
 }
 
 /**
- * Calcule le ΔP de transition (agrandissement / rétrécissement) à chaque nœud.
- * Groupe 1 (circ→circ) : lit ventTransitions, uses D1/D2.
- * Groupe 2 (rect→rect) : lit ventTransitionsRect, uses A1/A2 (mm²).
- * Retourne une Map<nodeId, ΔP en Pa>.
+ * Calcule le ΔP de réunion (confluence) pour chaque tronçon entrant d'un nœud.
+ * Gère les réunions circulaires (ventJunction) et rectangulaires (ventJunctionRect).
+ * Retourne Map<segId, ΔP en Pa> — clé = segId du tronçon ENTRANT.
  */
+/**
+ * ΔP de transition de section à chaque nœud (ASHRAE 4-1).
+ * Nœud éligible : exactement un tronçon amont et un aval, de formes compatibles
+ * avec un des diagrammes tabulés (cf. detectTransition).
+ * Le coefficient étant référencé sur la vitesse amont V₀, c'est la pression
+ * dynamique du tronçon amont qui s'applique — et c'est lui qui porte le ΔP.
+ */
+/** Section d'un tronçon telle que les transitions la lisent : le rectangulaire
+ *  porte ses vraies dimensions, jamais son diamètre hydraulique. */
+export function transitionShapeOf(res: VentSegResult): TransitionShape | null {
+  if (res.shape === 'rectangular') {
+    return res.a_mm != null && res.b_mm != null
+      ? { shape: 'rectangular', l_mm: res.a_mm, h_mm: res.b_mm } : null
+  }
+  return res.di_mm > 0 ? { shape: 'circular', d_mm: res.di_mm } : null
+}
+
 export function computeNodeTransitionDp(
   points:         Point[],
   segments:       Segment[],
@@ -378,75 +399,35 @@ export function computeNodeTransitionDp(
   const result = new Map<string, number>()
 
   for (const pt of points) {
+    const transition: VentNodeTransition | undefined = (pt as any).ventTransition
+    if (!transition) continue
+
     const amontSegs = segments.filter(s => flowDirections.get(s.id)?.toId   === pt.id)
     const avalSegs  = segments.filter(s => flowDirections.get(s.id)?.fromId === pt.id)
     if (amontSegs.length !== 1 || avalSegs.length !== 1) continue
 
     const amontRes = ventSegResults.get(amontSegs[0].id)
     const avalRes  = ventSegResults.get(avalSegs[0].id)
-    if (!amontRes || !avalRes) continue
+    if (!amontRes?.dimensioned || !avalRes?.dimensioned) continue
 
-    const dynPressure = 0.5 * amontRes.rho * amontRes.v_ms ** 2
+    const s0 = transitionShapeOf(amontRes), s1 = transitionShapeOf(avalRes)
+    if (!s0 || !s1) continue
 
-    // Groupe 1 — Circulaire → Circulaire
-    if (amontRes.shape === 'circular' && avalRes.shape === 'circular') {
-      const transitions: any[] = (pt as any).ventTransitions ?? []
-      if (transitions.length === 0) continue
-      const totalDp = transitions.reduce((sum: number, t: any) =>
-        sum + computeXiTransition(t, amontRes.di_mm, avalRes.di_mm) * dynPressure, 0)
-      if (totalDp > 0) result.set(amontSegs[0].id, totalDp)
-    }
-
-    // Groupe 2 — Rectangulaire → Rectangulaire
-    if (amontRes.shape === 'rectangular' && avalRes.shape === 'rectangular') {
-      const transitions: any[] = (pt as any).ventTransitionsRect ?? []
-      if (transitions.length === 0) continue
-      const a1 = amontRes.a_mm ?? 0; const b1 = amontRes.b_mm ?? 0
-      const a2 = avalRes.a_mm  ?? 0; const b2 = avalRes.b_mm  ?? 0
-      const A1_mm2 = a1 * b1
-      const A2_mm2 = a2 * b2
-      if (A1_mm2 <= 0 || A2_mm2 <= 0) continue
-      const totalDp = transitions.reduce((sum: number, t: any) =>
-        sum + computeXiTransitionRect(t, A1_mm2, A2_mm2, a1, b1, a2, b2) * dynPressure, 0)
-      if (totalDp > 0) result.set(amontSegs[0].id, totalDp)
-    }
-
-    // Groupe 3 — Circulaire ↔ Rectangulaire
-    const isCircRect = (amontRes.shape === 'circular' && avalRes.shape === 'rectangular')
-                    || (amontRes.shape === 'rectangular' && avalRes.shape === 'circular')
-    if (isCircRect) {
-      const transitions: any[] = (pt as any).ventTransitionsMixed ?? []
-      if (transitions.length === 0) continue
-      const A1_mm2 = amontRes.shape === 'circular'
-        ? Math.PI * (amontRes.di_mm / 2) ** 2
-        : (amontRes.a_mm ?? 0) * (amontRes.b_mm ?? 0)
-      const A2_mm2 = avalRes.shape === 'circular'
-        ? Math.PI * (avalRes.di_mm / 2) ** 2
-        : (avalRes.a_mm ?? 0) * (avalRes.b_mm ?? 0)
-      if (A1_mm2 <= 0 || A2_mm2 <= 0) continue
-      const rectRes = amontRes.shape === 'rectangular' ? amontRes : avalRes
-      const circRes = amontRes.shape === 'circular'    ? amontRes : avalRes
-      const a_r = rectRes.a_mm ?? 1
-      const b_r = rectRes.b_mm ?? 1
-      const ab_ratio = Math.max(a_r, b_r) / Math.max(Math.min(a_r, b_r), 1)
-      const Dh_circ = circRes.di_mm
-      const Dh_rect = 2 * a_r * b_r / (a_r + b_r)
-      const Dh1 = amontRes.shape === 'circular' ? Dh_circ : Dh_rect
-      const Dh2 = avalRes.shape  === 'circular' ? Dh_circ : Dh_rect
-      const totalDp = transitions.reduce((sum: number, t: any) =>
-        sum + computeXiTransitionMixed(t, A1_mm2, A2_mm2, ab_ratio, Dh1, Dh2) * dynPressure, 0)
-      if (totalDp > 0) result.set(amontSegs[0].id, totalDp)
-    }
+    // Le 4-7 rapporte son coefficient à la vitesse de la section circulaire aval ;
+    // toutes les autres pièces à la vitesse amont.
+    const ref = refIsDownstream(transition.type) ? avalRes : amontRes
+    const dynPressure = 0.5 * ref.rho * ref.v_ms ** 2
+    const dp = computeXiTransition(transition, s0, s1, amontRes.Re) * dynPressure
+    if (dp > 0) result.set(amontSegs[0].id, dp)
   }
 
   return result
 }
 
-/**
- * Calcule le ΔP de réunion (confluence) pour chaque tronçon entrant d'un nœud.
- * Gère les réunions circulaires (ventJunction) et rectangulaires (ventJunctionRect).
- * Retourne Map<segId, ΔP en Pa> — clé = segId du tronçon ENTRANT.
- */
+/** Perte de charge des jonctions convergentes, une valeur par trajet.
+ *  Les deux coefficients se rapportent à la section commune : c'est donc la
+ *  pression dynamique de l'aval qui s'applique aux deux, et non celle du tronçon
+ *  concerné. Les valeurs négatives sont conservées telles quelles. */
 export function computeNodeJunctionDp(
   points:         Point[],
   segments:       Segment[],
@@ -456,57 +437,67 @@ export function computeNodeJunctionDp(
   const result = new Map<string, number>()
 
   for (const pt of points) {
+    const junction: VentNodeJunction | undefined = (pt as any).ventJunction
+    if (!junction) continue
+
     const amontSegs = segments.filter(s => flowDirections.get(s.id)?.toId   === pt.id)
     const avalSegs  = segments.filter(s => flowDirections.get(s.id)?.fromId === pt.id)
-    if (amontSegs.length < 2 || avalSegs.length !== 1) continue
+    if (amontSegs.length !== 2 || avalSegs.length !== 1) continue
 
+    // Chaque conduit doit avoir la forme que suppose le raccord : ronds pour les
+    // 5-1 a 5-5, rectangulaires pour le 5-6, melanges pour le 5-7 dont le piquage
+    // seul est rond. Ceux qui ne lisent que des aires n'imposent rien, et leur
+    // appliquer ce filtre annulerait en silence la perte de charge d'un noeud que
+    // la modale a pourtant accepte.
+    const formes = junctionShapes(junction.type)
+    const libre  = shapeLibre(junction.type)
     const avalRes = ventSegResults.get(avalSegs[0].id)
-    if (!avalRes) continue
+    if (!avalRes?.dimensioned) continue
+    if (!libre && avalRes.shape !== formes.main) continue
 
-    const Qc          = avalRes.Q_m3h
-    const dynPressure = 0.5 * avalRes.rho * avalRes.v_ms ** 2
-
-    // ── Réunion circulaire ────────────────────────────────────────────────────
-    if (avalRes.shape === 'circular' &&
-        amontSegs.every(s => ventSegResults.get(s.id)?.shape === 'circular')) {
-      const junction: VentNodeJunction | undefined = (pt as any).ventJunction
-      if (!junction) continue
-
-      const Dc      = avalRes.di_mm
-      const branches: JunctionBranchInput[] = amontSegs.map(seg => {
-        const res = ventSegResults.get(seg.id)
-        return {
-          segId:      seg.id,
-          Q_m3h:      res?.Q_m3h ?? 0,
-          di_mm:      res?.di_mm ?? Dc,
-          isStraight: junction.straightSegId === seg.id,
-        }
-      })
-      const xiMap = computeXiJunction(junction, branches, Qc, Dc)
-      for (const [segId, xi] of xiMap) result.set(segId, xi * dynPressure)
+    const infos = amontSegs.map(s => ({ seg: s, res: ventSegResults.get(s.id) }))
+    if (infos.some(i => !i.res?.dimensioned)) continue
+    // Les arrivees portent l'une la forme du trajet droit, l'autre celle du
+    // piquage ; a formes identiques les deux conviennent indifferemment.
+    if (!libre) {
+      if (formes.main === formes.branch) {
+        if (infos.some(i => i.res!.shape !== formes.main)) continue
+      } else if (infos.filter(i => i.res!.shape === formes.branch).length !== 1
+        || infos.filter(i => i.res!.shape === formes.main).length !== 1) continue
     }
 
-    // ── Réunion rectangulaire ─────────────────────────────────────────────────
-    if (avalRes.shape === 'rectangular' &&
-        amontSegs.every(s => ventSegResults.get(s.id)?.shape === 'rectangular')) {
-      const junction: RectNodeJunction | undefined = (pt as any).ventJunctionRect
-      if (!junction) continue
+    // Section réelle : le diamètre hydraulique ne la donne pas en rectangulaire.
+    const aire = (r: VentSegResult) => r.shape === 'rectangular'
+      ? (r.a_mm ?? 0) * (r.b_mm ?? 0) : Math.PI * r.di_mm * r.di_mm / 4
 
-      const ac = avalRes.a_mm ?? 0
-      const bc = avalRes.b_mm ?? 0
-      const branches: JunctionBranchRectInput[] = amontSegs.map(seg => {
-        const res = ventSegResults.get(seg.id)
-        return {
-          segId:      seg.id,
-          Q_m3h:      res?.Q_m3h ?? 0,
-          a_mm:       res?.a_mm ?? ac,
-          b_mm:       res?.b_mm ?? bc,
-          isStraight: junction.straightSegId === seg.id,
-        }
-      })
-      const xiMap = computeXiJunctionRect(junction, branches, Qc, ac, bc)
-      for (const [segId, xi] of xiMap) result.set(segId, xi * dynPressure)
-    }
+    // Sur collecteur cylindrique les rôles se déduisent du diamètre — le trajet
+    // droit est celui qui garde celui du commun ; sur collecteur conique ils sont
+    // désignés par l'utilisateur.
+    const roles = resolveArmsFor(junction.type,
+      infos.map(i => ({ segId: i.seg.id, di_mm: i.res!.di_mm, shape: i.res!.shape,
+        a_mm: i.res!.a_mm, b_mm: i.res!.b_mm, A_mm2: aire(i.res!) })),
+      { segId: avalSegs[0].id, di_mm: avalRes.di_mm, shape: avalRes.shape,
+        a_mm: avalRes.a_mm, b_mm: avalRes.b_mm, A_mm2: aire(avalRes) },
+      junction.branchSegId)
+    if (!roles.ok) continue
+
+    const segB = amontSegs.find(s => s.id === roles.branchId)!
+    const segS = amontSegs.find(s => s.id === roles.straightId)!
+    const resB = ventSegResults.get(segB.id)!
+    const resS = ventSegResults.get(segS.id)!
+
+    // Un coefficient à null sort du domaine tabulé : ce trajet ne reçoit alors
+    // aucune perte, plutôt qu'une valeur extrapolée. Les deux trajets sont
+    // indépendants — le 5-6 les lit sur des rapports de débit différents.
+    const xi = computeXiJunction(junction.type, {
+      Qb: resB.Q_m3h, Qs: resS.Q_m3h, Qc: avalRes.Q_m3h,
+      Ab: aire(resB), As: aire(resS), Ac: aire(avalRes),
+      Vc_ms: avalRes.v_ms,
+      Ws: resS.a_mm, Hs: resS.b_mm, Wc: avalRes.a_mm, Hc: avalRes.b_mm,
+    })
+    const pdyn = 0.5 * avalRes.rho * avalRes.v_ms ** 2
+    if (xi.Ccb != null) result.set(segB.id, xi.Ccb * pdyn)
+    if (xi.Ccs != null) result.set(segS.id, xi.Ccs * pdyn)
   }
 
   return result
@@ -576,20 +567,30 @@ export function computeVentilationResults(
 // ════════════════════════════════════════════════════════════════════════════
 // TEMPORAIRE — PROJET SPÉCIFIQUE — À SUPPRIMER
 // Vitesse maximale admissible (m/s) en fonction du débit (m³/h).
-// Interpolation linéaire par paliers selon le tableau projet.
 // Remplace les anciens seuils fixes 5 m/s (orange) / 8 m/s (rouge).
 // ════════════════════════════════════════════════════════════════════════════
+
+/** Tranches de débit du tableau projet : [plafond de la tranche, vitesse max].
+ *  Ce sont des paliers, pas des points à relier — la vitesse admissible ne varie
+ *  pas à l'intérieur d'une tranche. Le plafond est inclus : à 550 m³/h pile, on
+ *  est encore à 3,5 m/s. */
+const V_MAX_VENT: [number, number][] = [
+  [   300, 3.0],
+  [   550, 3.5],
+  [   800, 4.0],
+  [  1500, 4.5],
+  [  2000, 5.0],
+  [  4000, 5.0],
+  [  6000, 5.5],
+  [ 12000, 6.0],
+  [ 18500, 6.5],
+  [ 25000, 7.0],
+]
+/** Au-delà de la dernière tranche. */
+const V_MAX_VENT_HAUT = 7.5
+
 export function getVentMaxVelocity(Q_m3h: number): number {
-  if (Q_m3h <=   300) return 3
-  if (Q_m3h <=   550) return 3   + (Q_m3h -   300) * (3.5 - 3)   / (550   - 300)
-  if (Q_m3h <=   800) return 3.5 + (Q_m3h -   550) * (4   - 3.5) / (800   - 550)
-  if (Q_m3h <=  1500) return 4   + (Q_m3h -   800) * (4.5 - 4)   / (1500  - 800)
-  if (Q_m3h <=  2000) return 4.5 + (Q_m3h -  1500) * (5   - 4.5) / (2000  - 1500)
-  if (Q_m3h <=  4000) return 5
-  if (Q_m3h <=  6000) return 5   + (Q_m3h -  4000) * (5.5 - 5)   / (6000  - 4000)
-  if (Q_m3h <= 12000) return 5.5 + (Q_m3h -  6000) * (6   - 5.5) / (12000 - 6000)
-  if (Q_m3h <= 18500) return 6   + (Q_m3h - 12000) * (6.5 - 6)   / (18500 - 12000)
-  if (Q_m3h <= 25000) return 6.5 + (Q_m3h - 18500) * (7   - 6.5) / (25000 - 18500)
-  return 7.5
+  for (const [plafond, v] of V_MAX_VENT) if (Q_m3h <= plafond) return v
+  return V_MAX_VENT_HAUT
 }
 // ════════════════════════════════════════════════════════════════════════════

@@ -1,552 +1,380 @@
-// ── Types ─────────────────────────────────────────────────────────────────────
+import { interp1, interp2, interp3 } from './interp'
 
-export type CircTransitionType =
-  | 'agrandissement-brusque'   // expansion soudaine — Borda-Carnot (Idelchik)
-  | 'diffuseur-conique'        // expansion progressive — table Idelchik Chap. 5
-  | 'retrecissement-brusque'   // contraction soudaine — Weisbach (Idelchik)
-  | 'convergent-conique'       // contraction progressive — Crane / Idelchik
+// ── Transitions de section (ventilation) ─────────────────────────────────────
+// Attribuées sur un nœud, entre le tronçon amont et le tronçon aval.
+// Le sens d'écoulement étant déduit automatiquement, le type applicable découle
+// de la comparaison des sections : il n'est jamais choisi à l'aveugle.
+
+export type TransitionType =
+  | 'trans-4-1-div'   // ASHRAE 4-1 — circulaire, la section augmente (divergent)
+  | 'trans-4-1-conv'  // ASHRAE 4-1 — circulaire, la section diminue (convergent)
+  | 'trans-4-2-div'   // ASHRAE 4-2 — rectangulaire symétrique, section croissante
+  | 'trans-4-2-conv'  // ASHRAE 4-2 — rectangulaire symétrique, section décroissante
+  | 'trans-4-3-div'   // ASHRAE 4-3 — rectangulaire, 3 côtés droits, section croissante
+  | 'trans-4-3-conv'  // ASHRAE 4-3 — rectangulaire, 3 côtés droits, section décroissante
+  | 'trans-3-10-div'  // ASHRAE 3-10 — coude rectangulaire 90°, section croissante
+  | 'trans-3-10-conv' // ASHRAE 3-10 — coude rectangulaire 90°, section décroissante
+  | 'trans-4-4-div'   // ASHRAE 4-4 — rectangulaire pyramidale, section croissante
+  | 'trans-4-4-conv'  // ASHRAE 4-4 — rectangulaire pyramidale, section décroissante
+  | 'trans-ed42-div'  // ASHRAE ED4-2 — circulaire → rectangulaire, section croissante
+  | 'trans-ed42-conv' // ASHRAE ED4-2 — circulaire → rectangulaire, section décroissante
+  | 'trans-er43-div'  // ASHRAE ER4-3 — rectangulaire → circulaire, section croissante
+  | 'trans-er43-conv' // ASHRAE ER4-3 — rectangulaire → circulaire, section décroissante
+  | 'trans-4-7'       // ASHRAE 4-7 — rectangulaire → circulaire, conique à décrochement
 
 export interface VentNodeTransition {
-  id:        string
-  type:      CircTransitionType
-  alpha_deg?: number   // demi-angle α (°) — diffuseur-conique uniquement
-  L_mm?:     number   // longueur de la transition (mm) — convergent-conique
+  id:    string
+  type:  TransitionType
+  theta: number        // angle de la transition (°), parmi les angles tabulés
+  l_mm?: number        // 4-7 : longueur axiale de la partie conique
 }
 
-export type RectTransitionType =
-  | 'agrandissement-brusque-rect'  // expansion soudaine — Borda-Carnot
-  | 'diffuseur-pyramidal'          // expansion progressive — table Idelchik (angle équivalent)
-  | 'retrecissement-brusque-rect'  // contraction soudaine — Weisbach
-  | 'convergent-pyramidal'         // contraction progressive — Crane / Idelchik
+/** Géométrie d'une des deux sections raccordées. Les transitions se lisent sur
+ *  des aires, jamais sur le diamètre hydraulique : le rectangulaire porte donc
+ *  ses vraies dimensions. */
+export type TransitionShape =
+  | { shape: 'circular';    d_mm: number }
+  | { shape: 'rectangular'; l_mm: number; h_mm: number }
 
-export interface VentNodeTransitionRect {
-  id:        string
-  type:      RectTransitionType
-  alpha_deg?: number   // non utilisé (conservé pour rétrocompatibilité)
-  L_mm?:     number   // longueur de la transition (mm)
+export const TRANSITION_LABELS: Record<TransitionType, string> = {
+  'trans-4-1-div':  'Transition circulaire — augmentation de section',
+  'trans-4-1-conv': 'Transition circulaire — diminution de section',
+  'trans-4-2-div':  'Transition rectangulaire symétrique — augmentation de section',
+  'trans-4-2-conv': 'Transition rectangulaire symétrique — diminution de section',
+  'trans-4-3-div':  'Transition rectangulaire 3 côtés droits — augmentation de section',
+  'trans-4-3-conv': 'Transition rectangulaire 3 côtés droits — diminution de section',
+  'trans-3-10-div':  'Transition coudée rectangulaire à 90° — augmentation de section',
+  'trans-3-10-conv': 'Transition coudée rectangulaire à 90° — diminution de section',
+  'trans-4-4-div':   'Transition rectangulaire pyramidale — augmentation de section',
+  'trans-4-4-conv':  'Transition rectangulaire pyramidale — diminution de section',
+  'trans-ed42-div':  'Transition circulaire → rectangulaire — augmentation de section',
+  'trans-ed42-conv': 'Transition circulaire → rectangulaire — diminution de section',
+  'trans-er43-div':  'Transition rectangulaire → circulaire — augmentation de section',
+  'trans-er43-conv': 'Transition rectangulaire → circulaire — diminution de section',
+  'trans-4-7':       'Transition rectangulaire → circulaire, conique à décrochement',
 }
 
-// ── Interpolation bilinéaire ──────────────────────────────────────────────────
-
-function lerp(x0: number, x1: number, y0: number, y1: number, x: number): number {
-  return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+/** Le 4-7 se distingue deux fois des autres : sa table se lit sur le rapport
+ *  **aval/amont**, et son coefficient se rapporte à la vitesse de la section
+ *  circulaire **aval**, non à la vitesse amont. */
+export function isStepped(type: TransitionType): boolean {
+  return type === 'trans-4-7'
 }
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v))
+/** Vrai lorsque le coefficient se rapporte à la pression dynamique aval. */
+export function refIsDownstream(type: TransitionType): boolean {
+  return isStepped(type)
 }
 
-function interp1d(xs: number[], ys: number[], x: number): number {
-  const xc = clamp(x, xs[0], xs[xs.length - 1])
-  for (let i = 1; i < xs.length; i++) {
-    if (xc <= xs[i]) return lerp(xs[i - 1], xs[i], ys[i - 1], ys[i], xc)
-  }
-  return ys[ys.length - 1]
+/** Domaine tabulé du rapport l/H, d'où se déduit la plage admise pour l. */
+export const LH47_MIN = 0.025, LH47_MAX = 0.60
+
+/** Raccord entre deux formes différentes : ED4-2 dans un sens, ER4-3 dans
+ *  l'autre. Les deux partagent la même table et le même angle renseigné. */
+export function isRoundRect(type: TransitionType): boolean {
+  return type === 'trans-ed42-div'  || type === 'trans-ed42-conv'
+      || type === 'trans-er43-div'  || type === 'trans-er43-conv'
 }
 
-function interp2d(
-  rows: number[],   // ex. angles
-  cols: number[],   // ex. rapports de section
-  table: number[][], // table[iRow][iCol]
-  r: number,
-  c: number,
-): number {
-  const rc = clamp(r, rows[0], rows[rows.length - 1])
-  const cc = clamp(c, cols[0], cols[cols.length - 1])
-
-  // encadrement de la ligne
-  let ri = rows.length - 2
-  for (let i = 0; i < rows.length - 1; i++) {
-    if (rc <= rows[i + 1]) { ri = i; break }
-  }
-  // encadrement de la colonne
-  let ci = cols.length - 2
-  for (let i = 0; i < cols.length - 1; i++) {
-    if (cc <= cols[i + 1]) { ci = i; break }
-  }
-
-  const t = (rc - rows[ri]) / (rows[ri + 1] - rows[ri])
-  const u = (cc - cols[ci]) / (cols[ci + 1] - cols[ci])
-  return (
-    table[ri][ci]         * (1 - t) * (1 - u) +
-    table[ri + 1][ci]     *       t  * (1 - u) +
-    table[ri][ci + 1]     * (1 - t) *       u  +
-    table[ri + 1][ci + 1] *       t  *       u
-  )
+/** Le 4-4 est la seule pièce où les deux dimensions varient : les quatre faces
+ *  sont inclinées. Dès qu'un côté est conservé la pyramide dégénère, et c'est le
+ *  4-2 qui décrit la pièce. */
+export function isPyramidal(type: TransitionType): boolean {
+  return type === 'trans-4-4-div' || type === 'trans-4-4-conv'
 }
 
-// ── Table Idelchik Chap. 5 — Diffuseur conique circulaire ────────────────────
-// Lignes : demi-angle α (°)   Colonnes : rapport A₂/A₁
-// Valeurs : ξ direct (rapporté à la vitesse amont V₁)
-// Source : Idelchik Handbook of Hydraulic Resistance, implémenté dans CalebBell/fluids
+/** Le 4-3 n'est tabulé que jusqu'à 90° : au-delà, un seul côté incliné ne peut
+ *  plus se refermer sur la section aval. */
+export function isThreeSided(type: TransitionType): boolean {
+  return type === 'trans-4-3-div' || type === 'trans-4-3-conv'
+}
 
-const DIFF_ANGLES = [4, 5, 6, 7, 8, 10, 12, 15, 20, 30, 45, 60]
-const DIFF_NRATIOS = [1.1, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.5, 10.0]
+/** Le 3-10 combine le changement de section à un coude : l'angle vaut 90° par
+ *  construction, la table ne comporte aucun axe d'angle. */
+export function isElbow310(type: TransitionType): boolean {
+  return type === 'trans-3-10-div' || type === 'trans-3-10-conv'
+}
 
-// diffuser_conical_Ks_Idelchik  — ξ = f(α, n)
-const DIFF_KS: number[][] = [
-  // n= 1.1    1.2    1.5    2.0    2.5    3.0    4.0    5.0    7.5    10.0
-  [0.010, 0.015, 0.030, 0.040, 0.050, 0.060, 0.065, 0.070, 0.075, 0.080], // α=4°
-  [0.014, 0.020, 0.040, 0.055, 0.070, 0.085, 0.090, 0.100, 0.100, 0.110], // α=5°
-  [0.016, 0.025, 0.050, 0.070, 0.090, 0.100, 0.110, 0.120, 0.130, 0.140], // α=6°
-  [0.018, 0.030, 0.060, 0.085, 0.110, 0.130, 0.140, 0.150, 0.160, 0.170], // α=7°
-  [0.020, 0.035, 0.070, 0.100, 0.130, 0.150, 0.170, 0.180, 0.190, 0.200], // α=8°
-  [0.025, 0.045, 0.090, 0.130, 0.170, 0.190, 0.210, 0.230, 0.240, 0.250], // α=10°
-  [0.030, 0.055, 0.110, 0.160, 0.200, 0.230, 0.260, 0.280, 0.290, 0.310], // α=12°
-  [0.040, 0.070, 0.140, 0.200, 0.250, 0.290, 0.330, 0.350, 0.370, 0.390], // α=15°
-  [0.050, 0.090, 0.180, 0.260, 0.330, 0.380, 0.430, 0.460, 0.490, 0.510], // α=20°
-  [0.065, 0.115, 0.230, 0.350, 0.440, 0.500, 0.570, 0.610, 0.660, 0.690], // α=30°
-  [0.075, 0.135, 0.270, 0.400, 0.510, 0.580, 0.670, 0.710, 0.760, 0.800], // α=45°
-  [0.080, 0.140, 0.280, 0.410, 0.520, 0.600, 0.690, 0.740, 0.800, 0.830], // α=60°
+/** Angles tabulés. Le coefficient n'est pas défini ailleurs. */
+export const TRANSITION_ANGLES = [10, 15, 20, 30, 45, 60, 90, 120, 150, 180]
+/** Le 4-7 descend jusqu'à 0° — la partie conique disparaît, il ne reste que le
+ *  décrochement. */
+const A47_THETA = [0, 10, 20, 30, 45, 60, 90, 120, 150, 180]
+
+export function transitionAngles(type: TransitionType): number[] {
+  if (isElbow310(type))   return [90]
+  if (isStepped(type))    return A47_THETA
+  if (isThreeSided(type)) return TRANSITION_ANGLES.filter(a => a <= 90)
+  return TRANSITION_ANGLES
+}
+
+/** Tolérance de comparaison des dimensions, en mm : deux côtés saisis au
+ *  millimètre sont parallèles dès qu'ils sont égaux à cette précision. */
+const DIM_TOL = 0.5
+
+export function sectionArea(s: TransitionShape): number {
+  return s.shape === 'circular'
+    ? Math.PI * s.d_mm * s.d_mm / 4
+    : s.l_mm * s.h_mm
+}
+
+// ── Tables C₀ = f(A₀/A₁, θ) ──────────────────────────────────────────────────
+// A₀ = section amont (celle qui porte V₀), A₁ = section aval.
+// A₀/A₁ < 1 → la section augmente (divergent) ; > 1 → elle diminue (convergent).
+const RATIO_AXIS = [0.06, 0.10, 0.25, 0.50, 1.00, 2.00, 4.00, 6.00, 10.00]
+const THETA_AXIS = [10, 15, 20, 30, 45, 60, 90, 120, 150, 180]
+
+// ASHRAE 4-1 — Transition circulaire concentrique.
+// Idelchik et al. 1986, Diagrams 5-2 et 5-22.
+const A41_CO: number[][] = [
+  [0.21, 0.29, 0.38, 0.60, 0.84, 0.88, 0.88, 0.88, 0.88, 0.88], // A₀/A₁ = 0,06
+  [0.21, 0.28, 0.38, 0.59, 0.76, 0.80, 0.83, 0.84, 0.83, 0.83], // 0,10
+  [0.16, 0.22, 0.30, 0.46, 0.61, 0.68, 0.64, 0.63, 0.62, 0.62], // 0,25
+  [0.11, 0.13, 0.19, 0.32, 0.33, 0.33, 0.32, 0.31, 0.30, 0.30], // 0,50
+  [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00], // 1,00 — pas de variation
+  [0.20, 0.20, 0.20, 0.20, 0.22, 0.24, 0.48, 0.72, 0.96, 1.00], // 2,00
+  [0.80, 0.64, 0.64, 0.64, 0.88, 1.10, 2.70, 4.30, 5.60, 6.60], // 4,00
+  [1.80, 1.40, 1.40, 1.40, 2.00, 2.50, 6.50, 10.0, 13.0, 15.0], // 6,00
+  [5.00, 5.00, 5.00, 5.00, 6.50, 8.00, 19.0, 29.0, 37.0, 43.0], // 10,00
 ]
 
-// ── Tables Idelchik Diag. 3-6/3-7 — Convergent (conique ou pyramidal) ─────────
-// Source : CalebBell/fluids, même base que Idelchik Handbook (anglais)
+// ASHRAE 4-2 — Transition rectangulaire symétrique, deux côtés parallèles.
+// Idelchik et al. 1986, Diagram 5-5. Les lignes A₀/A₁ > 1 sont données comme
+// provisoires par ASHRAE, adaptées des données du 4-1.
 //
-// K₀ : coefficient principal — lignes = L/D₂, colonnes = θ (demi-angle, °)
-const CONV_K0_LRATIO = [0.025, 0.05, 0.075, 0.10, 0.15, 0.60]
-const CONV_K0_THETA  = [0, 10, 20, 30, 40, 60, 100, 140, 180]
-const CONV_K0: number[][] = [
-  // θ= 0°    10°    20°    30°    40°    60°   100°   140°   180°
-  [0.50, 0.47, 0.45, 0.43, 0.41, 0.40, 0.42, 0.45, 0.50], // L/D₂=0.025
-  [0.50, 0.45, 0.41, 0.36, 0.33, 0.30, 0.35, 0.42, 0.50], // L/D₂=0.050
-  [0.50, 0.42, 0.35, 0.30, 0.26, 0.23, 0.30, 0.40, 0.50], // L/D₂=0.075
-  [0.50, 0.39, 0.32, 0.25, 0.22, 0.18, 0.27, 0.38, 0.50], // L/D₂=0.100
-  [0.50, 0.37, 0.27, 0.20, 0.16, 0.15, 0.25, 0.37, 0.50], // L/D₂=0.150
-  [0.50, 0.27, 0.18, 0.13, 0.11, 0.12, 0.23, 0.36, 0.50], // L/D₂=0.600
+// Sert aussi au 4-3 (trois côtés droits) : ASHRAE l'annonce entièrement
+// provisoire et « assumed same as Fitting 4-2 data ». Les 63 valeurs publiées du
+// 4-3 sont bien celles-ci tronquées à 90°, d'où une table unique — deux copies
+// finiraient par diverger sans raison.
+const A42_CO: number[][] = [
+  [0.26, 0.27, 0.40, 0.56, 0.71, 0.86, 1.00, 0.99, 0.98, 0.98], // A₀/A₁ = 0,06
+  [0.24, 0.26, 0.36, 0.53, 0.69, 0.82, 0.93, 0.93, 0.92, 0.91], // 0,10
+  [0.17, 0.19, 0.22, 0.42, 0.60, 0.68, 0.70, 0.69, 0.67, 0.66], // 0,25
+  [0.14, 0.13, 0.15, 0.24, 0.35, 0.37, 0.38, 0.37, 0.36, 0.35], // 0,50
+  [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00], // 1,00 — pas de variation
+  [0.23, 0.20, 0.20, 0.20, 0.24, 0.28, 0.54, 0.78, 1.00, 1.10], // 2,00  ┐
+  [0.81, 0.64, 0.64, 0.64, 0.88, 1.10, 2.80, 4.40, 5.70, 6.60], // 4,00  │ provisoires
+  [1.80, 1.40, 1.40, 1.40, 2.00, 2.50, 6.60, 10.0, 13.0, 15.0], // 6,00  │ (cf. 4-1)
+  [5.00, 5.00, 5.00, 5.00, 6.50, 8.00, 19.0, 29.0, 37.0, 43.0], // 10,00 ┘
 ]
 
-// K_fr : frottement — lignes = A₂/A₁, colonnes = θ (valide jusqu'à 20°, clampé)
-const CONV_KFR_AREA  = [0.05, 0.075, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60]
-const CONV_KFR_THETA = [2, 3, 6, 8, 10, 12, 14, 16, 20]
-const CONV_KFR: number[][] = [
-  // θ= 2°    3°     6°     8°     10°    12°    14°    16°    20°
-  [0.14, 0.10, 0.05, 0.04, 0.03, 0.03, 0.02, 0.02, 0.01], // A₂/A₁=0.05
-  [0.14, 0.10, 0.05, 0.04, 0.03, 0.02, 0.02, 0.02, 0.01], // A₂/A₁=0.075
-  [0.14, 0.10, 0.05, 0.04, 0.03, 0.02, 0.02, 0.02, 0.01], // A₂/A₁=0.10
-  [0.14, 0.10, 0.05, 0.04, 0.03, 0.02, 0.02, 0.02, 0.01], // A₂/A₁=0.15
-  [0.14, 0.10, 0.05, 0.03, 0.03, 0.02, 0.02, 0.02, 0.01], // A₂/A₁=0.20
-  [0.14, 0.10, 0.05, 0.03, 0.03, 0.02, 0.02, 0.02, 0.01], // A₂/A₁=0.25
-  [0.13, 0.09, 0.04, 0.03, 0.03, 0.02, 0.02, 0.02, 0.01], // A₂/A₁=0.30
-  [0.12, 0.08, 0.04, 0.03, 0.02, 0.02, 0.02, 0.02, 0.01], // A₂/A₁=0.40
-  [0.11, 0.07, 0.04, 0.03, 0.02, 0.02, 0.02, 0.02, 0.01], // A₂/A₁=0.50
-  [0.09, 0.06, 0.03, 0.02, 0.02, 0.02, 0.02, 0.02, 0.01], // A₂/A₁=0.60
+// ASHRAE 4-4 — Transition rectangulaire pyramidale, les deux dimensions varient.
+// Idelchik et al. 1986, Diagram 5-4. Comme pour le 4-2, ASHRAE donne les lignes
+// A₀/A₁ > 1 pour provisoires, adaptées du 4-1. Les valeurs diffèrent assez du
+// 4-2 pour qu'une table distincte soit nécessaire.
+const A44_CO: number[][] = [
+  [0.26, 0.30, 0.44, 0.54, 0.53, 0.65, 0.77, 0.88, 0.95, 0.98], // A₀/A₁ = 0,06
+  [0.24, 0.30, 0.43, 0.50, 0.53, 0.64, 0.75, 0.84, 0.89, 0.91], // 0,10
+  [0.20, 0.25, 0.34, 0.36, 0.45, 0.52, 0.58, 0.62, 0.64, 0.64], // 0,25
+  [0.14, 0.15, 0.20, 0.21, 0.25, 0.30, 0.33, 0.33, 0.33, 0.32], // 0,50
+  [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00], // 1,00 — pas de variation
+  [0.23, 0.22, 0.21, 0.20, 0.22, 0.20, 0.49, 0.74, 0.99, 1.10], // 2,00  ┐
+  [0.84, 0.68, 0.68, 0.64, 0.88, 1.10, 2.70, 4.30, 5.60, 6.60], // 4,00  │ provisoires
+  [1.80, 1.50, 1.50, 1.40, 2.00, 2.50, 6.50, 10.0, 13.0, 15.0], // 6,00  │ (cf. 4-1)
+  [5.00, 5.00, 5.10, 5.00, 6.50, 8.00, 19.0, 29.0, 37.0, 43.0], // 10,00 ┘
 ]
 
-// ξ_v2 convergent Idelchik = K₀ × (1−A₂/A₁) + K_fr, converti en V₁
-function xiConvergentIdelchik(A2_over_A1: number, lratio: number, theta_deg: number): number {
-  const K0  = interp2d(CONV_K0_LRATIO, CONV_K0_THETA,  CONV_K0,  lratio, theta_deg)
-  const Kfr = interp2d(CONV_KFR_AREA,  CONV_KFR_THETA, CONV_KFR, A2_over_A1, Math.min(theta_deg, 20))
-  const xi_v2 = K0 * (1 - A2_over_A1) + Kfr
-  return xi_v2 / A2_over_A1
+// ASHRAE ED4-2 / ER4-3 — Transition circulaire ↔ rectangulaire, réseaux de
+// reprise et d'extraction. Les deux raccords partagent la même table : ED4-2 va
+// du rond au rectangulaire, ER4-3 l'inverse. Elle couvre les deux sens, et ses
+// axes sont ceux des 4-1 à 4-4 — A₀/A₁ et θ renseigné.
+const ARR_CO: number[][] = [
+  [0.30, 0.54, 0.53, 0.65, 0.77, 0.88, 0.95, 0.98, 0.98, 0.93], // A₀/A₁ = 0,06
+  [0.30, 0.50, 0.53, 0.64, 0.75, 0.84, 0.89, 0.91, 0.91, 0.88], // 0,10
+  [0.25, 0.36, 0.45, 0.52, 0.58, 0.62, 0.64, 0.64, 0.64, 0.64], // 0,25
+  [0.15, 0.21, 0.25, 0.30, 0.33, 0.33, 0.33, 0.32, 0.31, 0.30], // 0,50
+  [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00], // 1,00 — pas de variation
+  [0.24, 0.28, 0.26, 0.20, 0.22, 0.24, 0.49, 0.73, 0.97, 1.04], // 2,00
+  [0.89, 0.78, 0.79, 0.70, 0.88, 1.12, 2.72, 4.33, 5.62, 6.58], // 4,00
+  [1.89, 1.67, 1.59, 1.49, 1.98, 2.52, 6.51, 10.14, 13.05, 15.14], // 6,00
+  [5.09, 5.32, 5.15, 5.05, 6.50, 8.05, 19.06, 29.07, 37.08, 43.05], // 10,00
+]
+
+// ASHRAE 4-7 — Transition rectangulaire → circulaire, conique à décrochement.
+// Idelchik et al. 1986, Diagram 4-9. Table à trois entrées : le rapport de
+// sections, l'élancement l/H de la partie conique, et son angle. Le rapport est
+// ici **aval sur amont** — le circulaire, plus petit, sur le rectangulaire — donc
+// toutes les lignes sont inférieures à 1 : la pièce ne couvre que la réduction.
+const A47_R  = [0.10, 0.25, 0.50, 0.80]
+const A47_LH = [0.025, 0.05, 0.075, 0.10, 0.15, 0.30, 0.60]
+const A47_CO: number[][][] = [
+  [ // A_aval/A_amont = 0,10
+    [0.46, 0.43, 0.42, 0.40, 0.38, 0.37, 0.38, 0.40, 0.43, 0.46], // l/H = 0,025
+    [0.46, 0.42, 0.38, 0.33, 0.30, 0.28, 0.31, 0.36, 0.41, 0.46], // 0,05
+    [0.46, 0.39, 0.32, 0.28, 0.23, 0.21, 0.26, 0.32, 0.39, 0.46], // 0,075
+    [0.46, 0.36, 0.30, 0.23, 0.19, 0.17, 0.23, 0.30, 0.38, 0.46], // 0,10
+    [0.46, 0.34, 0.25, 0.18, 0.15, 0.14, 0.21, 0.29, 0.37, 0.46], // 0,15
+    [0.46, 0.31, 0.22, 0.16, 0.13, 0.13, 0.20, 0.28, 0.37, 0.46], // 0,30
+    [0.46, 0.25, 0.17, 0.12, 0.10, 0.11, 0.19, 0.27, 0.36, 0.46], // 0,60
+  ],
+  [ // 0,25
+    [0.40, 0.38, 0.36, 0.35, 0.33, 0.32, 0.33, 0.35, 0.37, 0.40],
+    [0.40, 0.36, 0.33, 0.29, 0.26, 0.24, 0.27, 0.31, 0.35, 0.40],
+    [0.40, 0.34, 0.28, 0.24, 0.20, 0.19, 0.23, 0.28, 0.34, 0.40],
+    [0.40, 0.31, 0.26, 0.20, 0.17, 0.14, 0.20, 0.26, 0.33, 0.40],
+    [0.40, 0.30, 0.22, 0.16, 0.13, 0.12, 0.18, 0.25, 0.32, 0.40],
+    [0.40, 0.27, 0.19, 0.14, 0.11, 0.11, 0.18, 0.25, 0.32, 0.40],
+    [0.40, 0.22, 0.14, 0.10, 0.09, 0.10, 0.16, 0.24, 0.32, 0.40],
+  ],
+  [ // 0,50
+    [0.30, 0.28, 0.27, 0.25, 0.24, 0.24, 0.25, 0.26, 0.27, 0.30],
+    [0.30, 0.27, 0.24, 0.21, 0.19, 0.18, 0.20, 0.23, 0.26, 0.30],
+    [0.30, 0.25, 0.21, 0.18, 0.15, 0.14, 0.17, 0.21, 0.25, 0.30],
+    [0.30, 0.23, 0.19, 0.15, 0.12, 0.11, 0.15, 0.19, 0.24, 0.30],
+    [0.30, 0.22, 0.16, 0.12, 0.09, 0.09, 0.13, 0.18, 0.24, 0.30],
+    [0.30, 0.20, 0.14, 0.10, 0.08, 0.08, 0.13, 0.18, 0.24, 0.30],
+    [0.30, 0.16, 0.11, 0.08, 0.07, 0.07, 0.12, 0.17, 0.23, 0.30],
+  ],
+  [ // 0,80
+    [0.15, 0.14, 0.13, 0.13, 0.12, 0.12, 0.12, 0.13, 0.14, 0.15],
+    [0.15, 0.13, 0.12, 0.11, 0.10, 0.09, 0.10, 0.12, 0.13, 0.15],
+    [0.15, 0.13, 0.10, 0.09, 0.08, 0.07, 0.08, 0.10, 0.13, 0.15],
+    [0.15, 0.12, 0.10, 0.07, 0.06, 0.05, 0.07, 0.10, 0.12, 0.15],
+    [0.15, 0.11, 0.08, 0.06, 0.05, 0.04, 0.07, 0.09, 0.12, 0.15],
+    [0.15, 0.10, 0.07, 0.05, 0.04, 0.04, 0.07, 0.09, 0.12, 0.15],
+    [0.15, 0.08, 0.05, 0.04, 0.03, 0.04, 0.06, 0.09, 0.12, 0.15],
+  ],
+]
+
+// ASHRAE 3-10 — Coude rectangulaire à 90° avec changement de section.
+// Idelchik et al. 1986, Diagram 6-4. C′₀ = f(H₀/W₀, W₁/W₀), puis C₀ = K_Re · C′₀.
+// W est la dimension dans le plan du coude, celle qui varie ; H est la dimension
+// conservée, perpendiculaire à ce plan.
+//
+// L'axe H₀/W₀ monte jusqu'à l'infini : on l'indexe par son inverse W₀/H₀, où
+// cette borne devient 0. Interpoler entre 4 et « ∞ » n'aurait aucun sens autrement,
+// et une troncature à 4 rendrait la dernière ligne inatteignable.
+const A310_WH = [0, 0.25, 1.00, 4.00]            // W₀/H₀, soit H₀/W₀ = ∞, 4, 1, 0,25
+const A310_W1 = [0.6, 0.8, 1.2, 1.4, 1.6, 2.0]   // W₁/W₀
+const A310_CO: number[][] = [
+  [1.50, 1.00, 0.69, 0.63, 0.60, 0.55],          // H₀/W₀ = ∞
+  [1.50, 1.40, 0.81, 0.76, 0.72, 0.66],          // 4,0
+  [1.70, 1.40, 1.00, 0.95, 0.90, 0.84],          // 1,0
+  [1.80, 1.40, 1.10, 1.10, 1.10, 1.10],          // 0,25
+]
+// Le document ne publie pas de colonne W₁/W₀ = 1 : le 3-10 vise les raccords
+// avec changement de section, un coude à section constante relevant des fittings
+// de coude. L'interpolation traverse donc ce vide, de 0,8 à 1,2.
+const A310_RE = [10000, 20000, 30000, 40000, 60000, 80000, 100000, 140000]
+const A310_KRE = [1.40, 1.26, 1.19, 1.14, 1.09, 1.06, 1.04, 1.00]
+
+const co = (table: number[][], ratio: number, theta: number) =>
+  interp2(RATIO_AXIS, THETA_AXIS, table, ratio, theta)
+
+
+/** Résultat de l'examen d'un nœud : les pièces applicables, ou le motif du
+ *  refus. Le motif est affiché à l'utilisateur — un nœud sans transition
+ *  proposée doit dire pourquoi, sinon on cherche la panne à l'aveugle. */
+export interface TransitionMatch {
+  types:  TransitionType[]
+  reason: string | null      // renseigné si et seulement si types est vide
 }
 
-// ── Formules ──────────────────────────────────────────────────────────────────
+/** Pièces applicables au nœud d'après les deux sections.
+ *  En rectangulaire, la géométrie partage les pièces en deux familles exclusives :
+ *   — un seul côté varie : 4-2, 4-3 et 3-10 s'appliquent tous les trois. Ils ne
+ *     diffèrent que par la fabrication — deux côtés inclinés symétriques, un
+ *     seul, ou un coude à 90° — que rien dans les sections ne permet de deviner.
+ *   — les deux côtés varient : seul le 4-4 pyramidal convient, les trois autres
+ *     supposant un côté conservé.
+ *  Les cas écartés : sections identiques, rien à raccorder ; et changement de
+ *  forme circulaire ↔ rectangulaire, qu'aucun diagramme ne couvre. */
+export function matchTransition(s0: TransitionShape, s1: TransitionShape): TransitionMatch {
+  const no = (reason: string): TransitionMatch => ({ types: [], reason })
+  const A0 = sectionArea(s0), A1 = sectionArea(s1)
+  if (!(A0 > 0) || !(A1 > 0)) return no('Section amont ou aval indéterminée.')
 
-/**
- * Agrandissement brusque — Borda-Carnot (Idelchik)
- * ξ = (1 − A₁/A₂)²  rapporté à V₁
- */
-export function xiAgrandissementBrusque(D1_mm: number, D2_mm: number): number {
-  if (D2_mm <= D1_mm) return 0
-  const ratio = (D1_mm / D2_mm) ** 2   // A₁/A₂
-  return (1 - ratio) ** 2
-}
-
-/**
- * Diffuseur conique — interpolation bilinéaire table Idelchik Chap. 5
- * ξ = f(α, A₂/A₁)  rapporté à V₁
- * α : demi-angle en degrés (4°–60°, clampé)
- */
-export function xiDiffuseurConique(D1_mm: number, D2_mm: number, alpha_deg: number): number {
-  if (D2_mm <= D1_mm) return 0
-  const n = (D2_mm / D1_mm) ** 2   // A₂/A₁
-  return interp2d(DIFF_ANGLES, DIFF_NRATIOS, DIFF_KS, alpha_deg, n)
-}
-
-/**
- * Rétrécissement brusque — Weisbach (Idelchik)
- * ξ = 0.5 × (1 − A₂/A₁)  rapporté à V₂ (aval)
- * On le ramène à V₁ (amont) en multipliant par (A₁/A₂)²
- */
-export function xiRetrecissementBrusque(D1_mm: number, D2_mm: number): number {
-  if (D2_mm >= D1_mm) return 0
-  const A2_over_A1 = (D2_mm / D1_mm) ** 2
-  const xi_v2 = 0.5 * (1 - A2_over_A1)
-  // conversion V₂ → V₁ : ξ_v1 = ξ_v2 × (A₁/A₂)²
-  return xi_v2 * (1 / A2_over_A1)
-}
-
-/**
- * Convergent conique — Idelchik Diag. 3-6/3-7
- * θ (demi-angle) calculé depuis D1, D2 et L.
- * ξ = [K₀(L/D₂, θ) × (1−A₂/A₁) + K_fr(A₂/A₁, θ)] × (A₁/A₂)²
- */
-export function xiConvergentConique(D1_mm: number, D2_mm: number, L_mm: number): number {
-  if (D2_mm >= D1_mm || L_mm <= 0) return 0
-  const A2_over_A1 = (D2_mm / D1_mm) ** 2
-  const theta      = Math.atan((D1_mm - D2_mm) / (2 * L_mm)) * 180 / Math.PI
-  const lratio     = L_mm / D2_mm
-  return xiConvergentIdelchik(A2_over_A1, lratio, theta)
-}
-
-// ── Dispatch ──────────────────────────────────────────────────────────────────
-
-export function computeXiTransition(
-  t: VentNodeTransition,
-  D1_mm: number,   // diamètre amont
-  D2_mm: number,   // diamètre aval
-): number {
-  const alpha = t.alpha_deg ?? 15
-  const L     = t.L_mm     ?? 200
-  switch (t.type) {
-    case 'agrandissement-brusque':  return xiAgrandissementBrusque(D1_mm, D2_mm)
-    case 'diffuseur-conique':       return xiDiffuseurConique(D1_mm, D2_mm, alpha)
-    case 'retrecissement-brusque':  return xiRetrecissementBrusque(D1_mm, D2_mm)
-    case 'convergent-conique':      return xiConvergentConique(D1_mm, D2_mm, L)
+  if (s0.shape === 'circular' && s1.shape === 'circular') {
+    if (s0.d_mm === s1.d_mm) return no('Sections amont et aval identiques — rien à raccorder.')
+    return { types: [s1.d_mm > s0.d_mm ? 'trans-4-1-div' : 'trans-4-1-conv'], reason: null }
   }
+
+  if (s0.shape === 'rectangular' && s1.shape === 'rectangular') {
+    const sameL = Math.abs(s0.l_mm - s1.l_mm) < DIM_TOL
+    const sameH = Math.abs(s0.h_mm - s1.h_mm) < DIM_TOL
+    if (sameL && sameH) return no('Sections amont et aval identiques — rien à raccorder.')
+    const div = A1 > A0
+    if (!sameL && !sameH) {
+      // Les deux côtés varient en sens contraires jusqu'à conserver l'aire : la
+      // corrélation, indexée sur le seul rapport A₀/A₁, renverrait C₀ = 0 alors
+      // que la pièce existe et perd de la charge. Mieux vaut le dire.
+      if (Math.abs(A0 - A1) / A0 < 1e-6) return no(
+        'Sections de même aire : la corrélation n\'est indexée que sur A₀/A₁ et donnerait '
+        + 'C₀ = 0, alors que le raccord perd bien de la charge. Ce cas n\'est pas couvert.')
+      return { reason: null, types: [div ? 'trans-4-4-div' : 'trans-4-4-conv'] }
+    }
+    return { reason: null, types: div
+      ? ['trans-4-2-div',  'trans-4-3-div',  'trans-3-10-div']
+      : ['trans-4-2-conv', 'trans-4-3-conv', 'trans-3-10-conv'] }
+  }
+
+  // Changement de forme : ED4-2 du rond vers le rectangulaire, ER4-3 l'inverse.
+  // Seule l'égalité stricte des aires reste écartée : la table y donne C₀ = 0 pour
+  // tous les angles, et le raccord serait de surcroît étiqueté à tort augmentation
+  // ou diminution.
+  if (Math.abs(A0 - A1) / A0 < 1e-6) return no(
+    'Sections de même aire : la table donne C₀ = 0 à tous les angles pour A₀/A₁ = 1. '
+    + 'Le raccord existe, mais cette corrélation ne lui attribue aucune perte.')
+  const versRect = s0.shape === 'circular'
+  const div = A1 > A0
+  const types: TransitionType[] = [versRect
+    ? (div ? 'trans-ed42-div' : 'trans-ed42-conv')
+    : (div ? 'trans-er43-div' : 'trans-er43-conv')]
+  // Le 4-7 décrit une fabrication particulière du même raccord : rectangulaire
+  // vers circulaire, en réduction. Rien dans les sections ne permet de la
+  // deviner, elle s'ajoute donc au choix.
+  if (!versRect && !div) types.push('trans-4-7')
+  return { reason: null, types }
 }
 
-// ── Labels ────────────────────────────────────────────────────────────────────
-
-export const TRANSITION_LABELS: Record<CircTransitionType, string> = {
-  'agrandissement-brusque': 'Agrandissement brusque',
-  'diffuseur-conique':      'Diffuseur conique (progressif)',
-  'retrecissement-brusque': 'Rétrécissement brusque',
-  'convergent-conique':     'Convergent conique (progressif)',
+/** Dimensions du 3-10 : W est le côté qui varie — celui qui est dans le plan du
+ *  coude — et H le côté conservé, perpendiculaire à ce plan. */
+function wh310(s0: TransitionShape, s1: TransitionShape) {
+  if (s0.shape !== 'rectangular' || s1.shape !== 'rectangular') return null
+  const varL = Math.abs(s0.l_mm - s1.l_mm) >= DIM_TOL
+  const W0 = varL ? s0.l_mm : s0.h_mm
+  const W1 = varL ? s1.l_mm : s1.h_mm
+  const H0 = varL ? s0.h_mm : s0.l_mm
+  return W0 > 0 && W1 > 0 && H0 > 0 ? { W0, W1, H0 } : null
 }
 
-// ── Détection automatique ─────────────────────────────────────────────────────
+/** ξ rapporté à la pression dynamique **amont** (V₀).
+ *  — 4-1 / 4-2 / 4-3 : ξ = C₀(A₀/A₁, θ), lecture directe. Pour le 4-3, θ est
+ *    l'angle du seul côté incliné et la table s'arrête à 90°, d'où le bornage.
+ *  — 3-10 : ξ = K_Re · C′₀(H₀/W₀, W₁/W₀). C'est le seul à porter une correction
+ *    de Reynolds ; sans Re connu on retient K_Re = 1, la valeur au-delà de
+ *    140 000, plutôt que d'annuler le coefficient. */
+export function computeXiTransition(
+  t: VentNodeTransition, s0: TransitionShape, s1: TransitionShape, Re?: number,
+): number {
+  const A0 = sectionArea(s0), A1 = sectionArea(s1)
+  if (!(A0 > 0) || !(A1 > 0)) return 0
 
-export type TransitionKind = 'expansion' | 'contraction' | 'none'
+  // Raccord de forme : table propre, mais mêmes axes que les autres.
+  if (isRoundRect(t.type)) return co(ARR_CO, A0 / A1, t.theta)
 
-export function detectTransitionKind(D1_mm: number, D2_mm: number): TransitionKind {
-  const ratio = D2_mm / D1_mm
-  if (ratio > 1.02) return 'expansion'
-  if (ratio < 0.98) return 'contraction'
-  return 'none'
+  // 4-7 : rapport aval/amont, et troisième axe l/H — H étant la hauteur du
+  // rectangulaire amont. Le coefficient se rapporte à la vitesse aval.
+  if (isStepped(t.type)) {
+    if (s0.shape !== 'rectangular' || !(s0.h_mm > 0)) return 0
+    const lh = t.l_mm != null && t.l_mm > 0 ? t.l_mm / s0.h_mm : A47_LH[0]
+    return interp3(A47_R, A47_LH, A47_THETA, A47_CO, A1 / A0, lh, t.theta)
+  }
+
+  if (isElbow310(t.type)) {
+    const g = wh310(s0, s1)
+    if (!g) return 0
+    const cPrime = interp2(A310_WH, A310_W1, A310_CO, g.W0 / g.H0, g.W1 / g.W0)
+    const kRe    = Re != null && Re > 0 ? interp1(A310_RE, A310_KRE, Re) : 1
+    return kRe * cPrime
+  }
+
+  const circ  = t.type === 'trans-4-1-div' || t.type === 'trans-4-1-conv'
+  const table = circ ? A41_CO : isPyramidal(t.type) ? A44_CO : A42_CO
+  const theta = isThreeSided(t.type) ? Math.min(t.theta, 90) : t.theta
+  return co(table, A0 / A1, theta)
 }
-
-/** Types disponibles selon le sens de la transition */
-export const TRANSITION_TYPES_FOR_KIND: Record<TransitionKind, CircTransitionType[]> = {
-  expansion:   ['diffuseur-conique', 'agrandissement-brusque'],
-  contraction: ['convergent-conique', 'retrecissement-brusque'],
-  none:        [],
-}
-
-// ── Contraintes d'angle ───────────────────────────────────────────────────────
-
-export const ALPHA_RANGE: Record<CircTransitionType, [number, number]> = {
-  'agrandissement-brusque':  [0,  0],    // pas d'angle
-  'diffuseur-conique':       [4, 60],
-  'retrecissement-brusque':  [0,  0],    // pas d'angle
-  'convergent-conique':      [4, 45],
-}
-
-export const TRANSITION_NEEDS_ANGLE: Record<CircTransitionType, boolean> = {
-  'agrandissement-brusque': false,
-  'diffuseur-conique':      true,
-  'retrecissement-brusque': false,
-  'convergent-conique':     false,
-}
-
-export const TRANSITION_NEEDS_LENGTH: Record<CircTransitionType, boolean> = {
-  'agrandissement-brusque': false,
-  'diffuseur-conique':      false,
-  'retrecissement-brusque': false,
-  'convergent-conique':     true,
-}
-
-// ── Utilitaires ───────────────────────────────────────────────────────────────
 
 export function newTransitionId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// GROUPE 2 — Rectangulaire → Rectangulaire
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// ── Formules Groupe 2 ─────────────────────────────────────────────────────────
-
-/**
- * Agrandissement brusque rect — Borda-Carnot (Idelchik)
- * ξ = (1 − A₁/A₂)²  rapporté à V₁
- */
-export function xiAgrandissementBrusqueRect(A1_mm2: number, A2_mm2: number): number {
-  if (A2_mm2 <= A1_mm2) return 0
-  return (1 - A1_mm2 / A2_mm2) ** 2
-}
-
-/**
- * Diffuseur pyramidal — table Idelchik Chap. 5, θ = max(θ_y, θ_z)
- * θ calculé depuis les cotes de gaine et la longueur L (Idelchik Diag. 5-23)
- */
-export function xiDiffuseurPyramidal(
-  a1_mm: number, b1_mm: number,
-  a2_mm: number, b2_mm: number,
-  L_mm:  number,
-): number {
-  const A1 = a1_mm * b1_mm
-  const A2 = a2_mm * b2_mm
-  if (A2 <= A1 || L_mm <= 0) return 0
-  const theta_y = Math.atan(Math.max(0, a2_mm - a1_mm) / (2 * L_mm)) * 180 / Math.PI
-  const theta_z = Math.atan(Math.max(0, b2_mm - b1_mm) / (2 * L_mm)) * 180 / Math.PI
-  const theta   = Math.max(theta_y, theta_z)
-  return interp2d(DIFF_ANGLES, DIFF_NRATIOS, DIFF_KS, theta, A2 / A1)
-}
-
-/**
- * Rétrécissement brusque rect — Weisbach (Idelchik)
- * ξ = 0.5 × (1 − A₂/A₁)  rapporté à V₂ (aval)
- * Converti en V₁
- */
-export function xiRetrecissementBrusqueRect(A1_mm2: number, A2_mm2: number): number {
-  if (A2_mm2 >= A1_mm2) return 0
-  const A2_over_A1 = A2_mm2 / A1_mm2
-  const xi_v2 = 0.5 * (1 - A2_over_A1)
-  return xi_v2 / A2_over_A1
-}
-
-/**
- * Convergent pyramidal — Idelchik Diag. 3-6/3-7
- * θ = max(θ_y, θ_z), Dh₂ = 2a₂b₂/(a₂+b₂) pour le rapport L/D₂
- */
-export function xiConvergentPyramidal(
-  a1_mm: number, b1_mm: number,
-  a2_mm: number, b2_mm: number,
-  L_mm:  number,
-): number {
-  const A1 = a1_mm * b1_mm
-  const A2 = a2_mm * b2_mm
-  if (A2 >= A1 || L_mm <= 0) return 0
-  const Dh2        = 2 * a2_mm * b2_mm / (a2_mm + b2_mm)
-  const A2_over_A1 = A2 / A1
-  const theta_y    = Math.atan(Math.max(0, a1_mm - a2_mm) / (2 * L_mm)) * 180 / Math.PI
-  const theta_z    = Math.atan(Math.max(0, b1_mm - b2_mm) / (2 * L_mm)) * 180 / Math.PI
-  const theta      = Math.max(theta_y, theta_z)
-  return xiConvergentIdelchik(A2_over_A1, L_mm / Dh2, theta)
-}
-
-// ── Dispatch Groupe 2 ─────────────────────────────────────────────────────────
-
-export function computeXiTransitionRect(
-  t:      VentNodeTransitionRect,
-  A1_mm2: number,     // section amont (mm²) — pour les types brusques
-  A2_mm2: number,     // section aval (mm²)
-  a1_mm?: number,     // cotes amont — requis pour types progressifs
-  b1_mm?: number,
-  a2_mm?: number,
-  b2_mm?: number,
-): number {
-  const L = t.L_mm ?? 200
-  switch (t.type) {
-    case 'agrandissement-brusque-rect': return xiAgrandissementBrusqueRect(A1_mm2, A2_mm2)
-    case 'retrecissement-brusque-rect': return xiRetrecissementBrusqueRect(A1_mm2, A2_mm2)
-    case 'diffuseur-pyramidal':
-      if (a1_mm && b1_mm && a2_mm && b2_mm)
-        return xiDiffuseurPyramidal(a1_mm, b1_mm, a2_mm, b2_mm, L)
-      return 0
-    case 'convergent-pyramidal':
-      if (a1_mm && b1_mm && a2_mm && b2_mm)
-        return xiConvergentPyramidal(a1_mm, b1_mm, a2_mm, b2_mm, L)
-      return 0
-  }
-}
-
-// ── Labels Groupe 2 ───────────────────────────────────────────────────────────
-
-export const RECT_TRANSITION_LABELS: Record<RectTransitionType, string> = {
-  'agrandissement-brusque-rect': 'Agrandissement brusque',
-  'diffuseur-pyramidal':         'Diffuseur pyramidal (progressif)',
-  'retrecissement-brusque-rect': 'Rétrécissement brusque',
-  'convergent-pyramidal':        'Convergent pyramidal (progressif)',
-}
-
-// ── Détection Groupe 2 (par aire) ─────────────────────────────────────────────
-// Seuil ±2% sur le diamètre équivalent ↔ ±4% sur l'aire
-
-export function detectTransitionKindByArea(A1_mm2: number, A2_mm2: number): TransitionKind {
-  const ratio = A2_mm2 / A1_mm2
-  if (ratio > 1.04) return 'expansion'
-  if (ratio < 0.96) return 'contraction'
-  return 'none'
-}
-
-export const RECT_TRANSITION_TYPES_FOR_KIND: Record<TransitionKind, RectTransitionType[]> = {
-  expansion:   ['diffuseur-pyramidal', 'agrandissement-brusque-rect'],
-  contraction: ['convergent-pyramidal', 'retrecissement-brusque-rect'],
-  none:        [],
-}
-
-// ── Contraintes d'angle Groupe 2 ─────────────────────────────────────────────
-
-export const RECT_ALPHA_RANGE: Record<RectTransitionType, [number, number]> = {
-  'agrandissement-brusque-rect': [0,  0],
-  'diffuseur-pyramidal':         [4, 60],
-  'retrecissement-brusque-rect': [0,  0],
-  'convergent-pyramidal':        [4, 45],
-}
-
-export const RECT_TRANSITION_NEEDS_ANGLE: Record<RectTransitionType, boolean> = {
-  'agrandissement-brusque-rect': false,
-  'diffuseur-pyramidal':         false,
-  'retrecissement-brusque-rect': false,
-  'convergent-pyramidal':        false,
-}
-
-export const RECT_TRANSITION_NEEDS_LENGTH: Record<RectTransitionType, boolean> = {
-  'agrandissement-brusque-rect': false,
-  'diffuseur-pyramidal':         true,
-  'retrecissement-brusque-rect': false,
-  'convergent-pyramidal':        true,
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// GROUPE 3 — Circulaire ↔ Rectangulaire
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export type MixedTransitionType =
-  | 'agrandissement-brusque-mixed'  // Borda-Carnot — même formule G1/G2
-  | 'diffuseur-mixed'               // table Idelchik conique × τ(a/b) (Diag. 5-28)
-  | 'retrecissement-brusque-mixed'  // Weisbach — même formule G1/G2
-  | 'convergent-mixed'              // Crane / Idelchik — même formule G1/G2
-
-export interface VentNodeTransitionMixed {
-  id:        string
-  type:      MixedTransitionType
-  alpha_deg?: number   // non utilisé (conservé pour rétrocompatibilité)
-  L_mm?:     number   // longueur de la transition (mm)
-}
-
-// ── Correcteur τ(a/b) — Idelchik Diag. 5-28 ─────────────────────────────────
-// Rapport a/b (max/min) de la section rectangulaire → facteur multiplicatif sur ξ_conique
-
-const TAU_AB     = [1,    1.5,  2,    3,    4   ]
-const TAU_VALUES = [1.00, 1.04, 1.08, 1.13, 1.18]
-
-function tauAspectRatio(ab: number): number {
-  return interp1d(TAU_AB, TAU_VALUES, ab)
-}
-
-// ── Formules Groupe 3 ─────────────────────────────────────────────────────────
-
-/**
- * Agrandissement brusque circ↔rect — Borda-Carnot (Idelchik)
- * ξ = (1 − A₁/A₂)²  rapporté à V₁
- */
-export function xiAgrandissementBrusqueMixed(A1_mm2: number, A2_mm2: number): number {
-  if (A2_mm2 <= A1_mm2) return 0
-  return (1 - A1_mm2 / A2_mm2) ** 2
-}
-
-/**
- * Diffuseur circ↔rect — table Idelchik conique (Chap. 5) × τ(a/b) (Diag. 5-28)
- * θ calculé depuis les diamètres hydrauliques effectifs (Dh) et la longueur L.
- * ab_ratio : rapport max(a,b)/min(a,b) de la section rectangulaire.
- */
-export function xiDiffuseurMixed(
-  A1_mm2:    number,
-  A2_mm2:    number,
-  ab_ratio:  number,
-  L_mm:      number,
-  Dh1_mm:    number,   // Dh amont (D pour circulaire, 2ab/(a+b) pour rect)
-  Dh2_mm:    number,   // Dh aval
-): number {
-  if (A2_mm2 <= A1_mm2 || L_mm <= 0) return 0
-  const theta = Math.atan(Math.max(0, Dh2_mm - Dh1_mm) / (2 * L_mm)) * 180 / Math.PI
-  const n     = A2_mm2 / A1_mm2
-  return interp2d(DIFF_ANGLES, DIFF_NRATIOS, DIFF_KS, theta, n) * tauAspectRatio(ab_ratio)
-}
-
-/**
- * Rétrécissement brusque circ↔rect — Weisbach (Idelchik)
- * ξ = 0.5 × (1 − A₂/A₁)  rapporté à V₂, converti en V₁
- */
-export function xiRetrecissementBrusqueMixed(A1_mm2: number, A2_mm2: number): number {
-  if (A2_mm2 >= A1_mm2) return 0
-  const A2_over_A1 = A2_mm2 / A1_mm2
-  return 0.5 * (1 - A2_over_A1) / A2_over_A1
-}
-
-/**
- * Convergent circ↔rect — Idelchik Diag. 3-6/3-7
- * θ calculé depuis les Dh et L ; Dh₂ utilisé pour le rapport L/D₂.
- */
-export function xiConvergentMixed(
-  A1_mm2: number,
-  A2_mm2: number,
-  L_mm:   number,
-  Dh1_mm: number,
-  Dh2_mm: number,
-): number {
-  if (A2_mm2 >= A1_mm2 || L_mm <= 0) return 0
-  const A2_over_A1 = A2_mm2 / A1_mm2
-  const theta      = Math.atan(Math.max(0, Dh1_mm - Dh2_mm) / (2 * L_mm)) * 180 / Math.PI
-  return xiConvergentIdelchik(A2_over_A1, L_mm / Dh2_mm, theta)
-}
-
-// ── Dispatch Groupe 3 ─────────────────────────────────────────────────────────
-
-export function computeXiTransitionMixed(
-  t:        VentNodeTransitionMixed,
-  A1_mm2:   number,     // section amont (mm²)
-  A2_mm2:   number,     // section aval (mm²)
-  ab_ratio: number,     // rapport max/min côté rectangulaire
-  Dh1_mm?:  number,     // Dh amont — requis pour types progressifs
-  Dh2_mm?:  number,     // Dh aval
-): number {
-  const L = t.L_mm ?? 200
-  switch (t.type) {
-    case 'agrandissement-brusque-mixed': return xiAgrandissementBrusqueMixed(A1_mm2, A2_mm2)
-    case 'retrecissement-brusque-mixed': return xiRetrecissementBrusqueMixed(A1_mm2, A2_mm2)
-    case 'diffuseur-mixed':
-      if (Dh1_mm && Dh2_mm)
-        return xiDiffuseurMixed(A1_mm2, A2_mm2, ab_ratio, L, Dh1_mm, Dh2_mm)
-      return 0
-    case 'convergent-mixed':
-      if (Dh1_mm && Dh2_mm)
-        return xiConvergentMixed(A1_mm2, A2_mm2, L, Dh1_mm, Dh2_mm)
-      return 0
-  }
-}
-
-// ── Labels Groupe 3 ───────────────────────────────────────────────────────────
-
-export const MIXED_TRANSITION_LABELS: Record<MixedTransitionType, string> = {
-  'agrandissement-brusque-mixed': 'Agrandissement brusque',
-  'diffuseur-mixed':              'Diffuseur (transition progressive)',
-  'retrecissement-brusque-mixed': 'Rétrécissement brusque',
-  'convergent-mixed':             'Convergent (transition progressive)',
-}
-
-// ── Détection Groupe 3 (par aire) ────────────────────────────────────────────
-
-export const MIXED_TRANSITION_TYPES_FOR_KIND: Record<TransitionKind, MixedTransitionType[]> = {
-  expansion:   ['diffuseur-mixed', 'agrandissement-brusque-mixed'],
-  contraction: ['convergent-mixed', 'retrecissement-brusque-mixed'],
-  none:        [],
-}
-
-// ── Contraintes d'angle Groupe 3 ─────────────────────────────────────────────
-
-export const MIXED_ALPHA_RANGE: Record<MixedTransitionType, [number, number]> = {
-  'agrandissement-brusque-mixed': [0,  0],
-  'diffuseur-mixed':              [4, 60],
-  'retrecissement-brusque-mixed': [0,  0],
-  'convergent-mixed':             [4, 45],
-}
-
-export const MIXED_TRANSITION_NEEDS_ANGLE: Record<MixedTransitionType, boolean> = {
-  'agrandissement-brusque-mixed': false,
-  'diffuseur-mixed':              false,
-  'retrecissement-brusque-mixed': false,
-  'convergent-mixed':             false,
-}
-
-export const MIXED_TRANSITION_NEEDS_LENGTH: Record<MixedTransitionType, boolean> = {
-  'agrandissement-brusque-mixed': false,
-  'diffuseur-mixed':              true,
-  'retrecissement-brusque-mixed': false,
-  'convergent-mixed':             true,
 }

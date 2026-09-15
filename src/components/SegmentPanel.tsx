@@ -986,47 +986,53 @@ export default function SegmentPanel({ seg, onUpdate, materials, insulations, al
               </>)}
 
               {/* Rectangulaire : A×B modifiables + Dh calculé */}
-              {ductShape === 'rectangular' && shapeMat && (<>
+              {ductShape === 'rectangular' && shapeMat && (() => {
+                // Base de repli pour la cote non saisie : entrée choisie, sinon 1re du matériau.
+                // Saisir L ou H suffit donc à dimensionner, sans rien choisir dans la liste.
+                const rectBase = (shapeDnDef ?? shapeMat.dns[0]) as any
+                if (!rectBase) return <p className="lp-hint">Aucune dimension dans ce matériau.</p>
+                const isCustom = (seg as any).a_override != null || (seg as any).b_override != null
+                const aEff = (seg as any).a_override ?? rectBase.a
+                const bEff = (seg as any).b_override ?? rectBase.b
+                const dhEff = Math.round(2 * aEff * bEff / (aEff + bEff))
+                return (<>
                 <Field label="Dimensions">
-                  <select value={seg.dn || ''}
+                  <select value={isCustom ? '__custom__' : (seg.dn || '')}
                     onChange={e => {
+                      if (e.target.value === '__custom__') return
                       set('dn', e.target.value || null)
                       set('di_override', null)
                       set('a_override', null)
                       set('b_override', null)
                     }}>
                     <option value="">— Choisir —</option>
+                    {/* Entrée virtuelle : reflète la saisie directe sans l'ajouter au catalogue */}
+                    {isCustom && <option value="__custom__">{aEff}×{bEff} mm (personnalisé)</option>}
                     {shapeMat.dns.map(d => <option key={d.dn} value={d.dn}>{d.dn} mm</option>)}
                   </select>
                 </Field>
-                {shapeDnDef && (() => {
-                  const aEff = (seg as any).a_override ?? shapeDnDef.a
-                  const bEff = (seg as any).b_override ?? shapeDnDef.b
-                  const dhEff = Math.round(2 * aEff * bEff / (aEff + bEff))
-                  return (<>
-                    <Field label="Largeur (L)" unit="mm">
-                      <NumInput min={1} value={(seg as any).a_override ?? null}
-                        placeholder={`${shapeDnDef.a} (par défaut)`} allowEmpty
-                        onChange={v => set('a_override', v)} />
-                    </Field>
-                    <Field label="Hauteur (H)" unit="mm">
-                      <NumInput min={1} value={(seg as any).b_override ?? null}
-                        placeholder={`${shapeDnDef.b} (par défaut)`} allowEmpty
-                        onChange={v => set('b_override', v)} />
-                    </Field>
-                    <div style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '5px 8px', background: '#f8fafc', border: '1px solid #e2e8f0',
-                      borderRadius: 5, marginBottom: 6,
-                    }}>
-                      <span style={{ fontSize: 10, color: '#6b7280' }}>Dh (diamètre hydraulique)</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: '#334155', fontFamily: 'ui-monospace, monospace' }}>
-                        {dhEff} mm
-                      </span>
-                    </div>
-                  </>)
-                })()}
-              </>)}
+                <Field label="Largeur (L)" unit="mm">
+                  <NumInput min={1} value={(seg as any).a_override ?? null}
+                    placeholder={`${rectBase.a} (par défaut)`} allowEmpty
+                    onChange={v => set('a_override', v)} />
+                </Field>
+                <Field label="Hauteur (H)" unit="mm">
+                  <NumInput min={1} value={(seg as any).b_override ?? null}
+                    placeholder={`${rectBase.b} (par défaut)`} allowEmpty
+                    onChange={v => set('b_override', v)} />
+                </Field>
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '5px 8px', background: '#f8fafc', border: '1px solid #e2e8f0',
+                  borderRadius: 5, marginBottom: 6,
+                }}>
+                  <span style={{ fontSize: 10, color: '#6b7280' }}>Dh (diamètre hydraulique)</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#334155', fontFamily: 'ui-monospace, monospace' }}>
+                    {dhEff} mm
+                  </span>
+                </div>
+                </>)
+              })()}
             </>)
           })()}
 

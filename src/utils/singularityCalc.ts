@@ -17,6 +17,7 @@ export type RectSingularityType =
   | 'rect-3-12'
   | 'rect-s'
   | 'rect-3-14'
+  | 'rect-3-15'
 
 export type SingularityType = CircSingularityType | RectSingularityType
 
@@ -80,30 +81,6 @@ const A1_TABLE: [number, number][] = [
 function A1(delta_deg: number): number {
   if (delta_deg <= 0) return 0
   return interp1(A1_TABLE, Math.min(delta_deg, 180))
-}
-
-// ── C₁ coudes lisses — D6-2, graph c ─────────────────────────────────────────
-// a₀ = dimension dans le plan du coude, b₀ = dimension perpendiculaire.
-// Section circulaire (a₀/b₀ = 1) : C₁ = 1.0.
-// NB : la table D6-2 est très sensible au rapport de forme (0.45 à a₀/b₀ = 2).
-const C1_D62: [number, number][] = [
-  [0.25, 1.80], [0.50, 1.45], [0.75, 1.20], [1.00, 1.00],
-  [1.50, 0.68], [2.00, 0.45], [3.00, 0.40], [4.00, 0.43],
-  [5.00, 0.48], [6.00, 0.55], [7.00, 0.58], [8.00, 0.60],
-]
-function C1_smooth(a0_over_b0: number): number {
-  return interp1(C1_D62, a0_over_b0)
-}
-
-// ── C₁ coudes vifs — D6-7, table ─────────────────────────────────────────────
-// Section circulaire ou carrée (a₀/b₀ = 1) : C₁ = 1.0.
-const C1_D67: [number, number][] = [
-  [0.25, 1.10], [0.50, 1.07], [0.75, 1.04], [1.00, 1.00],
-  [1.50, 0.95], [2.00, 0.90], [3.00, 0.83], [4.00, 0.78],
-  [5.00, 0.75], [6.00, 0.72], [7.00, 0.71], [8.00, 0.70],
-]
-function C1_sharp(a0_over_b0: number): number {
-  return interp1(C1_D67, a0_over_b0)
 }
 
 // ── Dimensions a₀/b₀ selon le plan du coude rectangulaire ────────────────────
@@ -293,6 +270,24 @@ export function xiRect314(s: VentSingularity, Re?: number): number {
     : (Dhyd > 0 ? Math.max(0, s.lDistS_mm ?? 4 * Dhyd) / Dhyd : 4)
   const k      = interpK314(theta, lOverD)
   return k * xiRectRayonLisse({ ...s, angle: theta, rOverA: rOverW }, Re)
+}
+
+// ── ASHRAE 3-15 — 4 coudes 45° lisses, contournement d'obstacle ──────────────
+// SMACNA 1981, Table 6-14K. Géométrie imposée : W/H = 4, r/H = 1,5, L = 1,5·H.
+// C₀ couvre les quatre coudes et ne dépend que de V₀ (fpm) : aucun K angulaire,
+// aucun facteur Reynolds, aucun C′₀ de coude simple à composer.
+const ASHRAE_3_15_CO: [number, number][] = [
+  [800, 0.18], [1200, 0.22], [1600, 0.24], [2000, 0.25], [2400, 0.26],
+]
+const FPM_PER_MS = 196.8504
+
+/** ASHRAE 3-15 — Ensemble de 4 coudes 45° lisses contournant un obstacle.
+ *  ξ = C₀(V₀) lu dans la table, V₀ = vitesse du tronçon convertie en fpm.
+ *  Interpolation linéaire entre points tabulés et bornage aux extrémités :
+ *  la courbe s'aplatit (incréments 0,04 / 0,02 / 0,01 / 0,01), une extrapolation
+ *  surestimerait au-delà de 2400 fpm et tendrait vers 0 sous 800 fpm. */
+export function xiRect315(v_ms?: number | null): number {
+  return interp1(ASHRAE_3_15_CO, (v_ms ?? 0) * FPM_PER_MS)
 }
 
 // ── Formules rectangulaires ───────────────────────────────────────────────────
@@ -555,6 +550,7 @@ export function computeXiSingularity(s: VentSingularity, Re?: number, Dh_mm?: nu
     case 'rect-3-12':        return xiRectZ312(s, Re)
     case 'rect-s':           return xiRectS(s, Re)
     case 'rect-3-14':        return xiRect314(s, Re)
+    case 'rect-3-15':        return xiRect315(v_ms)
   }
 }
 
@@ -656,6 +652,11 @@ export function computeXiSingularityFull(
     return { ksi_local, ksi_fr: 0, ksi_total: ksi_local }
   }
 
+  if (s.type === 'rect-3-15') {
+    const ksi_local = xiRect315(v_ms)
+    return { ksi_local, ksi_fr: 0, ksi_total: ksi_local }
+  }
+
   const ksi_total = computeXiSingularity(s, Re, Dh_mm, v_ms)
   return { ksi_local: ksi_total, ksi_fr: 0, ksi_total }
 }
@@ -674,7 +675,8 @@ export const SING_LABELS: Record<SingularityType, string> = {
   'coude-s':           'Dévoiement en S (col de cygne)',
   'coude-3-14':        'Dévoiement en S — 2 plans perpendiculaires',
   'rect-s':            'Dévoiement en S (col de cygne)',
-  'rect-3-14':         'Dévoiement en S — 2 plans perpendiculaires (rect.)',
+  'rect-3-14':         'Dévoiement en S — 2 plans perpendiculaires',
+  'rect-3-15':         '4 coudes 45° — contournement d\'obstacle',
 }
 
 export function newSingId(): string {

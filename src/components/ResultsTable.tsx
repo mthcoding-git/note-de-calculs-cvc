@@ -2289,7 +2289,9 @@ export default function ResultsTable({
                       {depth > 0 && <span className="rt-depth">{'└─'}</span>}
                       {name ?? seg.name ?? '—'}
                     </td>
-                    <td className="rt-cell">{seg.dn ?? '—'}</td>
+                    <td className="rt-cell">
+                      {vr?.a_mm != null && vr?.b_mm != null ? `${vr.a_mm}×${vr.b_mm}` : (seg.dn ?? '—')}
+                    </td>
                     {!isPdc && (
                       <td className="rt-cell" style={{ color: '#6b7280' }}>
                         {vr?.dimensioned ? vr.di_mm.toFixed(0) : '—'}

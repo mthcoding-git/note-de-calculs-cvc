@@ -1,745 +1,1022 @@
-import { useState, useEffect, type ReactElement } from 'react'
+import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { NumInput } from './NumInput'
-import type { CircJunctionType, VentNodeJunction, JunctionBranchInput } from '../utils/junctionCalc'
 import {
-  JUNCTION_LABELS, JUNCTION_NEEDS_ANGLE, JUNCTION_ANGLE_RANGE,
-  computeXiJunction, newJunctionId,
+  JUNCTION_LABELS, JUNCTION_ANGLE, computeXiJunction, newJunctionId,
+  resolveArmsFor, isConical, junctionTypesApplicables, junctionShapes,
+  shapeLibre, isFallback, longueurEntree59, sectionsCompensees,
+  type JunctionType, type VentNodeJunction,
 } from '../utils/junctionCalc'
+import { waveC } from '../utils/schemaDraw'
 
-// ── Props ─────────────────────────────────────────────────────────────────────
+/** Une arrivée au nœud, telle que le panneau la connaît. */
+export interface JunctionArm {
+  segId:  string
+  label:  string
+  Q_m3h:  number
+  A_mm2:  number              // section réelle, pas celle du diamètre hydraulique
+  di_mm:  number              // Ø intérieur, ou Dh en rectangulaire
+  shape:  'circular' | 'rectangular'
+  a_mm?:  number              // rectangulaire : largeur
+  b_mm?:  number              // rectangulaire : hauteur
+}
 
-export interface AmontSegInfo {
-  id:     string
-  name:   string
-  Q_m3h: number
-  di_mm:  number
+/** Section d'un conduit, telle qu'on la lit sur un plan. */
+function sect(a: JunctionArm): string {
+  return a.shape === 'rectangular'
+    ? `${Math.round(a.a_mm ?? 0)} × ${Math.round(a.b_mm ?? 0)} mm`
+    : `Ø${Math.round(a.di_mm)} mm`
+}
+
+/** Les jonctions proposées. L'angle n'en fait pas partie : il se choisit
+ *  ensuite, comme l'angle d'une transition.
+ *  — collecteur cylindrique : le trajet droit garde le diamètre du commun ;
+ *  — collecteur conique : le commun s'élargit, aucune contrainte de diamètre. */
+const FAMILIES = [
+  // Le 60° n'a pas de modèle ASHRAE : c'est le repli Idelchik qui le tient,
+  // proposé ici comme un angle de plus plutôt que comme une pièce à part.
+  { key: 'droit', shape: 'circular', conical: false,
+    label: ['Collecteur', 'cylindrique'],
+    title: 'Jonction convergente circulaire', angles: [30, 45, 60, 90],
+    types: { 30: 'jonc-5-1', 45: 'jonc-5-2', 60: 'jonc-idel60', 90: 'jonc-5-3' } },
+  { key: 'conique', shape: 'circular', conical: true,
+    label: ['Collecteur', 'conique'],
+    title: 'Jonction convergente circulaire à collecteur conique', angles: [30, 45],
+    types: { 30: 'jonc-5-4', 45: 'jonc-5-5' } },
+  { key: 'te-rect', shape: 'rectangular', conical: false,
+    label: ['Té', 'branche coudée'],
+    title: 'Té convergent rectangulaire à 90°, branche coudée', angles: [90],
+    types: { 90: 'jonc-5-6' } },
+  { key: 'te-mixte', shape: 'rectangular', conical: false,
+    label: ['Té', 'piquage rond'], angles: [90],
+    title: 'Té convergent à 90°, piquage circulaire sur principal rectangulaire',
+    types: { 90: 'jonc-5-7' } },
+  { key: 'te-droit', shape: 'rectangular', conical: false,
+    label: ['Té', 'piquage droit'], angles: [90],
+    title: 'Té convergent rectangulaire à 90°, piquage droit',
+    types: { 90: 'jonc-5-8' } },
+  { key: 'te-45', shape: 'rectangular', conical: false,
+    label: ['Té', 'entrée 45°'], angles: [45],
+    title: 'Té convergent rectangulaire, entrée de branche à 45°',
+    types: { 45: 'jonc-5-9' } },
+  // Les raccords sans contrainte de forme, réunis sous un seul choix : l'angle
+  // en décide. À 30° c'est le modèle tabulé qui répond quand il s'applique, le
+  // repli analytique sinon ; aux trois autres angles il n'existe que le repli.
+  { key: 'libre', shape: 'rectangular', conical: false, libreShape: true,
+    label: ['Sections', 'quelconques'],
+    title: 'Jonction convergente, sections quelconques', angles: [30, 45, 60, 90],
+    types: { 30: 'jonc-5-1r', 45: 'jonc-idel45', 60: 'jonc-idel60', 90: 'jonc-idel90' },
+    alt:   { 30: 'jonc-idel30' } },
+  // Géométrie à part : les deux arrivées se partagent la section du commun au
+  // lieu que le trajet droit la garde entière. Elle exclut donc les autres
+  // raccords, et eux l'excluent — d'où sa carte propre.
+  { key: 'compensee', shape: 'rectangular', conical: false, libreShape: true,
+    label: ['Sections', 'compensées'], angles: [15, 30],
+    title: 'Culotte convergente à sections compensées',
+    types: { 15: 'jonc-idel15', 30: 'jonc-idel30c' } },
+] as const
+
+type Family = typeof FAMILIES[number]
+
+/** Famille qui porte un raccord donné — celle où il figure, principal ou de
+ *  secours. Sert à rouvrir une pièce déjà posée sur la bonne carte. */
+function famDe(t: JunctionType): string {
+  const a = FAMILIES.find(f => Object.values(f.types).includes(t as never)
+    || Object.values((f as any).alt ?? {}).includes(t))
+  return a?.key ?? FAMILIES[0].key
+}
+
+/** Chaque angle a son propre diagramme — on n'interpole jamais entre eux.
+ *  Un angle peut avoir un second modèle de secours : on ne le retient que si le
+ *  premier ne s'applique pas à ce nœud. */
+function typeOf(fam: Family, angle: number, util?: JunctionType[]): JunctionType {
+  const t = (fam.types as Record<number, JunctionType>)[angle]
+  const a = ((fam as any).alt as Record<number, JunctionType> | undefined)?.[angle]
+  if (a && util && !util.includes(t) && util.includes(a)) return a
+  return t
 }
 
 interface Props {
-  isOpen:     boolean
-  onClose:    () => void
-  onSave:     (j: VentNodeJunction) => void
-  editing:    VentNodeJunction | null
-  amontSegs:  AmontSegInfo[]
-  avalDi_mm:  number
-  avalQ_m3h:  number
-  avalV_ms:   number
-  rho:        number
+  isOpen:   boolean
+  onClose:  () => void
+  onSave:   (j: VentNodeJunction) => void
+  editing:  VentNodeJunction | null
+  arms:     JunctionArm[]      // exactement deux arrivées
+  common:   JunctionArm        // le conduit commun, en aval
+  rho:      number             // masse volumique au nœud (kg/m³)
+  nodeInfo?: string
 }
 
-// ── Utilitaire SVG ────────────────────────────────────────────────────────────
-
-// Bezier cubique imitant une onde S entre deux points (marque de section circulaire)
-function waveC(ax: number, ay: number, bx: number, by: number, amp = 10): string {
+// ── Schéma ASHRAE 5-1 à 5-5 — jonction convergente, vue de profil ─────────
+// Le trajet droit entre à gauche, la branche arrive par en dessous sous l'angle
+// θ, le conduit commun repart à droite. Sur collecteur cylindrique (5-1/5-2/5-3)
+// la règle d'emploi impose As = Ac et la principale garde un diamètre constant ;
+// sur collecteur conique (5-4/5-5) elle s'évase de Ds à Dc, et c'est sur ce cône
+// que la branche se greffe.
+//
+// Le raccord est tracé d'un seul trait fermé. La paroi basse de la principale
+// s'interrompt entre les deux points où les parois de la branche la rejoignent :
+// c'est l'ouverture par laquelle les deux écoulements se mélangent. Ces deux
+// points se déduisent de θ et de la pente du cône, ce qui donne au 30° sa longue
+// fourche et au 90° un simple piquage droit.
+function SchemaJunction({
+  mini, angle, mainRect, branchRect, lettreMain = 'D', lettreBranche = 'D',
+  defRatio = 0.5, sansLettre, hautPlat, dc_mm, db_mm, ds_mm, Qb, Qs, Qc,
+}: {
+  defRatio?: number           // proportion de convention, faute de dimensions
+  hautPlat?: boolean          // paroi haute rectiligne, l'apport se fait par le bas
+  sansLettre?: boolean        // rôles non tranchés : ne pas nommer la dimension
+  mini?:  boolean
+  angle:  number
+  mainRect?:   boolean        // principale rectangulaire : coupes droites
+  branchRect?: boolean        // branche rectangulaire : coupe droite
+  lettreMain?: string         // lettre des cotes de la principale
+  lettreBranche?: string      // lettre de la cote de branche
+  // Dimension vue dans le plan du schéma : le diamètre en circulaire, la hauteur
+  // en rectangulaire — la largeur, vue de chant, se rappelle en légende.
+  dc_mm:  number              // conduit commun
+  db_mm?: number | null       // branche — null tant qu'elle n'est pas désignée
+  ds_mm?: number | null       // trajet droit amont — null de même
+  Qb?:    number | null
+  Qs?:    number | null
+  Qc?:    number | null
+}) {
   const f = (v: number) => +v.toFixed(1)
-  const dx = bx - ax, dy = by - ay, len = Math.sqrt(dx * dx + dy * dy) || 1
-  const px = (-dy / len) * amp, py = (dx / len) * amp
-  return `C ${f(ax+dx/3+px)} ${f(ay+dy/3+py)} ${f(ax+2*dx/3-px)} ${f(ay+2*dy/3-py)} ${bx} ${by}`
-}
 
-// ── Schémas SVG ───────────────────────────────────────────────────────────────
-
-// viewBox "100 140 360 390" identique à SingularityModal
-// Sens d'écoulement : droite → gauche (branche droite + collecteur horizontal)
-//                    haut → bas (branche latérale)
-// Géométrie :
-//   outer half = 50, inner half = 35, wall = 15
-//   Junction center (280, 395)
-//   Horizontal : outer y=[345,445], inner y=[360,430]
-//   Branch     : outer x=[230,330], inner x=[245,315], top y=170
-
-function SchemaTee90({ straightSegId, amontSegs, avalDi_mm, avalQ_m3h, alpha, mini, miniViewBox }: {
-  straightSegId: string | null
-  amontSegs: AmontSegInfo[]
-  avalDi_mm: number
-  avalQ_m3h: number
-  alpha: number
-  mini?: boolean
-  miniViewBox?: string
-}) {
-  const f    = (v: number) => +v.toFixed(1)
-  const fill = '#f1f5f9'
-  const strk = '#374151'
-  const jx   = 280, jy = 395, branchTopY = 175
-
-  const lateralSeg  = amontSegs.find(s => s.id !== straightSegId)
-  const straightSeg = amontSegs.find(s => s.id === straightSegId)
-
-  const Hr_di = straightSeg?.di_mm ?? avalDi_mm
-  const Hl_di = lateralSeg?.di_mm ?? avalDi_mm
-  const Hc = 55
-  const Hr = Math.round(Math.min(70, Math.max(15, (Hr_di / avalDi_mm) * Hc)))
-  const Hl = Math.round(Math.min(65, Math.max(15, (Hl_di / avalDi_mm) * Hc)))
-
-  // ── Géométrie : PARALLÉLOGRAMME, les deux parois obliques vers le haut-droit ──
-  const αRad = Math.max(30, Math.min(90, alpha)) * Math.PI / 180
-  const cosA = Math.cos(αRad), sinA = Math.sin(αRad)
-  const bLen = 165   // longueur de la branche (α=90° → bLen = jy-Hc-branchTopY)
-
-  // Les deux parois partent de (jx±Hl, jy-Hc) en direction (cosA, -sinA)
-  //   paroi gauche : toujours visible (ne sort pas du viewBox)
-  //   paroi droite : peut sortir à droite → clip visuel à x=CLIP_X (valeur libre)
-  const lOpX     = f(jx - Hl + bLen * cosA)
-  const lOpY     = f(jy - Hc - bLen * sinA)   // même y pour les deux parois (parallelogramme)
-  const CLIP_X   = 460
-  const rOpX_raw = jx + Hl + bLen * cosA
-  const isClipped = rOpX_raw > CLIP_X
-  const rOpX     = isClipped ? CLIP_X : f(rOpX_raw)
-  const rOpY     = isClipped
-    ? f(jy - Hc - (CLIP_X - jx - Hl) * sinA / cosA)
-    : lOpY
-
-  // ── Forme extérieure ──────────────────────────────────────────────────────────
-  const outerPath = [
-    `M 100 ${jy + Hc}`,
-    waveC(100, jy + Hc, 100, jy - Hc),
-    `L ${jx - Hl} ${jy - Hc}`,              // paroi sup. horizontale → pied gauche
-    `L ${lOpX} ${lOpY}`,                    // PAROI GAUCHE : oblique haut-droit
-    waveC(lOpX, lOpY, rOpX, rOpY),          // ouverture (horizontale ou clippée)
-    `L ${jx + Hl} ${jy - Hc}`,             // PAROI DROITE : oblique retour jonction
-    ...(Hr !== Hc ? [`L ${jx + Hl} ${jy - Hr}`] : []),  // contremarche sup. si diamètres différents
-    `L 460 ${jy - Hr}`,
-    waveC(460, jy - Hr, 460, jy + Hr),
-    `L ${jx} ${jy + Hr}`,
-    ...(Hr !== Hc ? [`L ${jx} ${jy + Hc}`] : []),
-    `L 100 ${jy + Hc}`,
-    'Z',
-  ].join(' ')
-
-  // ── Flèches ──────────────────────────────────────────────────────────────────
-  const arHalf    = 45
-  const arRCenter = Math.round((jx + Hl + 460) / 2)
-  const arRX1 = arRCenter + arHalf,  arRX2 = arRCenter - arHalf
-  const arLCenter = Math.round((100 + jx) / 2)
-  const arLX1 = arLCenter + arHalf,  arLX2 = arLCenter - arHalf
-
-  // Latérale : au centre géométrique de la branche (axe du parallélogramme à mi-longueur)
-  const arBCX   = f(jx + (bLen / 2) * cosA)
-  const arBCY   = f(jy - Hc - (bLen / 2) * sinA)
-  // Direction du flux : ouverture → jonction = (-cosA, +sinA)
-  const arBX1   = f(arBCX + arHalf * cosA)   // côté ouverture (tail)
-  const arBY1   = f(arBCY - arHalf * sinA)
-  const arBX2   = f(arBCX - arHalf * cosA)   // côté jonction (head)
-  const arBY2   = f(arBCY + arHalf * sinA)
-  // Pointe : perpendiculaire CW à la direction flux (-cosA, sinA) → (sinA, cosA)
-  const arBHead = [
-    `${f(arBX2 + 5 * sinA)},${f(arBY2 + 5 * cosA)}`,
-    `${f(arBX2 - 5 * sinA)},${f(arBY2 - 5 * cosA)}`,
-    `${f(arBX2 - 12 * cosA)},${f(arBY2 + 12 * sinA)}`,
-  ].join(' ')
-
-  // Débits
-  const topQ    = straightSegId !== null ? lateralSeg?.Q_m3h  : undefined
-  const rightQ  = straightSegId !== null ? straightSeg?.Q_m3h : undefined
-  // Label débit latéral : 7px à droite (perp. CW de la direction flux → (sinA, cosA))
-  const qBX     = f(arBCX + 7 * sinA)
-  const qBY_val = f(arBCY + 7 * cosA)
-
-  // ── Cotes latérales : barre 14px directement au-dessus des coins de l'ouverture ──
-  const lBarX = lOpX,          lBarY = f(lOpY - 14)   // à la verticale du coin gauche
-  const rBarX = rOpX,          rBarY = f(rOpY - 14)   // à la verticale du coin droit (clippé ou non)
-  // Ticks : toujours verticaux (±5 px en y uniquement)
-  const ltX1 = lBarX, ltY1 = f(lBarY - 5)
-  const ltX2 = lBarX, ltY2 = f(lBarY + 5)
-  const rtX1 = rBarX, rtY1 = f(rBarY - 5)
-  const rtX2 = rBarX, rtY2 = f(rBarY + 5)
-  // Label Ø : 12px au-dessus de la barre, centré horizontalement
-  const dimBX = (lBarX + (isClipped ? lBarX : rBarX)) / 2
-  const dimBY = f(lBarY - 12)
-
-  // ── Labels ───────────────────────────────────────────────────────────────────
-  const latLX     = isClipped ? f(rOpX - 8) : f(rOpX + 8 * sinA)
-  const latLY     = f(+rOpY - 8 * cosA + 4)
-  const latAnchor = isClipped ? 'end' : 'start'
-
-  // ── Arc indicateur d'angle α ─────────────────────────────────────────────
-  const arcR       = 28
-  const arcCX      = jx + Hl   // coin extérieur droit : entre la rectiligne et la latérale
-  const arcCY      = jy - Hr   // sommet de la branche rectiligne (pas du collecteur)
-  const arcStartX  = f(arcCX + arcR)
-  const arcStartY  = f(arcCY)
-  const arcEndX    = f(arcCX + arcR * cosA)
-  const arcEndY    = f(arcCY - arcR * sinA)
-  const bisRad     = (alpha / 2) * Math.PI / 180
-  const arcTxtX    = f(arcCX + (arcR + 14) * Math.cos(bisRad))
-  const arcTxtY    = f(arcCY - (arcR + 14) * Math.sin(bisRad))
-
-  return (
-    <svg viewBox={mini ? (miniViewBox ?? '100 140 360 390') : '100 140 360 390'}
-      width="100%" height="100%"
-      overflow={mini ? 'hidden' : 'visible'}
-      style={{ display: 'block' }}>
-
-      {/* Gaine */}
-      <path d={outerPath} fill={fill} stroke={strk} strokeWidth="2.5"
-        strokeLinejoin="round" strokeLinecap="round" />
-
-      {/* Axe horizontal */}
-      <line x1="100" y1={jy} x2="460" y2={jy}
-        stroke="#94a3b8" strokeWidth="0.6" strokeDasharray="4 3" opacity="0.55" />
-
-      {/* ── Flèches de flux ── */}
-      <line x1={arRX1} y1={jy} x2={arRX2} y2={jy}
-        stroke="#2563eb" strokeWidth="1.5" strokeDasharray="6 4" />
-      <polygon points={`${arRX2},${jy-5} ${arRX2},${jy+5} ${arRX2-12},${jy}`} fill="#2563eb" />
-
-      <line x1={arBX1} y1={arBY1} x2={arBX2} y2={arBY2}
-        stroke="#2563eb" strokeWidth="1.5" strokeDasharray="6 4" />
-      <polygon points={arBHead} fill="#2563eb" />
-
-      <line x1={arLX1} y1={jy} x2={arLX2} y2={jy}
-        stroke="#2563eb" strokeWidth="1.5" strokeDasharray="6 4" />
-      <polygon points={`${arLX2},${jy-5} ${arLX2},${jy+5} ${arLX2-12},${jy}`} fill="#2563eb" />
-
-      {!mini && <>
-      {/* ── Débits ── */}
-      <text x={arRCenter} y={jy - 11} textAnchor="middle" fontSize="9.5" fontWeight="700"
-        fill="#2563eb" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        {rightQ != null ? `${rightQ.toFixed(0)} m³/h` : '—'}
-      </text>
-      <text x={qBX} y={qBY_val} textAnchor="start" fontSize="9.5" fontWeight="700"
-        fill="#2563eb" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        {topQ != null ? `${topQ.toFixed(0)} m³/h` : '—'}
-      </text>
-      <text x={arLCenter} y={jy - 11} textAnchor="middle" fontSize="9.5" fontWeight="700"
-        fill="#2563eb" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        {avalQ_m3h.toFixed(0)} m³/h
-      </text>
-
-      {/* ── Labels rôles ── */}
-      <text x={latLX} y={latLY} textAnchor={latAnchor} fontSize="10.5" fill="#475569" fontStyle="italic">
-        Latéral
-      </text>
-      <text x={460} y={jy - Hr - 8} textAnchor="end" fontSize="11" fill="#475569" fontStyle="italic">
-        Rectiligne
-      </text>
-      <text x={100} y={jy - Hc - 8} textAnchor="start" fontSize="11" fill="#475569" fontStyle="italic">
-        collecteur
-      </text>
-
-      {/* ── Arc + label angle α ── */}
-      <path d={`M ${arcStartX} ${arcStartY} A ${arcR} ${arcR} 0 0 0 ${arcEndX} ${arcEndY}`}
-        fill="none" stroke="#374151" strokeWidth="1" />
-      <text x={arcTxtX} y={arcTxtY} textAnchor="middle" fontSize="12" fontWeight="600"
-        fill="#374151" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        {alpha}°
-      </text>
-
-      {/* ── Cotes Ø ── */}
-      {/* Collecteur */}
-      <line x1="81" y1={jy - Hc} x2="91" y2={jy - Hc} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1="81" y1={jy + Hc} x2="91" y2={jy + Hc} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1="86" y1={jy - Hc} x2="86" y2={jy + Hc} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-      <text x="79" y={jy + 4} textAnchor="end" fontSize="10" fill="#64748b">
-        Ø {avalDi_mm.toFixed(0)} mm
-      </text>
-      {/* Rectiligne */}
-      <line x1="469" y1={jy - Hr} x2="479" y2={jy - Hr} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1="469" y1={jy + Hr} x2="479" y2={jy + Hr} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1="474" y1={jy - Hr} x2="474" y2={jy + Hr} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-      <text x="481" y={jy + 4} textAnchor="start" fontSize="10" fill="#64748b">
-        {straightSeg ? `Ø ${straightSeg.di_mm.toFixed(0)} mm` : '—'}
-      </text>
-      {/* Latérale : ticks perpendiculaires à la branche, barre parallèle à l'ouverture */}
-      <line x1={ltX1} y1={ltY1} x2={ltX2} y2={ltY2} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      {!isClipped && <>
-        <line x1={rtX1} y1={rtY1} x2={rtX2} y2={rtY2} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-        <line x1={lBarX} y1={lBarY} x2={rBarX} y2={rBarY} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-      </>}
-      <text x={dimBX} y={dimBY} textAnchor="middle" fontSize="10" fill="#64748b">
-        {straightSegId !== null && lateralSeg ? `Ø ${lateralSeg.di_mm.toFixed(0)} mm` : ''}
-      </text>
-      </>}
-    </svg>
-  )
-}
-
-function SchemaWye({ amontSegs, avalDi_mm, avalQ_m3h, alpha, mini, miniViewBox }: {
-  amontSegs: AmontSegInfo[]
-  avalDi_mm: number
-  avalQ_m3h: number
-  alpha: number
-  mini?: boolean
-  miniViewBox?: string
-}) {
-  const f    = (v: number) => +v.toFixed(1)
-  const fill = '#f1f5f9'
-  const strk = '#374151'
-  const jx = 280, jy = 335
-
-  const seg0 = amontSegs[0]
-  const seg1 = amontSegs[1]
-
-  const Hc     = 55
-  const Hb_up  = Math.round(Math.min(65, Math.max(12, ((seg0?.di_mm ?? avalDi_mm) / avalDi_mm) * Hc)))
-  const Hb_lo  = Math.round(Math.min(65, Math.max(12, ((seg1?.di_mm ?? avalDi_mm) / avalDi_mm) * Hc)))
-  const Hb_ref = Math.round((Hb_up + Hb_lo) / 2)
-
-  const halfAlpha = alpha / 2   // alpha est l'angle total entre les deux branches
-  const αRad = Math.max(30, Math.min(90, halfAlpha)) * Math.PI / 180
-  const cosA = Math.cos(αRad), sinA = Math.sin(αRad)
-  const bLen = 110
-
-  // Pointe unique du V
-  const pX    = f(jx + Hb_ref - Hc / Math.tan(αRad))
-  const arcCX = pX
-
-  // Bases côté collecteur (y = jy ± Hc) :
-  //   paroi INT commune : x = jxIn  (les deux inner walls passent par pX en reculant)
-  //   paroi EXT décalée : jxIn − 2·Hb → ouverture horizontale de largeur 2·Hb ✓
-  const jxIn = jx + Hb_ref                  // base int. commune
-  const jxUp = jx + Hb_ref - 2 * Hb_up     // base ext. branche haute
-  const jxLo = jx + Hb_ref - 2 * Hb_lo     // base ext. branche basse
-
-  // Ouvertures — parallélogrammes, même y sur les deux coins → signe cote horizontal ✓
-  const lUpX = f(jxUp + bLen * cosA), lUpY = f(jy - Hc - bLen * sinA)
-  const rUpX = f(jxIn + bLen * cosA), rUpY = lUpY
-
-  const lLoX = f(jxLo + bLen * cosA), lLoY = f(jy + Hc + bLen * sinA)
-  const rLoX = f(jxIn + bLen * cosA), rLoY = lLoY
-
-  const outerPath = [
-    `M 100 ${jy + Hc}`,
-    waveC(100, jy + Hc, 100, jy - Hc),
-    `L ${jxUp} ${jy - Hc}`,                 // collecteur → base ext. haute
-    `L ${lUpX} ${lUpY}`,                     // paroi ext. branche haute
-    waveC(lUpX, lUpY, rUpX, rUpY),           // ouverture haute (horizontale, 2·Hb_up)
-    `L ${pX} ${jy}`,                          // paroi int. haute → pointe V
-    `L ${rLoX} ${rLoY}`,                      // paroi int. basse depuis pointe V
-    waveC(rLoX, rLoY, lLoX, lLoY),            // ouverture basse (horizontale, 2·Hb_lo)
-    `L ${jxLo} ${jy + Hc}`,                 // base ext. basse → collecteur
-    `L 100 ${jy + Hc}`,
-    'Z',
-  ].join(' ')
-
-  // Flèches
-  const arHalf = 38
-  const arCC   = Math.round((100 + Math.min(jxUp, jxLo)) / 2)
-
-  // Centre flèche : mi-largeur entre ext(jxUp/Lo) et int(jxIn), mi-longueur
-  const arUpCX = f((jxUp + jxIn) / 2 + (bLen / 2) * cosA)
-  const arUpCY = f(jy - Hc - (bLen / 2) * sinA)
-  const arUpX1 = f(arUpCX + arHalf * cosA), arUpY1 = f(arUpCY - arHalf * sinA)
-  const arUpX2 = f(arUpCX - arHalf * cosA), arUpY2 = f(arUpCY + arHalf * sinA)
-  const arUpHead = [
-    `${f(arUpX2 + 5 * sinA)},${f(arUpY2 + 5 * cosA)}`,
-    `${f(arUpX2 - 5 * sinA)},${f(arUpY2 - 5 * cosA)}`,
-    `${f(arUpX2 - 12 * cosA)},${f(arUpY2 + 12 * sinA)}`,
-  ].join(' ')
-
-  const arLoCX = f((jxLo + jxIn) / 2 + (bLen / 2) * cosA)
-  const arLoCY = f(jy + Hc + (bLen / 2) * sinA)
-  const arLoX1 = f(arLoCX + arHalf * cosA), arLoY1 = f(arLoCY + arHalf * sinA)
-  const arLoX2 = f(arLoCX - arHalf * cosA), arLoY2 = f(arLoCY - arHalf * sinA)
-  const arLoHead = [
-    `${f(arLoX2 - 5 * sinA)},${f(arLoY2 + 5 * cosA)}`,
-    `${f(arLoX2 + 5 * sinA)},${f(arLoY2 - 5 * cosA)}`,
-    `${f(arLoX2 - 12 * cosA)},${f(arLoY2 - 12 * sinA)}`,
-  ].join(' ')
-
-  // Labels débits
-  const qUpX = f(arUpCX + 7 * sinA), qUpY = f(arUpCY + 7 * cosA)
-  const qLoX = f(arLoCX + 7 * sinA), qLoY = f(arLoCY - 7 * cosA)
-
-  // Cotes Ø (barres horizontales au niveau des ouvertures)
-  const upCoteY = f(lUpY - 14)
-  const upDimX  = f((lUpX + rUpX) / 2)
-  const loCoteY = f(lLoY + 14)
-  const loDimX  = f((lLoX + rLoX) / 2)
-
-  // Arc + label pour l'angle total au point de convergence
-  const arcR = 22
-  const arcSX = f(arcCX + arcR * cosA), arcSY = f(jy - arcR * sinA)
-  const arcEX = arcSX,                  arcEY = f(jy + arcR * sinA)
-
-  return (
-    <svg viewBox={mini ? (miniViewBox ?? '100 140 360 390') : '100 140 360 390'}
-      width="100%" height="100%"
-      overflow={mini ? 'hidden' : 'visible'}
-      style={{ display: 'block' }}>
-
-      <path d={outerPath} fill={fill} stroke={strk} strokeWidth="2.5"
-        strokeLinejoin="round" strokeLinecap="round" />
-
-      {/* Axe horizontal */}
-      <line x1="100" y1={jy} x2={Math.min(jxUp, jxLo)} y2={jy}
-        stroke="#94a3b8" strokeWidth="0.6" strokeDasharray="4 3" opacity="0.55" />
-
-      {/* Flèche collecteur */}
-      <line x1={arCC + arHalf} y1={jy} x2={arCC - arHalf} y2={jy}
-        stroke="#2563eb" strokeWidth="1.5" strokeDasharray="6 4" />
-      <polygon
-        points={`${arCC - arHalf},${jy - 5} ${arCC - arHalf},${jy + 5} ${arCC - arHalf - 12},${jy}`}
-        fill="#2563eb" />
-
-      {/* Flèche branche haute */}
-      <line x1={arUpX1} y1={arUpY1} x2={arUpX2} y2={arUpY2}
-        stroke="#2563eb" strokeWidth="1.5" strokeDasharray="6 4" />
-      <polygon points={arUpHead} fill="#2563eb" />
-
-      {/* Flèche branche basse */}
-      <line x1={arLoX1} y1={arLoY1} x2={arLoX2} y2={arLoY2}
-        stroke="#2563eb" strokeWidth="1.5" strokeDasharray="6 4" />
-      <polygon points={arLoHead} fill="#2563eb" />
-
-      {!mini && <>
-      {/* Débits */}
-      <text x={arCC} y={jy - 11} textAnchor="middle" fontSize="9.5" fontWeight="700"
-        fill="#2563eb" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        {avalQ_m3h.toFixed(0)} m³/h
-      </text>
-      <text x={qUpX} y={qUpY} textAnchor="start" fontSize="9.5" fontWeight="700"
-        fill="#2563eb" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        {seg0?.Q_m3h != null ? `${seg0.Q_m3h.toFixed(0)} m³/h` : '—'}
-      </text>
-      <text x={qLoX} y={qLoY} textAnchor="start" fontSize="9.5" fontWeight="700"
-        fill="#2563eb" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        {seg1?.Q_m3h != null ? `${seg1.Q_m3h.toFixed(0)} m³/h` : '—'}
-      </text>
-
-      {/* Labels rôles */}
-      <text x={100} y={jy - Hc - 8} textAnchor="start" fontSize="11" fill="#475569" fontStyle="italic">
-        collecteur
-      </text>
-
-      {/* Arc + label angle total entre les branches */}
-      <path d={`M ${arcSX} ${arcSY} A ${arcR} ${arcR} 0 0 1 ${arcEX} ${arcEY}`}
-        fill="none" stroke="#374151" strokeWidth="1" />
-      <text x={f(arcCX + arcR + 5)} y={f(jy + 4)} textAnchor="start" fontSize="12" fontWeight="600"
-        fill="#374151" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        {alpha}°
-      </text>
-
-      {/* Cotes Ø */}
-      {/* Collecteur */}
-      <line x1="81" y1={jy - Hc} x2="91" y2={jy - Hc} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1="81" y1={jy + Hc} x2="91" y2={jy + Hc} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1="86" y1={jy - Hc} x2="86" y2={jy + Hc} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-      <text x="79" y={jy + 4} textAnchor="end" fontSize="10" fill="#64748b">
-        Ø {avalDi_mm.toFixed(0)} mm
-      </text>
-      {/* Branche haute */}
-      <line x1={lUpX} y1={f(upCoteY - 5)} x2={lUpX} y2={f(upCoteY + 5)}
-        stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1={rUpX} y1={f(upCoteY - 5)} x2={rUpX} y2={f(upCoteY + 5)}
-        stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1={lUpX} y1={upCoteY} x2={rUpX} y2={upCoteY}
-        stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-      <text x={upDimX} y={f(lUpY - 26)} textAnchor="middle" fontSize="10" fill="#64748b">
-        {seg0 ? `Ø ${seg0.di_mm.toFixed(0)} mm` : ''}
-      </text>
-      {/* Branche basse */}
-      <line x1={lLoX} y1={f(loCoteY - 5)} x2={lLoX} y2={f(loCoteY + 5)}
-        stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1={rLoX} y1={f(loCoteY - 5)} x2={rLoX} y2={f(loCoteY + 5)}
-        stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1={lLoX} y1={loCoteY} x2={rLoX} y2={loCoteY}
-        stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-      <text x={loDimX} y={f(lLoY + 28)} textAnchor="middle" fontSize="10" fill="#64748b">
-        {seg1 ? `Ø ${seg1.di_mm.toFixed(0)} mm` : ''}
-      </text>
-      </>}
-    </svg>
-  )
-}
-
-function SchemaWyeAsym({ branch1Seg, branch2Seg, avalDi_mm, avalQ_m3h, alpha1, alpha2, mini, miniViewBox }: {
-  branch1Seg: AmontSegInfo | undefined
-  branch2Seg: AmontSegInfo | undefined
-  avalDi_mm: number
-  avalQ_m3h: number
-  alpha1: number
-  alpha2: number
-  mini?: boolean
-  miniViewBox?: string
-}) {
-  const f    = (v: number) => +v.toFixed(1)
-  const fill = '#f1f5f9'
-  const strk = '#374151'
-  const jx = 280, jy = 335
-
-  const Hc     = 55
-  const Hb_up  = Math.round(Math.min(65, Math.max(12, ((branch1Seg?.di_mm ?? avalDi_mm) / avalDi_mm) * Hc)))
-  const Hb_lo  = Math.round(Math.min(65, Math.max(12, ((branch2Seg?.di_mm ?? avalDi_mm) / avalDi_mm) * Hc)))
-  const Hb_ref = Math.round((Hb_up + Hb_lo) / 2)
-
-  const α1Rad = Math.max(15, Math.min(90, alpha1)) * Math.PI / 180
-  const α2Rad = Math.max(15, Math.min(90, alpha2)) * Math.PI / 180
-  const cosA1 = Math.cos(α1Rad), sinA1 = Math.sin(α1Rad)
-  const cosA2 = Math.cos(α2Rad), sinA2 = Math.sin(α2Rad)
-  const bLen = 110
-
-  const jxIn = jx + Hb_ref
-  const jxUp = jxIn - 2 * Hb_up
-  const jxLo = jxIn - 2 * Hb_lo
-
-  // Pointe : intersection des parois internes des deux branches
-  const denom = cosA2 * (sinA1 / cosA1) + sinA2
-  const s2    = denom > 0 ? 2 * Hc / denom : Hc / sinA2
-  const tipX  = f(jxIn - s2 * cosA2)
-  const tipY  = f(jy + Hc - s2 * sinA2)
-
-  const lUpX = f(jxUp + bLen * cosA1), lUpY = f(jy - Hc - bLen * sinA1)
-  const rUpX = f(jxIn + bLen * cosA1), rUpY = lUpY
-  const lLoX = f(jxLo + bLen * cosA2), lLoY = f(jy + Hc + bLen * sinA2)
-  const rLoX = f(jxIn + bLen * cosA2), rLoY = lLoY
-
-  const outerPath = [
-    `M 100 ${jy + Hc}`,
-    waveC(100, jy + Hc, 100, jy - Hc),
-    `L ${jxUp} ${jy - Hc}`,
-    `L ${lUpX} ${lUpY}`,
-    waveC(lUpX, lUpY, rUpX, rUpY),
-    `L ${tipX} ${tipY}`,
-    `L ${rLoX} ${rLoY}`,
-    waveC(rLoX, rLoY, lLoX, lLoY),
-    `L ${jxLo} ${jy + Hc}`,
-    `L 100 ${jy + Hc}`,
-    'Z',
-  ].join(' ')
-
-  // Flèches
-  const arHalf = 38
-  const arCC   = Math.round((100 + Math.min(jxUp, jxLo)) / 2)
-  const arUpCX = f((jxUp + jxIn) / 2 + (bLen / 2) * cosA1)
-  const arUpCY = f(jy - Hc - (bLen / 2) * sinA1)
-  const arUpX1 = f(arUpCX + arHalf * cosA1), arUpY1 = f(arUpCY - arHalf * sinA1)
-  const arUpX2 = f(arUpCX - arHalf * cosA1), arUpY2 = f(arUpCY + arHalf * sinA1)
-  const arUpHead = [
-    `${f(arUpX2 + 5 * sinA1)},${f(arUpY2 + 5 * cosA1)}`,
-    `${f(arUpX2 - 5 * sinA1)},${f(arUpY2 - 5 * cosA1)}`,
-    `${f(arUpX2 - 12 * cosA1)},${f(arUpY2 + 12 * sinA1)}`,
-  ].join(' ')
-  const arLoCX = f((jxLo + jxIn) / 2 + (bLen / 2) * cosA2)
-  const arLoCY = f(jy + Hc + (bLen / 2) * sinA2)
-  const arLoX1 = f(arLoCX + arHalf * cosA2), arLoY1 = f(arLoCY + arHalf * sinA2)
-  const arLoX2 = f(arLoCX - arHalf * cosA2), arLoY2 = f(arLoCY - arHalf * sinA2)
-  const arLoHead = [
-    `${f(arLoX2 - 5 * sinA2)},${f(arLoY2 + 5 * cosA2)}`,
-    `${f(arLoX2 + 5 * sinA2)},${f(arLoY2 - 5 * cosA2)}`,
-    `${f(arLoX2 - 12 * cosA2)},${f(arLoY2 - 12 * sinA2)}`,
-  ].join(' ')
-
-  // Arcs angle au niveau de la pointe
-  const arcR   = 20
-  const arcUpSX = f(+tipX + arcR), arcUpSY = f(+tipY)
-  const arcUpEX = f(+tipX + arcR * cosA1), arcUpEY = f(+tipY - arcR * sinA1)
-  const arcLoSX = arcUpSX, arcLoSY = arcUpSY
-  const arcLoEX = f(+tipX + arcR * cosA2), arcLoEY = f(+tipY + arcR * sinA2)
-  const bis1 = alpha1 / 2 * Math.PI / 180
-  const bis2 = alpha2 / 2 * Math.PI / 180
-  const arcUpTX = f(+tipX + (arcR + 14) * Math.cos(bis1))
-  const arcUpTY = f(+tipY - (arcR + 14) * Math.sin(bis1))
-  const arcLoTX = f(+tipX + (arcR + 14) * Math.cos(bis2))
-  const arcLoTY = f(+tipY + (arcR + 14) * Math.sin(bis2))
-
-  const upCoteY = f(lUpY - 14), loCoteY = f(lLoY + 14)
-  const upDimX  = f((lUpX + rUpX) / 2), loDimX = f((lLoX + rLoX) / 2)
-
-  return (
-    <svg viewBox={mini ? (miniViewBox ?? '100 140 360 390') : '100 140 360 390'}
-      width="100%" height="100%"
-      overflow={mini ? 'hidden' : 'visible'}
-      style={{ display: 'block' }}>
-
-      <path d={outerPath} fill={fill} stroke={strk} strokeWidth="2.5"
-        strokeLinejoin="round" strokeLinecap="round" />
-
-      <line x1="100" y1={jy} x2={Math.min(jxUp, jxLo)} y2={jy}
-        stroke="#94a3b8" strokeWidth="0.6" strokeDasharray="4 3" opacity="0.55" />
-
-      <line x1={arCC + arHalf} y1={jy} x2={arCC - arHalf} y2={jy}
-        stroke="#2563eb" strokeWidth="1.5" strokeDasharray="6 4" />
-      <polygon points={`${arCC - arHalf},${jy - 5} ${arCC - arHalf},${jy + 5} ${arCC - arHalf - 12},${jy}`} fill="#2563eb" />
-      <line x1={arUpX1} y1={arUpY1} x2={arUpX2} y2={arUpY2} stroke="#2563eb" strokeWidth="1.5" strokeDasharray="6 4" />
-      <polygon points={arUpHead} fill="#2563eb" />
-      <line x1={arLoX1} y1={arLoY1} x2={arLoX2} y2={arLoY2} stroke="#2563eb" strokeWidth="1.5" strokeDasharray="6 4" />
-      <polygon points={arLoHead} fill="#2563eb" />
-
-      {!mini && <>
-      <text x={arCC} y={jy - 11} textAnchor="middle" fontSize="9.5" fontWeight="700"
-        fill="#2563eb" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        {avalQ_m3h.toFixed(0)} m³/h
-      </text>
-      <text x={f(arUpCX + 7 * sinA1)} y={f(arUpCY + 7 * cosA1)} textAnchor="start" fontSize="9.5" fontWeight="700"
-        fill="#2563eb" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        {branch1Seg?.Q_m3h != null ? `${branch1Seg.Q_m3h.toFixed(0)} m³/h` : '—'}
-      </text>
-      <text x={f(arLoCX + 7 * sinA2)} y={f(arLoCY - 7 * cosA2)} textAnchor="start" fontSize="9.5" fontWeight="700"
-        fill="#2563eb" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        {branch2Seg?.Q_m3h != null ? `${branch2Seg.Q_m3h.toFixed(0)} m³/h` : '—'}
-      </text>
-      <text x={100} y={jy - Hc - 8} textAnchor="start" fontSize="11" fill="#475569" fontStyle="italic">collecteur</text>
-
-      {/* Ligne de référence horizontale — base commune des deux arcs */}
-      <line x1={f(+tipX - 5)} y1={tipY} x2={f(+tipX + arcR + 28)} y2={tipY}
-        stroke="#94a3b8" strokeWidth="1" strokeDasharray="4 3" />
-
-      {/* Arcs angles α1 et α2 */}
-      <path d={`M ${arcUpSX} ${arcUpSY} A ${arcR} ${arcR} 0 0 0 ${arcUpEX} ${arcUpEY}`}
-        fill="none" stroke="#374151" strokeWidth="1" />
-      <text x={arcUpTX} y={arcUpTY} textAnchor="middle" fontSize="11" fontWeight="600"
-        fill="#374151" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        α1={alpha1}°
-      </text>
-      <path d={`M ${arcLoSX} ${arcLoSY} A ${arcR} ${arcR} 0 0 1 ${arcLoEX} ${arcLoEY}`}
-        fill="none" stroke="#374151" strokeWidth="1" />
-      <text x={arcLoTX} y={arcLoTY} textAnchor="middle" fontSize="11" fontWeight="600"
-        fill="#374151" paintOrder="stroke" stroke="white" strokeWidth="3" strokeLinejoin="round">
-        α2={alpha2}°
-      </text>
-
-      {/* Cotes Ø collecteur */}
-      <line x1="81" y1={jy - Hc} x2="91" y2={jy - Hc} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1="81" y1={jy + Hc} x2="91" y2={jy + Hc} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1="86" y1={jy - Hc} x2="86" y2={jy + Hc} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-      <text x="79" y={jy + 4} textAnchor="end" fontSize="10" fill="#64748b">Ø {avalDi_mm.toFixed(0)} mm</text>
-      {/* Branche 1 (haute) */}
-      <line x1={lUpX} y1={f(upCoteY - 5)} x2={lUpX} y2={f(upCoteY + 5)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1={rUpX} y1={f(upCoteY - 5)} x2={rUpX} y2={f(upCoteY + 5)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1={lUpX} y1={upCoteY} x2={rUpX} y2={upCoteY} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-      <text x={upDimX} y={f(lUpY - 26)} textAnchor="middle" fontSize="10" fill="#64748b">
-        {branch1Seg ? `Ø ${branch1Seg.di_mm.toFixed(0)} mm` : ''}
-      </text>
-      {/* Branche 2 (basse) */}
-      <line x1={lLoX} y1={f(loCoteY - 5)} x2={lLoX} y2={f(loCoteY + 5)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1={rLoX} y1={f(loCoteY - 5)} x2={rLoX} y2={f(loCoteY + 5)} stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1={lLoX} y1={loCoteY} x2={rLoX} y2={loCoteY} stroke="#64748b" strokeWidth="1" strokeLinecap="round" />
-      <text x={loDimX} y={f(lLoY + 28)} textAnchor="middle" fontSize="10" fill="#64748b">
-        {branch2Seg ? `Ø ${branch2Seg.di_mm.toFixed(0)} mm` : ''}
-      </text>
-      </>}
-    </svg>
-  )
-}
-
-// ── Type cards ────────────────────────────────────────────────────────────────
-
-const TYPE_ORDER: CircJunctionType[] = ['tee-oblique', 'wye-symetrique', 'wye-asymetrique']
-
-function TypeCard({ type, selected, onClick }: {
-  type: CircJunctionType; selected: boolean; onClick: () => void
-}) {
-  const miniSchemas: Record<CircJunctionType, ReactElement> = {
-    'tee-oblique':     <SchemaTee90 straightSegId={null} amontSegs={[]} avalDi_mm={200} avalQ_m3h={500} alpha={90} mini miniViewBox="90 158 380 318" />,
-    'wye-symetrique':  <SchemaWye amontSegs={[]} avalDi_mm={200} avalQ_m3h={500} alpha={90} mini miniViewBox="80 190 400 285" />,
-    'wye-asymetrique': <SchemaWyeAsym branch1Seg={undefined} branch2Seg={undefined} avalDi_mm={200} avalQ_m3h={500} alpha1={45} alpha2={30} mini miniViewBox="80 190 400 285" />,
+  // Rapports réels des diamètres, bornés en bas : sous un tiers la branche ne
+  // serait plus qu'un trait. Le schéma illustre la pièce, il n'est pas à
+  // l'échelle — l'angle tracé, lui, vaut toujours exactement θ.
+  // Tant que les rôles ne sont pas tranchés, les deux diamètres amont sont
+  // inconnus : le dessin en prend un de convention, le même pour les deux, assez
+  // inférieur au commun pour que le cône et ses diagonales se voient.
+  const rap = (d?: number | null) => d != null && dc_mm > 0
+    ? Math.min(1, Math.max(0.30, d / dc_mm)) : defRatio
+  /** Texte d'une cote. Tant que les rôles ne sont pas tranchés sur une gaine
+   *  rectangulaire, la cote ne nomme pas sa dimension : écrire H ou L
+   *  trancherait un plan de coupe que rien n'a encore fixé. */
+  const cotxt = (L: string, ind: string, v?: number | null) =>
+    sansLettre ? (v != null ? `${Math.round(v)} mm` : '')
+      : v != null ? `${L}${ind} = ${Math.round(v)} mm`
+      : L === 'D' ? `${L}${ind}` : ''
+  const hc = 50, hb = 50 * rap(db_mm), hs = 50 * rap(ds_mm)
+  // Deux façons de raccorder un trajet droit plus étroit que le commun : le
+  // centrer sur l'axe, et le raccord s'évase des deux côtés ; ou aligner sa paroi
+  // haute sur celle du commun, et tout l'apport se fait par le bas, là où la
+  // branche arrive. C'est ce second tracé qu'appellent les sections compensées,
+  // où la branche complète exactement le trajet droit.
+  const off = hautPlat ? hs - hc : 0    // décalage de l'axe du trajet droit
+  const ysT = -hs + off                 // paroi haute du trajet droit
+  const ysB =  hs + off                 // paroi basse, d'où part le cône
+
+  const th = Math.max(5, Math.min(90, angle)) * Math.PI / 180
+  const ct = Math.cos(th), st = Math.sin(th)
+  // Axe de la branche, orienté depuis le nœud vers son extrémité libre, et sa
+  // normale. À 90° il descend tout droit, à 30° il fuit vers l'amont.
+  const wx = -ct, wy = st
+  const px = -st, py = -ct
+
+  // Le cône occupe le corps du raccord : il part de xA, où finit la partie droite
+  // amont, et sa demi-hauteur passe de hs à hc sur sa longueur. L'ouverture de la
+  // fourche vaut 2·hb/(sin θ + k·cos θ) — la coupe d'un cylindre par un plan
+  // incliné —, d'où une longueur de cône qui la contient avec une marge de part
+  // et d'autre. k dépend de cette longueur : quelques itérations la fixent.
+  const arm = 66, pad = 26
+  const dH = hc - ysB
+  let Lc = 150
+  for (let n = 0; n < 24; n++) Lc = 2 * hb / (st + (dH / Lc) * ct) + 2 * pad
+  const k  = dH / Lc                   // pente de la demi-hauteur
+  const R  = st + k * ct
+  const xA = arm, xB = xA + Lc
+  const coneY = (x: number) => ysB + (x - xA) * k  // paroi basse du cône
+
+  // Nœud placé pour que la fourche soit centrée dans le cône.
+  const xJ = ((xA + Lc / 2) * R + ct * (ysB - k * xA)) / st
+  /** Rencontre d'une paroi de branche avec la paroi basse : sg = +1 côté amont
+   *  (la longue), sg = −1 côté aval. */
+  const rencontre = (sg: number) => {
+    const sq = (ysB + k * (xJ - xA) + sg * hb * (ct - k * st)) / R
+    return { s: sq, x: xJ - sg * hb * st - sq * ct }
   }
+  const mUp = rencontre(1), mDn = rencontre(-1)
+  const xP = mUp.x, yP = coneY(xP)     // ouverture, côté amont
+  const xM = mDn.x, yM = coneY(xM)     // ouverture, côté aval
+  const Lb = mUp.s + arm               // longueur de branche dessinée
+  const xEnd = xB + arm
+
+  // Extrémité libre de la branche : son axe, puis ses deux coins.
+  const ex = xJ + Lb * wx, ey = Lb * wy
+  const c1x = ex + hb * px, c1y = ey + hb * py   // côté paroi amont
+  const c2x = ex - hb * px, c2y = ey - hb * py   // côté paroi aval
+
+  // Cadrage — mêmes marges d'annotation que les transitions : les cotes de
+  // diamètre débordent à gauche et à droite, celle de la branche par le bas.
+  const annL = mini ? 0 : 62, annR = mini ? 0 : 62
+  const annT = mini ? 4 : 16, annB = mini ? 4 : 46
+  const xmin = Math.min(0, c1x, c2x), xmax = Math.max(xEnd, c1x, c2x)
+  const ymin = Math.min(-hc, ysT), ymax = Math.max(hc, ysB, c1y, c2y)
+  const contentH = (ymax - ymin) + annT + annB
+  const VW = 500, M = 16
+  /** Cadrage pour une réserve donnée à droite. */
+  const cadre = (resR: number) => {
+    const cW  = (xmax - xmin) + annL + annR + resR
+    const vh  = Math.max(150, Math.min(420, (VW - 2 * M) * contentH / cW + 2 * M))
+    return { cW, vh, s: Math.min((VW - 2 * M) / cW, (vh - 2 * M) / contentH) }
+  }
+  // Étiquette de débit de la branche, posée à droite de sa flèche : elle sort du
+  // dessin utile, il faut donc lui réserver la place avant de figer l'échelle.
+  const long = (l: string[]) => Math.max(...l.map(s => s.length))
+  const lB   = [Qb != null && isFinite(Qb) ? `Qb = ${Math.round(Qb)} m³/h` : 'Qb']
+  const sMid = (hc / st + Lb) / 2                      // milieu de la partie libre
+  const bMx  = xJ + sMid * wx, bMy = sMid * wy
+  // Dégagement horizontal de la flèche : ses barbes s'écartent de 7 de part et
+  // d'autre de l'axe, soit 7/sin θ en projection horizontale.
+  const degB  = 7 / st + 6
+  const s0    = cadre(0).s
+  const larg  = (s: number) => 0.55 * Math.max(8.5, Math.min(12, 1.5 * arm * s / (0.55 * long(lB))))
+    * long(lB) / s
+  const resB  = mini ? 0 : Math.max(0, bMx + degB + larg(s0) - xEnd)
+  const { cW: contentW, vh: VH, s: scl } = cadre(resB)
+  const tx  = M + ((VW - 2 * M) - contentW * scl) / 2 + (annL - xmin) * scl
+  const ty  = M + ((VH - 2 * M) - contentH * scl) / 2 + (annT - ymin) * scl
+  const vx  = (wxx: number) => +(tx + wxx * scl).toFixed(1)
+  const vy  = (wyy: number) => +(ty + wyy * scl).toFixed(1)
+  const sw  = mini ? f(0.05 * 2 * hc * scl) : 3
+
+  // Silhouette fermée. Les trois extrémités sont des coupes de gaine ronde :
+  // elles se dessinent ondulées, une arête droite se lisant justement comme une
+  // gaine rectangulaire vue de profil.
+  const coupe = (ax: number, ay: number, bx: number, by: number, h: number,
+                 droite = false) =>
+    droite ? `L ${bx} ${by}` : waveC(ax, ay, bx, by, 0.125 * 2 * h * scl)
+  const d = [
+    `M ${vx(0)} ${vy(ysT)}`,
+    `L ${vx(xA)} ${vy(ysT)}`,
+    `L ${vx(xB)} ${vy(-hc)}`,
+    `L ${vx(xEnd)} ${vy(-hc)}`,
+    coupe(vx(xEnd), vy(-hc), vx(xEnd), vy(hc), hc, mainRect),
+    `L ${vx(xB)} ${vy(hc)}`,
+    `L ${vx(xM)} ${vy(yM)}`,
+    `L ${vx(c2x)} ${vy(c2y)}`,
+    coupe(vx(c2x), vy(c2y), vx(c1x), vy(c1y), hb, branchRect),
+    `L ${vx(xP)} ${vy(yP)}`,
+    `L ${vx(xA)} ${vy(ysB)}`,
+    `L ${vx(0)} ${vy(ysB)}`,
+    coupe(vx(0), vy(ysB), vx(0), vy(ysT), hs, mainRect),
+    'Z',
+  ].join(' ')
+
+  const ann = '#64748b'
+
+  /** Flèche de sens d'écoulement, pointe en (bx, by). Fût interrompu à la base
+   *  du triangle, qu'il ne traverse pas. */
+  const arrow = (ax: number, ay: number, bx: number, by: number) => {
+    const dx = bx - ax, dy = by - ay, l = Math.hypot(dx, dy) || 1
+    const ux = dx / l, uy = dy / l
+    const kx = bx - 14 * ux, ky = by - 14 * uy
+    return <>
+      <line x1={vx(ax)} y1={vy(ay)} x2={vx(kx)} y2={vy(ky)} stroke={ann} strokeWidth="1.5" />
+      <path fill={ann} d={`M ${vx(bx)} ${vy(by)} L ${vx(kx - 7 * uy)} ${vy(ky + 7 * ux)} `
+        + `L ${vx(kx + 7 * uy)} ${vy(ky - 7 * ux)} Z`} />
+    </>
+  }
+
+  // Étiquettes : le corps se règle sur la largeur disponible — une moitié de
+  // gaine — de sorte que deux étiquettes voisines ne puissent jamais se toucher.
+  const fsOf = (l: string[], avail: number) =>
+    Math.max(8.5, Math.min(12, avail * scl / (0.55 * long(l))))
+  const texte = (X: number, Y: number, l: string[], avail: number) => {
+    const fz = fsOf(l, avail)
+    return (
+      <text x={X} y={f(Y - (l.length - 1) * 0.55 * fz)} fontSize={f(fz)} fill={ann}
+        textAnchor="middle" dominantBaseline="middle" fontStyle="italic"
+        paintOrder="stroke" stroke="white" strokeWidth="4">
+        {l.map((s, i) => <tspan key={i} x={X} dy={i === 0 ? 0 : f(1.15 * fz)}>{s}</tspan>)}
+      </text>
+    )
+  }
+  const lignes = (t: string, q?: number | null) =>
+    [q != null && isFinite(q) ? `${t} = ${Math.round(q)} m³/h` : t]
+
+  /** Cote de diamètre, perpendiculaire à une coupe. (A, B) sont les deux coins
+   *  de la coupe, (nx, ny) la normale sortante. Même dessin que les cotes de
+   *  section des transitions, mais orientable : la coupe de branche est inclinée. */
+  const cote = (Ax: number, Ay: number, Bx: number, By: number,
+                nx: number, ny: number, txt: string) => {
+    const [ax, ay] = [vx(Ax), vy(Ay)], [bx, by] = [vx(Bx), vy(By)]
+    const o = (k: number, X: number, Y: number): [number, number] =>
+      [+(X + k * nx).toFixed(1), +(Y + k * ny).toFixed(1)]
+    const t1 = 6 * scl, t2 = 22 * scl, td = 14 * scl
+    const [a6, a6y] = o(t1, ax, ay), [a2, a2y] = o(t2, ax, ay)
+    const [b6, b6y] = o(t1, bx, by), [b2, b2y] = o(t2, bx, by)
+    const [d1, d1y] = o(td, ax, ay), [d2, d2y] = o(td, bx, by)
+    const [lx, ly] = o(td + 15, (ax + bx) / 2, (ay + by) / 2)
+    // Le texte suit la coupe, jamais tête en bas.
+    let rot = Math.atan2(by - ay, bx - ax) * 180 / Math.PI
+    if (rot > 90) rot -= 180
+    if (rot < -90) rot += 180
+    return <>
+      <line x1={a6} y1={a6y} x2={a2} y2={a2y} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+      <line x1={b6} y1={b6y} x2={b2} y2={b2y} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+      <line x1={d1} y1={d1y} x2={d2} y2={d2y} stroke={ann} strokeWidth="1" strokeLinecap="round" />
+      <text x={lx} y={ly} fontSize="13" fill={ann}
+        textAnchor="middle" dominantBaseline="middle" fontStyle="italic"
+        paintOrder="stroke" stroke="white" strokeWidth="4"
+        transform={`rotate(${f(rot)}, ${lx}, ${ly})`}>{txt}</text>
+    </>
+  }
+
+  // Cote de l'angle : arc centré sur le nœud, entre l'axe de la principale pris
+  // vers l'amont et l'axe de la branche. Le rayon s'éloigne quand θ se ferme,
+  // pour garder une longueur d'arc lisible à l'écran, sans jamais sortir de la
+  // branche dessinée.
+  const rA    = Math.min(0.86 * Lb, Math.max(0.34 * hc, 46 / scl / th))
+  const aBarb = Math.min(7, 0.34 * rA * th * scl)
+  const bix = -1 + wx, biy = wy                 // bissectrice du secteur
+  const bil = Math.hypot(bix, biy) || 1
+  const aLd = rA + 24 / scl
+
+  /** Pointe de flèche en (X, Y), ouverte vers l'arrière de (ux, uy). */
+  const barb = (X: number, Y: number, ux: number, uy: number, aw = 7) => {
+    const bx = -ux, by = -uy, aa = Math.PI / 6
+    const p = (s: number) => [
+      +(X + aw * (bx * Math.cos(s) - by * Math.sin(s))).toFixed(1),
+      +(Y + aw * (bx * Math.sin(s) + by * Math.cos(s))).toFixed(1),
+    ]
+    const [a1x, a1y] = p(aa), [a2x, a2y] = p(-aa)
+    return <>
+      <line x1={X} y1={Y} x2={a1x} y2={a1y} stroke={ann} strokeWidth="1.2" strokeLinecap="round" />
+      <line x1={X} y1={Y} x2={a2x} y2={a2y} stroke={ann} strokeWidth="1.2" strokeLinecap="round" />
+    </>
+  }
+
+  // Étiquette de la branche : contre sa flèche, à droite et à la même hauteur.
+  // Elle est plus large que la branche n'est épaisse, donc elle en déborde ; son
+  // halo blanc interrompt proprement la paroi, comme pour les cotes.
+  const avB  = 1.5 * arm
+  const xQb  = bMx + degB + 0.55 * fsOf(lB, avB) * long(lB) / (2 * scl)
+  // Débits de la principale : posés juste au-dessus de leur flèche, dans la
+  // gaine. Chacun dispose d'une moitié de dessin, ce qui empêche les deux de se
+  // rejoindre ; recentré au besoin pour ne pas déborder de l'extrémité.
+  const avM  = 0.44 * xEnd
+  const lS = lignes('Qs', Qs), lC = lignes('Qc', Qc)
+  const demi = (l: string[]) => 0.55 * fsOf(l, avM) * long(l) / (2 * scl)
+  const xQs  = Math.max(0.5 * (12 + 12 + 0.62 * arm), demi(lS))
+  const xQc  = Math.min(xEnd - 0.42 * arm, xEnd - demi(lC))
+  const yLblS = f(vy(off) - 16), yLblC = f(vy(0) - 16)
+
   return (
-    <button onClick={onClick} style={{
+    <svg viewBox={`0 0 ${VW} ${f(VH)}`} width="100%" height="100%"
+      style={{ display: 'block' }} overflow="visible">
+      <path d={d} fill="#f1f5f9" stroke="#374151" strokeWidth={sw}
+        strokeLinejoin="round" strokeLinecap="round" />
+      {/* Début et fin du cône : les deux sections où se lisent Ds et Dc. Rien à
+          marquer sur collecteur cylindrique, où il n'y a pas de diagonale. */}
+      {Math.abs(hc - hs) > 0.5 && (() => {
+        // Dans la vignette, le viewBox est réduit d'environ cinq fois : un trait
+        // de 1,2 y tomberait sous le pixel et s'afficherait gris pâle. Il se cale
+        // donc sur l'épaisseur du contour, comme tout le reste du dessin.
+        const w = mini ? f(0.6 * sw) : 1.2
+        return <>
+          <line x1={vx(xA)} y1={vy(ysT)} x2={vx(xA)} y2={vy(ysB)}
+            stroke="#374151" strokeWidth={w} strokeLinecap="round" />
+          <line x1={vx(xB)} y1={vy(-hc)} x2={vx(xB)} y2={vy(hc)}
+            stroke="#374151" strokeWidth={w} strokeLinecap="round" />
+        </>
+      })()}
+      {!mini && <>
+        {/* Angle θ entre l'axe amont de la principale et celui de la branche.
+            Les deux directions mesurées sont rappelées en pointillé, sans quoi
+            l'arc flotterait sans référence. */}
+        <line x1={vx(xJ)} y1={vy(0)} x2={vx(xJ - rA - 12 / scl)} y2={vy(0)}
+          stroke="#94a3b8" strokeWidth="1" strokeDasharray="5 4" strokeLinecap="round" />
+        <line x1={vx(xJ)} y1={vy(0)} x2={vx(xJ + (rA + 12 / scl) * wx)} y2={vy((rA + 12 / scl) * wy)}
+          stroke="#94a3b8" strokeWidth="1" strokeDasharray="5 4" strokeLinecap="round" />
+        <path d={`M ${vx(xJ - rA)} ${vy(0)} A ${f(rA * scl)} ${f(rA * scl)} 0 0 0 `
+          + `${vx(xJ + rA * wx)} ${vy(rA * wy)}`}
+          stroke={ann} strokeWidth="1.2" fill="none" strokeLinecap="round" />
+        {/* Pointes tournées vers l'extérieur de l'arc : opposée au sens de
+            parcours au départ, dans son sens à l'arrivée. */}
+        {barb(vx(xJ - rA), vy(0), 0, -1, aBarb)}
+        {barb(vx(xJ + rA * wx), vy(rA * wy), wy, -wx, aBarb)}
+        <text x={vx(xJ + aLd * bix / bil)} y={vy(aLd * biy / bil)} fontSize="13" fill={ann}
+          textAnchor="middle" dominantBaseline="middle" fontStyle="italic"
+          paintOrder="stroke" stroke="white" strokeWidth="4">θ = {angle}°</text>
+
+        {/* Sens d'écoulement : les deux arrivées convergent vers le commun */}
+        {arrow(12, off, 12 + 0.62 * arm, off)}
+        {texte(vx(xQs), yLblS, lS, avM)}
+        {arrow(bMx + 0.30 * arm * wx, bMy + 0.30 * arm * wy,
+               bMx - 0.30 * arm * wx, bMy - 0.30 * arm * wy)}
+        {texte(vx(xQb), vy(bMy), lB, avB)}
+        {arrow(xEnd - 0.72 * arm, 0, xEnd - 12, 0)}
+        {texte(vx(xQc), yLblC, lC, avM)}
+
+        {/* Diamètres des trois extrémités */}
+        {cote(0, ysT, 0, ysB, -1, 0, cotxt(lettreMain, 's', ds_mm))}
+        {cote(xEnd, -hc, xEnd, hc, 1, 0, cotxt(lettreMain, 'c', dc_mm))}
+        {cote(c1x, c1y, c2x, c2y, wx, wy, cotxt(lettreBranche, 'b', db_mm))}
+      </>}
+    </svg>
+  )
+}
+
+// ── Schéma ASHRAE 5-6 — té convergent rectangulaire, vue de profil ──────────
+// Le trajet droit entre à gauche, le conduit commun repart à droite, la branche
+// arrive par en dessous — même orientation que les raccords ronds.
+//
+// La principale n'a pas de cône : sa paroi haute est droite d'un bout à l'autre
+// et tout changement de section se lit sur la paroi basse. La branche, elle,
+// tourne de 90° vers la droite sur un rayon de gorge r = wb, condition de
+// géométrie du fitting (r/wb = 1) : elle rejoint donc le commun dans son sens
+// d'écoulement, sa paroi intérieure devenant la paroi basse du commun.
+function SchemaTee56({
+  mini, lettre = 'H', sansLettre, hc_mm, hb_mm, hs_mm, Qb, Qs, Qc,
+}: {
+  mini?:   boolean
+  lettre?: 'H' | 'L'          // dimension vue dans le plan de courbure
+  sansLettre?: boolean        // rôles non tranchés : ne pas nommer la dimension
+  // Dimensions dans ce plan ; celle vue de chant se rappelle en légende.
+  hc_mm:  number              // conduit commun
+  hb_mm?: number | null       // branche — null tant qu'elle n'est pas désignée
+  hs_mm?: number | null       // trajet droit amont — null de même
+  Qb?:    number | null
+  Qs?:    number | null
+  Qc?:    number | null
+}) {
+  const f = (v: number) => +v.toFixed(1)
+
+  // Hauteurs dessinées, bornées en bas : sous un tiers la branche ne serait plus
+  // qu'un trait. Tant que les rôles ne sont pas tranchés, les deux entrants
+  // prennent la même valeur de convention.
+  // Faute de rôles désignés, les trois conduits prennent la même dimension : le
+  // dessin ne suggère alors aucun rapport de sections qu'on ne connaît pas encore.
+  const rap = (d: number | null | undefined, def: number) => d != null && hc_mm > 0
+    ? Math.min(1, Math.max(0.30, d / hc_mm)) : def
+  const hc = 50, hb = 50 * rap(hb_mm, 1)
+  /** Sans valeur connue, la cote ne nomme pas sa dimension : écrire H ou L
+   *  trancherait un plan de coupe que rien n'a encore fixé. */
+  const cotxt = (ind: string, v?: number | null) =>
+    v == null ? '' : sansLettre ? `${Math.round(v)} mm`
+      : `${lettre}${ind} = ${Math.round(v)} mm`
+  // La paroi extérieure du coude doit pouvoir rejoindre la paroi basse amont :
+  // il y faut Hs + Hb ≥ Hc. Le cas contraire — un commun plus haut que ses deux
+  // entrants empilés — ne se dessine pas, la hauteur amont y est donc relevée.
+  const hs = Math.max(50 * rap(hs_mm, 1), hc - hb)
+
+  const arm = 66
+  const yTop = -hc                     // paroi haute, droite de bout en bout
+  const yS   = -hc + 2 * hs            // paroi basse du trajet droit amont
+  const yC   = hc                      // paroi basse du commun
+  // r est le rayon de **gorge** : la paroi intérieure du virage est à r de son
+  // centre, l'extérieure à r + wb, et l'axe à r + wb/2. Avec r/wb = 1 le virage
+  // est donc ample, sa paroi intérieure ayant le rayon de la largeur de branche.
+  const rIn  = 2 * hb                  // rayon de gorge = wb
+  const R    = rIn + hb                // rayon d'axe
+  const rOut = rIn + 2 * hb            // rayon extérieur
+  const xc   = arm + hb                // axe de la partie verticale de la branche
+  const yQ   = yC + rIn                // début du coude, sur cet axe
+  const cx   = xc + R, cy = yQ         // centre du coude
+  // Rencontre de la paroi extérieure avec la paroi basse amont : le pied de la
+  // fourche. La borne sur hs garantit que la racine existe.
+  const dx   = Math.sqrt(Math.max(0, rOut * rOut - (yS - cy) ** 2))
+  const xF   = cx - dx
+  const xEnd = cx + arm
+  const yB   = yQ + arm                // extrémité libre de la branche
+
+  const annL = mini ? 0 : 62, annR = mini ? 0 : 62
+  const annT = mini ? 4 : 16, annB = mini ? 4 : 46
+  const contentW = xEnd + annL + annR
+  const contentH = (yB - yTop) + annT + annB
+  const VW = 500, M = 16
+  const VH  = Math.max(150, Math.min(420, (VW - 2 * M) * contentH / contentW + 2 * M))
+  const scl = Math.min((VW - 2 * M) / contentW, (VH - 2 * M) / contentH)
+  const tx  = M + ((VW - 2 * M) - contentW * scl) / 2 + annL * scl
+  const ty  = M + ((VH - 2 * M) - contentH * scl) / 2 + (annT - yTop) * scl
+  const vx  = (w: number) => +(tx + w * scl).toFixed(1)
+  const vy  = (w: number) => +(ty + w * scl).toFixed(1)
+  const sw  = mini ? f(0.05 * 2 * hc * scl) : 3
+
+  // Silhouette fermée. Les extrémités de gaine rectangulaire se coupent au trait
+  // droit — l'onde est la marque des gaines rondes.
+  const arc = (r: number, sweep: 0 | 1, x: number, y: number) =>
+    `A ${f(r * scl)} ${f(r * scl)} 0 0 ${sweep} ${vx(x)} ${vy(y)}`
+  const d = [
+    `M ${vx(0)} ${vy(yTop)}`,
+    `L ${vx(xEnd)} ${vy(yTop)}`,
+    `L ${vx(xEnd)} ${vy(yC)}`,
+    `L ${vx(cx)} ${vy(yC)}`,
+    arc(rIn, 0, xc + hb, yQ),          // paroi intérieure du coude
+    `L ${vx(xc + hb)} ${vy(yB)}`,
+    `L ${vx(xc - hb)} ${vy(yB)}`,
+    `L ${vx(xc - hb)} ${vy(yQ)}`,
+    arc(rOut, 1, xF, yS),              // paroi extérieure, jusqu'au pied de fourche
+    `L ${vx(0)} ${vy(yS)}`,
+    'Z',
+  ].join(' ')
+
+  const ann = '#64748b'
+
+  const arrow = (ax: number, ay: number, bx: number, by: number) => {
+    const ux0 = bx - ax, uy0 = by - ay, l = Math.hypot(ux0, uy0) || 1
+    const ux = ux0 / l, uy = uy0 / l
+    const kx = bx - 14 * ux, ky = by - 14 * uy
+    return <>
+      <line x1={vx(ax)} y1={vy(ay)} x2={vx(kx)} y2={vy(ky)} stroke={ann} strokeWidth="1.5" />
+      <path fill={ann} d={`M ${vx(bx)} ${vy(by)} L ${vx(kx - 7 * uy)} ${vy(ky + 7 * ux)} `
+        + `L ${vx(kx + 7 * uy)} ${vy(ky - 7 * ux)} Z`} />
+    </>
+  }
+
+  const long = (l: string[]) => Math.max(...l.map(s => s.length))
+  const fsOf = (l: string[], avail: number) =>
+    Math.max(8.5, Math.min(12, avail * scl / (0.55 * long(l))))
+  const texte = (X: number, Y: number, l: string[], avail: number) => {
+    const fz = fsOf(l, avail)
+    return (
+      <text x={X} y={f(Y - (l.length - 1) * 0.55 * fz)} fontSize={f(fz)} fill={ann}
+        textAnchor="middle" dominantBaseline="middle" fontStyle="italic"
+        paintOrder="stroke" stroke="white" strokeWidth="4">
+        {l.map((s, i) => <tspan key={i} x={X} dy={i === 0 ? 0 : f(1.15 * fz)}>{s}</tspan>)}
+      </text>
+    )
+  }
+  const debit = (t: string, q?: number | null) =>
+    [q != null && isFinite(q) ? `${t} = ${Math.round(q)} m³/h` : t]
+
+  /** Cote perpendiculaire à une coupe, orientable comme celles des transitions. */
+  const cote = (Ax: number, Ay: number, Bx: number, By: number,
+                nx: number, ny: number, txt: string) => {
+    const [ax, ay] = [vx(Ax), vy(Ay)], [bx, by] = [vx(Bx), vy(By)]
+    const o = (k: number, X: number, Y: number): [number, number] =>
+      [+(X + k * nx).toFixed(1), +(Y + k * ny).toFixed(1)]
+    const t1 = 6 * scl, t2 = 22 * scl, td = 14 * scl
+    const [a6, a6y] = o(t1, ax, ay), [a2, a2y] = o(t2, ax, ay)
+    const [b6, b6y] = o(t1, bx, by), [b2, b2y] = o(t2, bx, by)
+    const [d1, d1y] = o(td, ax, ay), [d2, d2y] = o(td, bx, by)
+    const [lx, ly] = o(td + 15, (ax + bx) / 2, (ay + by) / 2)
+    let rot = Math.atan2(by - ay, bx - ax) * 180 / Math.PI
+    if (rot > 90) rot -= 180
+    if (rot < -90) rot += 180
+    return <>
+      <line x1={a6} y1={a6y} x2={a2} y2={a2y} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+      <line x1={b6} y1={b6y} x2={b2} y2={b2y} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+      <line x1={d1} y1={d1y} x2={d2} y2={d2y} stroke={ann} strokeWidth="1" strokeLinecap="round" />
+      <text x={lx} y={ly} fontSize="13" fill={ann}
+        textAnchor="middle" dominantBaseline="middle" fontStyle="italic"
+        paintOrder="stroke" stroke="white" strokeWidth="4"
+        transform={`rotate(${f(rot)}, ${lx}, ${ly})`}>{txt}</text>
+    </>
+  }
+
+  // Cotation du virage, à la manière des coudes : les deux rayons d'extrémité
+  // en tirets — l'un horizontal dans le prolongement de la branche, l'autre
+  // vertical dans celui du commun —, l'arc de l'angle entre les deux, et le
+  // rayon lui-même en trait plein sur l'horizontale. L'étiquette se pose au-delà
+  // du centre, hors de la gaine : le centre du virage tombe justement dans le
+  // vide, sous le commun et à droite du coude.
+  // Le rayon se cote en diagonale, du centre vers la gorge du virage. L'angle
+  // droit entre les deux rayons d'extrémité se marque au carré, et non à l'arc.
+  const uR   = Math.SQRT1_2
+  const rTxt = hb_mm != null ? `r = ${Math.round(hb_mm)} mm` : ''
+
+  // Débits : sur l'axe de chaque conduit, étiquette au-dessus de la flèche.
+  const yAxS = (yTop + yS) / 2
+  const lS = debit('Qs', Qs), lC = debit('Qc', Qc), lB = debit('Qb', Qb)
+  const demi = (l: string[]) => 0.55 * fsOf(l, arm) * long(l) / (2 * scl)
+  const yMid = (yQ + 0.2 * arm + yQ + 0.78 * arm) / 2
+
+  return (
+    <svg viewBox={`0 0 ${VW} ${f(VH)}`} width="100%" height="100%"
+      style={{ display: 'block' }} overflow="visible">
+      <path d={d} fill="#f1f5f9" stroke="#374151" strokeWidth={sw}
+        strokeLinejoin="round" strokeLinecap="round" />
+      {!mini && <>
+        {/* Rayon et angle du virage — c'est la condition d'emploi du fitting */}
+        {/* Les deux rayons d'extrémité, en tirets, s'arrêtent à la paroi :
+            l'horizontale au flanc de la branche, la verticale à la paroi basse
+            du commun. */}
+        <line x1={vx(xc + hb)} y1={vy(cy)} x2={vx(cx)} y2={vy(cy)}
+          stroke={ann} strokeWidth="1" strokeDasharray="5 4" strokeLinecap="round" />
+        <line x1={vx(cx)} y1={vy(cy)} x2={vx(cx)} y2={vy(yC)}
+          stroke={ann} strokeWidth="1" strokeDasharray="5 4" strokeLinecap="round" />
+        {/* Angle droit au carré, entre les deux rayons */}
+        <path d={`M ${f(vx(cx) - 11)} ${vy(cy)} L ${f(vx(cx) - 11)} ${f(vy(cy) - 11)} `
+          + `L ${vx(cx)} ${f(vy(cy) - 11)}`}
+          stroke={ann} strokeWidth="1.2" fill="none" strokeLinecap="round" />
+        {/* Le rayon se cote jusqu'à la gorge, où il vient buter sur la paroi
+            intérieure — c'est elle que r mesure. */}
+        <line x1={vx(cx)} y1={vy(cy)} x2={vx(cx - rIn * uR)} y2={vy(cy - rIn * uR)}
+          stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx={vx(cx)} cy={vy(cy)} r="2" fill={ann} />
+        <text x={f(vx(cx) + 10)} y={vy(cy)} fontSize="12" fill={ann}
+          textAnchor="start" dominantBaseline="middle" fontStyle="italic"
+          paintOrder="stroke" stroke="white" strokeWidth="4">{rTxt}</text>
+
+        {/* Sens d'écoulement : les deux arrivées convergent vers le commun */}
+        {arrow(12, yAxS, 12 + 0.62 * arm, yAxS)}
+        {texte(vx(Math.max(0.5 * arm, demi(lS))), f(vy(yAxS) - 15), lS, arm)}
+        {arrow(xc, yB - 0.18 * arm, xc, yQ + 0.24 * arm)}
+        {texte(vx(xc + 13 + demi(lB)), vy(yMid), lB, 1.5 * arm)}
+        {arrow(xEnd - 0.72 * arm, 0, xEnd - 12, 0)}
+        {texte(vx(Math.min(xEnd - 0.5 * arm, xEnd - demi(lC))), f(vy(0) - 15), lC, arm)}
+
+        {/* Hauteurs des trois conduits — la largeur, vue de chant, est en légende */}
+        {cote(0, yTop, 0, yS, -1, 0, cotxt('s', hs_mm))}
+        {cote(xEnd, yTop, xEnd, yC, 1, 0, cotxt('c', hc_mm))}
+        {cote(xc - hb, yB, xc + hb, yB, 0, 1, cotxt('b', hb_mm))}
+      </>}
+    </svg>
+  )
+}
+
+// ── Schéma ASHRAE 5-9 — entrée de branche à 45°, vue de profil ──────────────
+// Le principal traverse à section constante, paroi haute droite. La branche est
+// verticale ; c'est sa paroi aval qui s'ouvre à 45° vers le commun, sur une
+// longueur L = 0,25 W jamais inférieure à trois pouces. Cette longueur est une
+// condition de fabrication du raccord, pas une variable des tables.
+function SchemaTee59({
+  mini, lettre = 'H', sansLettre, hc_mm, hb_mm, hs_mm, L_mm, Qb, Qs, Qc,
+}: {
+  mini?:   boolean
+  lettre?: 'H' | 'L'
+  sansLettre?: boolean
+  hc_mm:  number
+  hb_mm?: number | null
+  hs_mm?: number | null
+  L_mm?:  number | null       // longueur de l'entrée à 45°, en mm
+  Qb?:    number | null
+  Qs?:    number | null
+  Qc?:    number | null
+}) {
+  const f = (v: number) => +v.toFixed(1)
+
+  const rap = (d: number | null | undefined, def: number) => d != null && hc_mm > 0
+    ? Math.min(1, Math.max(0.30, d / hc_mm)) : def
+  const hc = 50, hb = 50 * rap(hb_mm, 1)
+  const hs = 50 * rap(hs_mm, 1)
+
+  const arm = 66
+  const yTop = -hc                     // paroi haute, droite de bout en bout
+  const yS   = -hc + 2 * hs            // paroi basse amont
+  const yC   = hc                      // paroi basse du commun
+  // Longueur du sabot, à l'échelle de la branche dessinée. Faute de dimensions
+  // connues, le rapport publié de 0,25 sert de convention.
+  const Ld   = 2 * hb * (hb_mm != null && L_mm != null && hb_mm > 0
+    ? L_mm / hb_mm : 0.25)
+  const xc   = arm + hb                // axe de la branche
+  const xD   = xc + hb + Ld            // pied du sabot, sur la paroi du commun
+  const xEnd = xD + arm
+  const yB   = yC + Ld + arm           // extrémité libre de la branche
+
+  const annL = mini ? 0 : 62, annR = mini ? 0 : 62
+  const annT = mini ? 4 : 16, annB = mini ? 4 : 46
+  const contentW = xEnd + annL + annR
+  const contentH = (yB - yTop) + annT + annB
+  const VW = 500, M = 16
+  const VH  = Math.max(150, Math.min(420, (VW - 2 * M) * contentH / contentW + 2 * M))
+  const scl = Math.min((VW - 2 * M) / contentW, (VH - 2 * M) / contentH)
+  const tx  = M + ((VW - 2 * M) - contentW * scl) / 2 + annL * scl
+  const ty  = M + ((VH - 2 * M) - contentH * scl) / 2 + (annT - yTop) * scl
+  const vx  = (w: number) => +(tx + w * scl).toFixed(1)
+  const vy  = (w: number) => +(ty + w * scl).toFixed(1)
+  const sw  = mini ? f(0.05 * 2 * hc * scl) : 3
+
+  // Silhouette fermée, toutes coupes droites : les trois conduits sont
+  // rectangulaires. La paroi aval de la branche s'ouvre à 45° vers la droite.
+  const d = [
+    'M ' + vx(0) + ' ' + vy(yTop),
+    'L ' + vx(xEnd) + ' ' + vy(yTop),
+    'L ' + vx(xEnd) + ' ' + vy(yC),
+    'L ' + vx(xD) + ' ' + vy(yC),
+    'L ' + vx(xc + hb) + ' ' + vy(yC + Ld),     // sabot à 45°
+    'L ' + vx(xc + hb) + ' ' + vy(yB),
+    'L ' + vx(xc - hb) + ' ' + vy(yB),
+    'L ' + vx(xc - hb) + ' ' + vy(yS),
+    'L ' + vx(0) + ' ' + vy(yS),
+    'Z',
+  ].join(' ')
+
+  const ann = '#64748b'
+
+  const arrow = (ax: number, ay: number, bx: number, by: number) => {
+    const dx = bx - ax, dy = by - ay, l = Math.hypot(dx, dy) || 1
+    const ux = dx / l, uy = dy / l
+    const kx = bx - 14 * ux, ky = by - 14 * uy
+    return <>
+      <line x1={vx(ax)} y1={vy(ay)} x2={vx(kx)} y2={vy(ky)} stroke={ann} strokeWidth="1.5" />
+      <path fill={ann} d={'M ' + vx(bx) + ' ' + vy(by)
+        + ' L ' + vx(kx - 7 * uy) + ' ' + vy(ky + 7 * ux)
+        + ' L ' + vx(kx + 7 * uy) + ' ' + vy(ky - 7 * ux) + ' Z'} />
+    </>
+  }
+
+  const long = (l: string[]) => Math.max(...l.map(s => s.length))
+  const fsOf = (l: string[], avail: number) =>
+    Math.max(8.5, Math.min(12, avail * scl / (0.55 * long(l))))
+  const texte = (X: number, Y: number, l: string[], avail: number) => {
+    const fz = fsOf(l, avail)
+    return (
+      <text x={X} y={f(Y - (l.length - 1) * 0.55 * fz)} fontSize={f(fz)} fill={ann}
+        textAnchor="middle" dominantBaseline="middle" fontStyle="italic"
+        paintOrder="stroke" stroke="white" strokeWidth="4">
+        {l.map((s, i) => <tspan key={i} x={X} dy={i === 0 ? 0 : f(1.15 * fz)}>{s}</tspan>)}
+      </text>
+    )
+  }
+  const debit = (t: string, q?: number | null) =>
+    [q != null && isFinite(q) ? t + ' = ' + Math.round(q) + ' m³/h' : t]
+  const cotxt = (ind: string, v?: number | null) =>
+    v == null ? '' : sansLettre ? Math.round(v) + ' mm'
+      : lettre + ind + ' = ' + Math.round(v) + ' mm'
+
+  const cote = (Ax: number, Ay: number, Bx: number, By: number,
+                nx: number, ny: number, txt: string) => {
+    if (!txt) return null
+    const [ax, ay] = [vx(Ax), vy(Ay)], [bx, by] = [vx(Bx), vy(By)]
+    const o = (k: number, X: number, Y: number): [number, number] =>
+      [+(X + k * nx).toFixed(1), +(Y + k * ny).toFixed(1)]
+    const t1 = 6 * scl, t2 = 22 * scl, td = 14 * scl
+    const [a6, a6y] = o(t1, ax, ay), [a2, a2y] = o(t2, ax, ay)
+    const [b6, b6y] = o(t1, bx, by), [b2, b2y] = o(t2, bx, by)
+    const [d1, d1y] = o(td, ax, ay), [d2, d2y] = o(td, bx, by)
+    const [lx, ly] = o(td + 15, (ax + bx) / 2, (ay + by) / 2)
+    let rot = Math.atan2(by - ay, bx - ax) * 180 / Math.PI
+    if (rot > 90) rot -= 180
+    if (rot < -90) rot += 180
+    return <>
+      <line x1={a6} y1={a6y} x2={a2} y2={a2y} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+      <line x1={b6} y1={b6y} x2={b2} y2={b2y} stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+      <line x1={d1} y1={d1y} x2={d2} y2={d2y} stroke={ann} strokeWidth="1" strokeLinecap="round" />
+      <text x={lx} y={ly} fontSize="13" fill={ann}
+        textAnchor="middle" dominantBaseline="middle" fontStyle="italic"
+        paintOrder="stroke" stroke="white" strokeWidth="4"
+        transform={'rotate(' + f(rot) + ', ' + lx + ', ' + ly + ')'}>{txt}</text>
+    </>
+  }
+
+  const yAxS = (yTop + yS) / 2
+  const lS = debit('Qs', Qs), lC = debit('Qc', Qc), lB = debit('Qb', Qb)
+  const demi = (l: string[]) => 0.55 * fsOf(l, arm) * long(l) / (2 * scl)
+  const yMidB = (yC + Ld + yB) / 2
+
+  // Sommet du sabot : l'angle s'y mesure entre la paroi verticale et la pente.
+  const sx = xc + hb, sy = yC + Ld
+  const aR = Math.max(0.28 * arm, Math.min(0.55 * Ld, 0.5 * arm))
+
+  return (
+    <svg viewBox={'0 0 ' + VW + ' ' + f(VH)} width="100%" height="100%"
+      style={{ display: 'block' }} overflow="visible">
+      <path d={d} fill="#f1f5f9" stroke="#374151" strokeWidth={sw}
+        strokeLinejoin="round" strokeLinecap="round" />
+      {!mini && <>
+        {/* Sens d'écoulement */}
+        {arrow(12, yAxS, 12 + 0.62 * arm, yAxS)}
+        {texte(vx(Math.max(0.5 * arm, demi(lS))), f(vy(yAxS) - 15), lS, arm)}
+        {arrow(xc, yB - 0.18 * arm, xc, yC + Ld + 0.24 * arm)}
+        {texte(vx(xc + 13 + demi(lB)), vy(yMidB), lB, 1.5 * arm)}
+        {arrow(xEnd - 0.72 * arm, 0, xEnd - 12, 0)}
+        {texte(vx(Math.min(xEnd - 0.5 * arm, xEnd - demi(lC))), f(vy(0) - 15), lC, arm)}
+
+        {/* Sections, puis longueur de l'entrée à 45° le long du commun */}
+        {cote(0, yTop, 0, yS, -1, 0, cotxt('s', hs_mm))}
+        {cote(xEnd, yTop, xEnd, yC, 1, 0, cotxt('c', hc_mm))}
+        {cote(xc - hb, yB, xc + hb, yB, 0, 1, cotxt('b', hb_mm))}
+        {/* L se mesure en hauteur, de la paroi du commun au départ de la pente.
+            Une ligne de rappel amène ce niveau à gauche de la branche, où la
+            cote trouve la place de se lire. */}
+        {L_mm != null && (() => {
+          const xg = xc - hb - 16, xt = f(vx(xg) - 8), ym = vy(yC + Ld / 2)
+          return <>
+            <line x1={vx(sx)} y1={vy(sy)} x2={f(vx(xg) - 6)} y2={vy(sy)}
+              stroke={ann} strokeWidth="1" strokeDasharray="5 4" strokeLinecap="round" />
+            <line x1={vx(xc - hb)} y1={vy(yC)} x2={f(vx(xg) - 6)} y2={vy(yC)}
+              stroke={ann} strokeWidth="1" strokeLinecap="round" />
+            <line x1={vx(xg)} y1={vy(yC)} x2={vx(xg)} y2={vy(sy)}
+              stroke={ann} strokeWidth="1.5" strokeLinecap="round" />
+            <text x={xt} y={ym} fontSize="13" fill={ann}
+              textAnchor="end" dominantBaseline="middle" fontStyle="italic"
+              paintOrder="stroke" stroke="white" strokeWidth="4">
+              L = {Math.round(L_mm)} mm
+            </text>
+          </>
+        })()}
+      </>}
+    </svg>
+  )
+}
+
+function TypeCard({ label, title, selected, onClick, angle, dc_mm, db_mm, ds_mm,
+                   rect, coude, brect, e45, hautPlat }: {
+  label: readonly string[]; title: string; selected: boolean; onClick: () => void
+  angle: number; dc_mm: number; db_mm?: number | null; ds_mm?: number | null
+  rect: boolean; coude: boolean; brect: boolean; e45: boolean; hautPlat: boolean
+}) {
+  return (
+    <button onClick={onClick} title={title} style={{
       flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-      padding: '7px 5px 6px',
+      padding: '7px 5px 7px',
       border: `1.5px solid ${selected ? '#2563eb' : '#e2e8f0'}`,
-      borderRadius: 8, background: selected ? '#eff6ff' : '#f8fafc',
-      cursor: 'pointer', gap: 5, transition: 'all 0.12s',
+      borderRadius: 8,
+      background: selected ? '#eff6ff' : '#f8fafc',
+      cursor: 'pointer', transition: 'all 0.12s',
       boxShadow: selected ? '0 0 0 3px #2563eb22' : 'none',
     }}>
       <div style={{ width: '100%', height: 58 }}>
-        {miniSchemas[type]}
+        {e45
+          ? <SchemaTee59 mini hc_mm={dc_mm} hb_mm={db_mm} hs_mm={ds_mm}
+              L_mm={db_mm != null ? longueurEntree59(db_mm) : null} />
+          : coude
+          ? <SchemaTee56 mini hc_mm={dc_mm} hb_mm={db_mm} hs_mm={ds_mm} />
+          : <SchemaJunction mini angle={angle} mainRect={rect} branchRect={brect}
+              defRatio={rect ? 1 : 0.5} hautPlat={hautPlat}
+              dc_mm={dc_mm} db_mm={db_mm} ds_mm={ds_mm} />}
       </div>
-      <div style={{ textAlign: 'center' }}>
-        <span style={{ fontSize: 9.5, fontWeight: selected ? 700 : 500,
-          color: selected ? '#1d4ed8' : '#475569', display: 'block' }}>
-          {JUNCTION_LABELS[type]}
-        </span>
-      </div>
+      <span style={{
+        fontSize: 9, fontWeight: selected ? 700 : 500,
+        color: selected ? '#1d4ed8' : '#64748b',
+        textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden',
+        textOverflow: 'ellipsis', width: '100%', display: 'block',
+      }}>
+        {label.join(' · ')}
+      </span>
     </button>
   )
 }
 
-// ── Modal ─────────────────────────────────────────────────────────────────────
-
 export default function JunctionModal({
-  isOpen, onClose, onSave, editing,
-  amontSegs, avalDi_mm, avalQ_m3h, avalV_ms, rho,
+  isOpen, onClose, onSave, editing, arms, common, rho, nodeInfo,
 }: Props) {
-  const [selType,       setSelType]       = useState<CircJunctionType | null>(null)
-  const [straightSegId, setStraightSegId] = useState<string | null>(null)
-  const [alpha,         setAlpha]         = useState<number>(90)
-  const [alpha1,        setAlpha1]        = useState<number>(45)
-  const [alpha2,        setAlpha2]        = useState<number>(45)
-  const [branch1SegId,  setBranch1SegId]  = useState<string | null>(null)
-  const [mounted,       setMounted]       = useState(false)
+  const [famKey,  setFamKey]  = useState<string>(FAMILIES[0].key)
+  const [angle,   setAngle]   = useState<number>(90)
+  const [branch,  setBranch]  = useState<string | null>(null)
+  const [orient,  setOrient]  = useState<'horizontal' | 'vertical'>('vertical')
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    if (isOpen) requestAnimationFrame(() => setMounted(true))
-    else setMounted(false)
-  }, [isOpen])
-
-  useEffect(() => {
-    if (!isOpen) return
-    if (editing) {
-      setSelType(editing.type)
-      setStraightSegId(editing.straightSegId ?? null)
-      setAlpha(editing.alpha_deg ?? 90)
-      setAlpha1(editing.alpha1_deg ?? 45)
-      setAlpha2(editing.alpha2_deg ?? 45)
-      setBranch1SegId(editing.branch1SegId ?? null)
-    } else {
-      setSelType(null)
-      setStraightSegId(null)
-      setAlpha(90)
-    }
+    if (isOpen) {
+      requestAnimationFrame(() => setMounted(true))
+      setFamKey(editing ? famDe(editing.type) : FAMILIES[0].key)
+      setAngle(editing ? JUNCTION_ANGLE[editing.type] : 90)
+      // Par défaut aucune arrivée n'est désignée : le rôle n'est pas devinable.
+      setBranch(editing?.branchSegId ?? null)
+      // Une branche qui arrive par en dessous se coude dans un plan vertical :
+      // sa dimension de référence est alors la hauteur.
+      setOrient(editing?.orientation ?? 'vertical')
+    } else setMounted(false)
   }, [isOpen, editing])
 
   if (!isOpen) return null
 
-  const needsAngle   = selType ? JUNCTION_NEEDS_ANGLE[selType] : false
-  const [aMin, aMax] = selType ? JUNCTION_ANGLE_RANGE[selType] : [30, 89]
-  const needsRole    = selType === 'tee-oblique'
-  const isAsym       = selType === 'wye-asymetrique'
-  const dynPressure  = 0.5 * rho * avalV_ms ** 2
-
-  // Calcul live des ξ et ΔP
-  let xiMap: Map<string, number> | null = null
-  if (selType && (!needsRole || straightSegId) && (!isAsym || branch1SegId)) {
-    const mockJunction: VentNodeJunction = {
-      id: '',
-      type: selType,
-      ...(needsRole ? { straightSegId: straightSegId! } : {}),
-      ...(needsAngle ? { alpha_deg: alpha } : {}),
-      ...(isAsym ? { alpha1_deg: alpha1, alpha2_deg: alpha2, branch1SegId: branch1SegId! } : {}),
-    }
-    const branches: JunctionBranchInput[] = amontSegs.map(s => ({
-      segId:      s.id,
-      Q_m3h:      s.Q_m3h,
-      di_mm:      s.di_mm,
-      isStraight: straightSegId === s.id,
-    }))
-    xiMap = computeXiJunction(mockJunction, branches, avalQ_m3h, avalDi_mm)
+  const dis  = arms.map(a => ({ segId: a.segId, di_mm: a.di_mm, shape: a.shape,
+    a_mm: a.a_mm, b_mm: a.b_mm, A_mm2: a.A_mm2 }))
+  const dcom = { segId: common.segId, di_mm: common.di_mm, shape: common.shape,
+    a_mm: common.a_mm, b_mm: common.b_mm, A_mm2: common.A_mm2 }
+  // Les raccords réellement applicables sont décidés une seule fois, au même
+  // endroit que le panneau : une famille n'est offerte que si l'un de ses types
+  // en fait partie.
+  const util = junctionTypesApplicables(arms, common)
+  /** Angles d'une famille que ce nœud permet réellement de calculer. */
+  const anglesDe = (f: Family) =>
+    (f.angles as readonly number[]).filter(a => util.includes(typeOf(f, a, util)))
+  // Cartes à présenter. Une famille liée à une forme ne sort que sur cette
+  // forme ; celle qui n'en impose aucune sort partout. Un même modèle n'est
+  // jamais proposé deux fois : la première famille qui le porte se le réserve,
+  // ce qui laisse le 60° au sélecteur cylindrique quand celui-ci s'applique.
+  const pris = new Set<JunctionType>()
+  const cartes: { f: Family; angs: number[] }[] = []
+  for (const f of FAMILIES) {
+    if (!(f as any).libreShape && f.shape !== common.shape) continue
+    const d = anglesDe(f).filter(a => !pris.has(typeOf(f, a, util)))
+    if (d.length === 0) continue
+    // Une famille attachée à une forme ne se montre pas pour son seul angle de
+    // repli : « Collecteur cylindrique » n'ayant que le 60° à offrir ne dirait
+    // rien de juste. Cet angle revient alors à la famille sans contrainte.
+    if (!(f as any).libreShape && !d.some(a => !isFallback(typeOf(f, a, util)))) continue
+    d.forEach(a => pris.add(typeOf(f, a, util)))
+    cartes.push({ f, angs: d })
   }
+  const vide = cartes.length === 0
+  const choix = cartes.find(c => c.f.key === famKey) ?? cartes[0]
+  const fam   = choix?.f ?? FAMILIES[0]
+  const angs  = choix?.angs ?? []
+  const ang   = angs.includes(angle) ? angle : (angs[0] ?? fam.angles[0])
+  const type  = typeOf(fam, ang, util)
 
-  const canSave = selType != null
-    && (!needsRole || straightSegId != null)
-    && (!isAsym || branch1SegId != null)
+  // Cylindrique : les rôles découlent des diamètres et ne sont demandés que si
+  // les deux arrivées portent celui du commun. Conique : toujours demandés.
+  const roles = resolveArmsFor(type, dis, dcom, branch)
+  const pret  = roles.ok
+  const motif = roles.ok || roles.ambigu ? null : roles.reason
+  const armB  = roles.ok ? arms.find(a => a.segId === roles.branchId)! : null
+  const armS  = roles.ok ? arms.find(a => a.segId === roles.straightId)! : null
+  // Dimension vue dans le plan du schéma : le diamètre en circulaire, la hauteur
+  // en rectangulaire. Tant que la branche n'est pas désignée, les deux entrants
+  // restent indéterminés plutôt que d'inventer une valeur.
+  // Formes à dessiner. Les raccords à forme imposée les tiennent de leur
+  // définition ; celui qui n'en impose aucune les lit sur les conduits.
+  const fsh    = junctionShapes(type)
+  const libre  = shapeLibre(type)
+  const mRect  = libre ? common.shape === 'rectangular' : fsh.main === 'rectangular'
+  const bRectF = libre
+    ? (armB ? armB.shape === 'rectangular'
+      : arms.every(a => a.shape === 'rectangular'))
+    : fsh.branch === 'rectangular'
+  // Un plan de coupe n'a de sens que si au moins un conduit est rectangulaire.
+  const rectF = mRect || bRectF
+  const coude  = type === 'jonc-5-6'    // seul raccord dont la branche est coudée
+  const e45    = type === 'jonc-5-9'    // branche verticale, sabot aval à 45°
+  // Le plan de coupe décide de la dimension vue ; l'autre, vue de chant, ne se
+  // dessine pas et se rappelle sous le schéma. Une branche ronde, elle, montre
+  // son diamètre dans les deux plans.
+  const vert  = orient === 'vertical'
+  const LET   = vert ? 'H' : 'L'
+  const CHANT = vert ? 'L' : 'H'
+  const plan  = (a: JunctionArm) => a.shape === 'rectangular'
+    ? ((vert ? a.b_mm : a.a_mm) ?? 0) : a.di_mm
+  const chant = (a: JunctionArm) => (vert ? a.a_mm : a.b_mm) ?? 0
+  // plan() rend déjà le diamètre d'une gaine ronde : il vaut pour les deux formes.
+  const vue   = (a: JunctionArm | null) => a == null ? null : plan(a)
+  const dB = vue(armB)
+  const dS = rectF || fam.conical || libre ? vue(armS) : common.di_mm
+  const dC = plan(common)
+  // Seuls les conduits rectangulaires ont une dimension vue de chant à rappeler.
+  const lg = (a: JunctionArm | null) =>
+    a && a.shape === 'rectangular' ? Math.round(chant(a)) : null
+  const lgC = lg(common), lgB = lg(armB), lgS = lg(armS)
+  const largeurs = !rectF ? null
+    : lgB == null
+      ? (lgS != null && lgS === lgC ? `${CHANT} = ${lgC} mm`
+        : `${CHANT}s = ${lgS ?? '—'} · ${CHANT}c = ${lgC} mm`)
+      : lgS != null && lgB === lgC && lgS === lgC
+        ? `${CHANT} = ${lgC} mm`
+        : `${CHANT}s = ${lgS ?? '—'} · ${CHANT}b = ${lgB} · ${CHANT}c = ${lgC} mm`
 
-  const handleSave = () => {
-    if (!canSave || !selType) return
-    onSave({
-      id:   editing?.id ?? newJunctionId(),
-      type: selType,
-      ...(needsRole  ? { straightSegId: straightSegId! }                                     : {}),
-      ...(needsAngle ? { alpha_deg: alpha }                                                   : {}),
-      ...(isAsym     ? { alpha1_deg: alpha1, alpha2_deg: alpha2, branch1SegId: branch1SegId! } : {}),
-    })
-    onClose()
-  }
+  const Vc = common.A_mm2 > 0 ? (common.Q_m3h / 3600) / (common.A_mm2 / 1e6) : 0
+  const pdyn = 0.5 * rho * Vc * Vc
+  const res = pret ? computeXiJunction(type, {
+    Qb: armB!.Q_m3h, Qs: armS!.Q_m3h, Qc: common.Q_m3h,
+    Ab: armB!.A_mm2, As: armS!.A_mm2, Ac: common.A_mm2,
+    Vc_ms: Vc,                 // le 5-7 change de régime à 1200 fpm
+    Ws: armS!.a_mm, Hs: armS!.b_mm, Wc: common.a_mm, Hc: common.b_mm,
+  }) : null
+  // Chaque trajet vit sa vie : sur le té rectangulaire, les deux coefficients se
+  // lisent sur des rapports de débit différents, donc l'un peut sortir du domaine
+  // sans l'autre. Le motif accompagne alors le trajet concerné.
+  const rien = pret && res!.Ccb == null && res!.Ccs == null
 
   const inp: React.CSSProperties = {
     padding: '6px 10px', border: '1px solid #e2e8f0', borderRadius: 6,
     fontSize: 13, background: '#f8fafc', fontFamily: 'ui-monospace, monospace',
-    color: '#1e293b', fontWeight: 600, width: 74, boxSizing: 'border-box' as const,
+    color: '#1e293b', fontWeight: 600, width: 74, boxSizing: 'border-box',
   }
-  const lbl: React.CSSProperties = {
-    fontSize: 11, color: '#64748b', fontWeight: 600, letterSpacing: '0.01em',
+  const lbl: React.CSSProperties = { fontSize: 11, color: '#64748b', fontWeight: 600, letterSpacing: '0.01em' }
+  const sectionTitle: React.CSSProperties = {
+    fontSize: 9, fontWeight: 700, color: '#b0bec5',
+    textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 5,
   }
+
+  /** Un trajet : son couple coefficient / perte, ou le motif de son absence. */
+  const trajet = (titre: string, nom: string, dp: string,
+                  cc: number | null, motifCc: string | null, bas: number) => (
+    <div style={{ marginBottom: bas }}>
+      <div style={{ ...sectionTitle, marginBottom: 6 }}>{titre}</div>
+      {cc == null ? (
+        <div style={{ fontSize: 10.5, color: '#94a3b8', fontStyle: 'italic', lineHeight: 1.45 }}>
+          {motifCc}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 8 }}>
+          {carte(<><span style={{ textTransform: 'uppercase' as const }}>Coeff.</span>{' ' + nom}</>,
+            cc.toFixed(3), null, '#eff6ff', '#bfdbfe', '#93c5fd', '#1d4ed8')}
+          {carte(dp, (cc * pdyn).toFixed(2), 'Pa', '#f0fdfa', '#99f6e4', '#2dd4bf', '#0f766e')}
+        </div>
+      )}
+    </div>
+  )
+
+  /** Une carte de résultat, au gabarit de celles de la transition. */
+  const carte = (titre: React.ReactNode, val: string, unite: string | null,
+                 fond: string, bord: string, teinte: string, valeur: string) => (
+    <div style={{ flex: 1, padding: '9px 12px', borderRadius: 7,
+      background: fond, border: `1px solid ${bord}` }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: teinte,
+        letterSpacing: '0.04em', marginBottom: 4 }}>{titre}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color: valeur,
+        fontFamily: 'ui-monospace, monospace', lineHeight: 1 }}>
+        {val}
+        {unite && <span style={{ fontSize: 11, fontWeight: 500, marginLeft: 3,
+          color: '#0d9488' }}>{unite}</span>}
+      </div>
+    </div>
+  )
 
   return createPortal(
     <>
-      <div style={{ position: 'fixed', top: 0, left: 0, right: 280, bottom: 0, zIndex: 999 }}
-        onMouseDown={onClose} />
+      {/* Zone de clic pour fermer (invisible) */}
+      <div style={{
+        position: 'fixed', top: 0, left: 0, right: 280, bottom: 0, zIndex: 999,
+      }} onMouseDown={onClose} />
 
+      {/* Panneau */}
       <div style={{
         position: 'fixed', right: 280, top: '50%',
         transform: `translateY(-50%) translateX(${mounted ? 0 : 24}px)`,
@@ -758,309 +1035,279 @@ export default function JunctionModal({
           borderBottom: '1px solid #f1f5f9',
         }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 3 }}>
-              {editing ? 'Modifier la réunion' : 'Configurer la réunion'}
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: nodeInfo ? 3 : 0 }}>
+              {editing ? 'Modifier la jonction' : 'Jonction convergente'}
             </div>
+            {nodeInfo && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#64748b' }}>
+                <span style={{
+                  width: 5, height: 5, borderRadius: '50%',
+                  background: '#6366f1', flexShrink: 0, display: 'inline-block',
+                }} />
+                {nodeInfo}
+              </div>
+            )}
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer',
-            fontSize: 18, color: '#94a3b8', lineHeight: 1, padding: '2px 4px', marginTop: 1 }}>×</button>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 18, color: '#94a3b8', lineHeight: 1, padding: '2px 4px', marginTop: 1,
+          }}>×</button>
         </div>
 
         {/* ── Sélecteur de type ── */}
         <div style={{ flexShrink: 0, padding: '10px 18px 9px', borderBottom: '1px solid #f1f5f9' }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: '#b0bec5',
-            textTransform: 'uppercase' as const, letterSpacing: '0.07em', marginBottom: 7 }}>
-            Type de réunion — circulaire
-          </div>
-          <div style={{ display: 'flex', gap: 7 }}>
-            {TYPE_ORDER.map(t => (
-              <TypeCard key={t} type={t} selected={selType === t}
-                onClick={() => { setSelType(t); setStraightSegId(null); setBranch1SegId(null) }} />
-            ))}
+          <div style={{ ...sectionTitle, marginBottom: 7 }}>Type de jonction</div>
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'stretch' }}>
+            {vide && (
+              <span style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic' }}>
+                Aucun raccord répertorié ne couvre cette géométrie.
+              </span>
+            )}
+            {/* Chaque vignette montre sa propre famille : les rôles se résolvent
+                donc pour elle, et non pour celle qui est sélectionnée. Sans cela,
+                le conique hériterait du trajet droit déduit par le cylindrique et
+                se dessinerait sans cône. */}
+            {cartes.map(({ f, angs: dispo }) => {
+              const a  = dispo.includes(ang) ? ang : dispo[0]
+              const r  = resolveArmsFor(typeOf(f, a, util), dis, dcom, branch)
+              const rS = r.ok ? arms.find(x => x.segId === r.straightId)! : null
+              const rB = r.ok ? arms.find(x => x.segId === r.branchId)! : null
+              const re = f.shape === 'rectangular'
+              const vu = (x: JunctionArm | null) =>
+                x == null ? null : re ? plan(x) : x.di_mm
+              return (
+                <TypeCard key={f.key} label={f.label} title={f.title}
+                  selected={f.key === fam.key} onClick={() => setFamKey(f.key)}
+                  angle={a} rect={re} coude={typeOf(f, a, util) === 'jonc-5-6'}
+                  brect={junctionShapes(typeOf(f, a, util)).branch === 'rectangular'}
+                  e45={typeOf(f, a, util) === 'jonc-5-9'}
+                  hautPlat={sectionsCompensees(typeOf(f, a, util))}
+                  dc_mm={re ? plan(common) : common.di_mm}
+                  db_mm={vu(rB)}
+                  ds_mm={re || f.conical ? vu(rS) : common.di_mm} />
+              )
+            })}
           </div>
         </div>
 
         {/* ── Zone de détail ── */}
         <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-          {!selType ? (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              flexDirection: 'column', gap: 9 }}>
+          {vide ? (
+            <div style={{
+              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexDirection: 'column', gap: 9,
+            }}>
               <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
                 <circle cx="18" cy="18" r="17" stroke="#e2e8f0" strokeWidth="1.5" />
                 <path d="M18 11v8M18 25h.01" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" />
               </svg>
               <span style={{ fontSize: 11.5, color: '#94a3b8', fontWeight: 500 }}>
-                Choisissez un type ci-dessus
+                Il n'y a aucune pièce à raccorder
               </span>
             </div>
-          ) : (
-            <>
-              {/* ── Schéma SVG ── */}
+          ) : (<>
+
+          {/* ── Schéma ── */}
+          <div style={{
+            position: 'relative', width: 400, flexShrink: 0,
+            display: 'flex', flexDirection: 'column',
+            borderRight: '1px solid #f1f5f9', background: '#f8fafd',
+          }}>
+            {rectF && (
               <div style={{
-                width: 390, flexShrink: 0,
-                display: 'flex', flexDirection: 'column',
-                borderRight: '1px solid #f1f5f9', background: '#f8fafd',
+                position: 'absolute', top: 0, right: 0, zIndex: 2, pointerEvents: 'none',
+                background: '#f1f5f9', borderBottom: '1px solid #cbd5e1',
+                borderLeft: '1px solid #cbd5e1', borderRadius: '0 0 0 4px',
+                width: 96, textAlign: 'center', boxSizing: 'border-box',
+                padding: '2px 8px', fontSize: 11, color: '#94a3b8', fontStyle: 'italic',
               }}>
-                <div style={{ flex: 1, padding: '12px 10px 10px 16px', minHeight: 0 }}>
-                  {selType === 'tee-oblique' ? (
-                    <SchemaTee90
-                      straightSegId={straightSegId}
-                      amontSegs={straightSegId !== null ? amontSegs : []}
-                      avalDi_mm={avalDi_mm}
-                      avalQ_m3h={avalQ_m3h}
-                      alpha={alpha}
-                    />
-                  ) : selType === 'wye-asymetrique' ? (
-                    <SchemaWyeAsym
-                      branch1Seg={amontSegs.find(s => s.id === branch1SegId)}
-                      branch2Seg={amontSegs.find(s => s.id !== branch1SegId)}
-                      avalDi_mm={avalDi_mm}
-                      avalQ_m3h={avalQ_m3h}
-                      alpha1={alpha1}
-                      alpha2={alpha2}
-                    />
-                  ) : (
-                    <SchemaWye
-                      amontSegs={amontSegs}
-                      avalDi_mm={avalDi_mm}
-                      avalQ_m3h={avalQ_m3h}
-                      alpha={alpha}
-                    />
-                  )}
-                </div>
+                {/* Le plan de coupe suit celui du coude : la hauteur se voit de
+                    profil, la largeur de dessus. */}
+                {vert ? 'Vue de profil' : 'Vue de dessus'}
               </div>
-
-              {/* ── Paramètres ── */}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
-                padding: '14px 16px 14px 16px', overflowY: 'auto' }}>
-
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#1e293b', marginBottom: 2 }}>
-                  {JUNCTION_LABELS[selType]}
-                </div>
-
-                {/* Angle α (T et Y symétrique) */}
-                {needsAngle && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 74px',
-                    rowGap: 8, columnGap: 8, alignItems: 'center', marginBottom: 14 }}>
-                    <label style={lbl}>Angle α (°)</label>
-                    <NumInput min={aMin} max={aMax} step={1}
-                      value={alpha} onChange={v => setAlpha(v ?? 90)} style={inp} />
-                    <span style={{ gridColumn: '1 / -1', fontSize: 9.5, color: '#94a3b8', marginTop: -4 }}>
-                      {selType === 'wye-symetrique'
-                        ? 'Angle total entre les deux branches (60°–180°)'
-                        : 'Angle branche latérale / axe commun (30°–90°)'}
-                    </span>
-                  </div>
-                )}
-
-                {/* Angles α1 et α2 (Y asymétrique) */}
-                {isAsym && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 74px',
-                    rowGap: 8, columnGap: 8, alignItems: 'center', marginBottom: 14 }}>
-                    <label style={lbl}>Angle α1 — branche 1 (°)</label>
-                    <NumInput min={15} max={90} step={1}
-                      value={alpha1} onChange={v => setAlpha1(v ?? 45)} style={inp} />
-                    <label style={lbl}>Angle α2 — branche 2 (°)</label>
-                    <NumInput min={15} max={90} step={1}
-                      value={alpha2} onChange={v => setAlpha2(v ?? 45)} style={inp} />
-                    <span style={{ gridColumn: '1 / -1', fontSize: 9.5, color: '#94a3b8', marginTop: -4 }}>
-                      Angle de chaque branche par rapport à l'axe commun (15°–90°)
-                    </span>
-                  </div>
-                )}
-
-                {/* Rôles (T types) */}
-                {needsRole && (
-                  <div style={{ marginBottom: 14 }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: '#b0bec5',
-                      textTransform: 'uppercase' as const, letterSpacing: '0.07em', marginBottom: 7 }}>
-                      Rôle des tronçons entrants
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                      {amontSegs.map(seg => {
-                        const isStraight = straightSegId === seg.id
-                        const isLateral  = !isStraight && straightSegId !== null
-                        return (
-                          <div key={seg.id} style={{
-                            display: 'flex', alignItems: 'center', gap: 8,
-                            padding: '7px 10px', borderRadius: 7,
-                            border: '1px solid #e2e8f0', background: '#f8fafc',
-                          }}>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 11, fontWeight: 700, color: '#1e293b',
-                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-                                {seg.name}
-                              </div>
-                              <div style={{ fontSize: 9.5, color: '#64748b', marginTop: 1 }}>
-                                Ø{seg.di_mm} · {seg.Q_m3h.toFixed(0)} m³/h
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
-                              <button onClick={() => setStraightSegId(seg.id)} style={{
-                                padding: '2px 8px', borderRadius: 4, fontSize: 9.5, fontWeight: 600,
-                                border: `1px solid ${isStraight ? '#6366f1' : '#e2e8f0'}`,
-                                background: isStraight ? '#6366f1' : '#f1f5f9',
-                                color: isStraight ? '#fff' : '#64748b', cursor: 'pointer',
-                              }}>Rectiligne</button>
-                              <button
-                                onClick={() => {
-                                  const other = amontSegs.find(s => s.id !== seg.id)
-                                  if (other) setStraightSegId(other.id)
-                                }}
-                                style={{
-                                  padding: '2px 8px', borderRadius: 4, fontSize: 9.5, fontWeight: 600,
-                                  border: `1px solid ${isLateral ? '#2563eb' : '#e2e8f0'}`,
-                                  background: isLateral ? '#2563eb' : '#f1f5f9',
-                                  color: isLateral ? '#fff' : '#64748b', cursor: 'pointer',
-                                }}>Latéral</button>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                    {!straightSegId && (
-                      <div style={{ marginTop: 5, fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>
-                        Désignez la branche rectiligne (dans l'axe du collecteur)
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Assignation branche 1 / branche 2 (Y asymétrique) */}
-                {isAsym && (
-                  <div style={{ marginBottom: 14 }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: '#b0bec5',
-                      textTransform: 'uppercase' as const, letterSpacing: '0.07em', marginBottom: 7 }}>
-                      Rôle des tronçons entrants
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                      {amontSegs.map(seg => {
-                        const isBranch1 = branch1SegId === seg.id
-                        const isBranch2 = !isBranch1 && branch1SegId !== null
-                        return (
-                          <div key={seg.id} style={{
-                            display: 'flex', alignItems: 'center', gap: 8,
-                            padding: '7px 10px', borderRadius: 7,
-                            border: '1px solid #e2e8f0', background: '#f8fafc',
-                          }}>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 11, fontWeight: 700, color: '#1e293b',
-                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-                                {seg.name}
-                              </div>
-                              <div style={{ fontSize: 9.5, color: '#64748b', marginTop: 1 }}>
-                                Ø{seg.di_mm} · {seg.Q_m3h.toFixed(0)} m³/h
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                              <button onClick={() => setBranch1SegId(seg.id)} style={{
-                                padding: '3px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700,
-                                border: `1.5px solid ${isBranch1 ? '#6366f1' : '#e2e8f0'}`,
-                                background: isBranch1 ? '#6366f1' : '#f1f5f9',
-                                color: isBranch1 ? '#fff' : '#94a3b8', cursor: 'pointer',
-                              }}>α1</button>
-                              <button onClick={() => {
-                                const other = amontSegs.find(s => s.id !== seg.id)
-                                if (other) setBranch1SegId(other.id)
-                              }} style={{
-                                padding: '3px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700,
-                                border: `1.5px solid ${isBranch2 ? '#2563eb' : '#e2e8f0'}`,
-                                background: isBranch2 ? '#2563eb' : '#f1f5f9',
-                                color: isBranch2 ? '#fff' : '#94a3b8', cursor: 'pointer',
-                              }}>α2</button>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                    {!branch1SegId && (
-                      <div style={{ marginTop: 5, fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>
-                        Désignez quelle tronçon est la branche α1
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Résultats ξ / ΔP */}
-                {xiMap && (
-                  <div style={{ marginTop: 'auto', borderTop: '1px solid #f1f5f9', paddingTop: 10 }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: '#b0bec5',
-                      textTransform: 'uppercase' as const, letterSpacing: '0.07em', marginBottom: 7 }}>
-                      Résultats
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {amontSegs.map(seg => {
-                        const xi = xiMap!.get(seg.id)
-                        if (xi == null) return null
-                        const dp = xi * dynPressure
-                        const isStraight = straightSegId === seg.id
-                        const roleLabel  = selType === 'wye-symetrique'
-                          ? `Ø ${seg.di_mm.toFixed(0)} mm · ${seg.Q_m3h.toFixed(0)} m³/h`
-                          : selType === 'wye-asymetrique'
-                          ? (branch1SegId === seg.id ? `α1 = ${alpha1}°` : `α2 = ${alpha2}°`)
-                          : isStraight ? 'rectiligne' : 'latéral'
-                        return (
-                          <div key={seg.id} style={{
-                            display: 'flex', alignItems: 'center', gap: 6,
-                            padding: '6px 8px', borderRadius: 6,
-                            background: '#f8fafc', border: '1px solid #e2e8f0',
-                          }}>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: '#1e293b',
-                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-                                {seg.name}
-                              </div>
-                              <div style={{ fontSize: 8.5, color: '#64748b', marginTop: 1 }}>{roleLabel}</div>
-                            </div>
-                            {/* ξ */}
-                            <div style={{ textAlign: 'right' as const, minWidth: 48 }}>
-                              <div style={{ fontSize: 8, fontWeight: 600, color: '#93c5fd',
-                                fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>ξ</div>
-                              <div style={{ fontSize: 13, fontWeight: 800, color: '#1d4ed8',
-                                fontFamily: 'ui-monospace, monospace', lineHeight: 1 }}>
-                                {xi.toFixed(3)}
-                              </div>
-                            </div>
-                            {/* ΔP */}
-                            <div style={{ textAlign: 'right' as const, minWidth: 58 }}>
-                              <div style={{ fontSize: 8, fontWeight: 600, color: '#2dd4bf' }}>ΔP</div>
-                              <div style={{ fontSize: 13, fontWeight: 800, color: '#0f766e',
-                                fontFamily: 'ui-monospace, monospace', lineHeight: 1 }}>
-                                {dp.toFixed(1)}<span style={{ fontSize: 8, marginLeft: 2, color: '#0d9488' }}>Pa</span>
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                    <div style={{ marginTop: 6, fontSize: 8, color: '#b0bec5', fontStyle: 'italic' }}>
-                      Idelchik Chap. 7 — ξ rapporté à ρv_c²/2
-                    </div>
-                  </div>
-                )}
+            )}
+            <div style={{ flex: 1, padding: 0, minHeight: 0, overflow: 'hidden' }}>
+              {e45
+                ? <SchemaTee59 lettre={LET} sansLettre={!pret} hc_mm={dC} hb_mm={dB} hs_mm={dS}
+                    L_mm={dB != null ? longueurEntree59(dB) : null}
+                    Qb={armB?.Q_m3h} Qs={armS?.Q_m3h} Qc={common.Q_m3h} />
+                : coude
+                ? <SchemaTee56 lettre={LET} sansLettre={!pret} hc_mm={dC} hb_mm={dB} hs_mm={dS}
+                    Qb={armB?.Q_m3h} Qs={armS?.Q_m3h} Qc={common.Q_m3h} />
+                : <SchemaJunction angle={ang} dc_mm={dC} db_mm={dB} ds_mm={dS}
+                    defRatio={rectF ? 1 : 0.5} sansLettre={rectF && !pret}
+                    hautPlat={sectionsCompensees(type)}
+                    mainRect={mRect} lettreMain={mRect ? LET : 'D'}
+                    branchRect={bRectF} lettreBranche={bRectF ? LET : 'D'}
+                    Qb={armB?.Q_m3h} Qs={armS?.Q_m3h} Qc={common.Q_m3h} />}
+            </div>
+            {largeurs && (
+              <div style={{
+                flexShrink: 0, padding: '0 12px 11px', textAlign: 'center',
+                fontSize: 11, color: '#64748b', fontStyle: 'italic',
+              }}>
+                {largeurs}
               </div>
-            </>
-          )}
+            )}
+          </div>
+
+          {/* ── Paramètres ── */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <div style={{ padding: '12px 16px 0 16px', flexShrink: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#1e293b', marginBottom: 10 }}>
+                {JUNCTION_LABELS[type]}
+              </div>
+              <div style={{ borderTop: '1px solid #f1f5f9' }} />
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 14px 16px',
+              display: 'flex', flexDirection: 'column' }}>
+
+              {/* Angle du raccord — diagrammes distincts, jamais interpolés. Le té
+                  rectangulaire n'en a qu'un : il n'y a rien à régler. */}
+              {angs.length > 1 && (
+                <div style={{
+                  display: 'grid', gridTemplateColumns: '1fr 74px',
+                  rowGap: 10, columnGap: 8, alignItems: 'center',
+                }}>
+                  <span style={lbl}>Angle θ</span>
+                  <select value={ang} onChange={e => setAngle(Number(e.target.value))}
+                    style={{ ...inp, width: 74, cursor: 'pointer' }}>
+                    {angs.map(a => <option key={a} value={a}>{a}°</option>)}
+                  </select>
+                </div>
+              )}
+
+              {/* Plan dans lequel la branche se coude. Il ne change aucun
+                  coefficient — les tables ne connaissent que des sections — mais
+                  il désigne le wb de la condition r/wb = 1 et fixe la coupe. */}
+              {rectF && (
+                <div style={{ marginBottom: 2 }}>
+                  <div style={{ ...sectionTitle, marginBottom: 5 }}>Piquage de la branche</div>
+                  <div style={{ display: 'flex', gap: 5 }}>
+                    {(['horizontal', 'vertical'] as const).map(o => {
+                      const sel = orient === o
+                      return (
+                        <button key={o} onClick={() => setOrient(o)} style={{
+                          flex: 1, display: 'flex', flexDirection: 'column',
+                          alignItems: 'center', justifyContent: 'center',
+                          padding: '5px 8px', borderRadius: 6, cursor: 'pointer',
+                          border: `1.5px solid ${sel ? '#0284c7' : '#e2e8f0'}`,
+                          background: sel ? '#e0f2fe' : '#f8fafc',
+                          transition: 'all 0.12s',
+                          boxShadow: sel ? '0 0 0 3px #0284c722' : 'none',
+                        }}>
+                          <span style={{ fontSize: 11.5, fontWeight: 700,
+                            color: sel ? '#0369a1' : '#475569' }}>
+                            {o === 'horizontal' ? 'Sur la largeur' : 'Sur la hauteur'}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Rôle des deux arrivées — demandé seulement s'il est indécidable.
+                  Un rôle par tronçon, désigné explicitement : choisir l'un fixe
+                  l'autre, il n'y a que deux arrivées. */}
+              {roles.ambigu && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ ...sectionTitle, marginBottom: 7 }}>Rôle des tronçons entrants</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {arms.map(a => {
+                      const estBranche = branch === a.segId
+                      const estDroit   = branch !== null && !estBranche
+                      const autre      = arms.find(x => x.segId !== a.segId)
+                      const role = (actif: boolean, teinte: string, txt: string, onClick: () => void) => (
+                        <button onClick={onClick} style={{
+                          padding: '3px 8px', borderRadius: 4, fontSize: 9.5, fontWeight: 600,
+                          border: `1px solid ${actif ? teinte : '#e2e8f0'}`,
+                          background: actif ? teinte : '#f1f5f9',
+                          color: actif ? '#fff' : '#64748b', cursor: 'pointer',
+                          whiteSpace: 'nowrap' as const,
+                        }}>{txt}</button>
+                      )
+                      return (
+                        <div key={a.segId} style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '7px 10px', borderRadius: 7,
+                          border: '1px solid #e2e8f0', background: '#f8fafc',
+                        }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#1e293b',
+                              overflow: 'hidden', textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap' as const }}>
+                              {a.label}
+                            </div>
+                            <div style={{ fontSize: 9.5, color: '#64748b', marginTop: 1 }}>
+                              {sect(a)} · {Math.round(a.Q_m3h)} m³/h
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
+                            {role(estDroit, '#6366f1', 'Trajet droit',
+                              () => { if (autre) setBranch(autre.segId) })}
+                            {role(estBranche, '#2563eb', 'Branche', () => setBranch(a.segId))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Résultat Cc / ΔP, un couple par trajet ── */}
+              <div style={{ marginTop: 'auto', paddingTop: 14, borderTop: '1px solid #f1f5f9' }}>
+                {!pret ? (
+                  motif && (
+                    <div style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic', lineHeight: 1.45 }}>
+                      {motif}
+                    </div>
+                  )
+                ) : rien ? (
+                  <div style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic', lineHeight: 1.45 }}>
+                    {res!.motifB}
+                  </div>
+                ) : (<>
+                  {trajet('Trajet branche → commun', 'Cc,b', 'ΔP branche',
+                    res!.Ccb, res!.motifB, 11)}
+                  {trajet('Trajet droit → commun', 'Cc,s', 'ΔP droit',
+                    res!.Ccs, res!.motifS, 0)}
+                </>)}
+              </div>
+            </div>
+          </div>
+          </>)}
         </div>
 
         {/* ── Pied de page ── */}
-        <div style={{ flexShrink: 0, height: 52, display: 'flex', alignItems: 'center',
-          justifyContent: 'flex-end', gap: 8, padding: '0 18px', borderTop: '1px solid #f1f5f9' }}>
-          <button onClick={onClose} style={{ padding: '6px 16px', borderRadius: 6,
-            border: '1px solid #e2e8f0', background: '#f8fafc',
-            fontSize: 12, fontWeight: 500, color: '#374151', cursor: 'pointer' }}>
-            Annuler
-          </button>
-          <button onClick={handleSave} disabled={!canSave} style={{
-            padding: '6px 18px', borderRadius: 6, border: 'none',
-            background: canSave ? '#2563eb' : '#e2e8f0',
-            fontSize: 12, fontWeight: 700,
-            color: canSave ? '#fff' : '#94a3b8',
-            cursor: canSave ? 'pointer' : 'default', transition: 'background 0.1s',
-          }}>
-            {editing ? 'Enregistrer' : 'Valider'}
+        <div style={{
+          flexShrink: 0, height: 52, display: 'flex', alignItems: 'center',
+          justifyContent: 'flex-end', gap: 8, padding: '0 18px',
+          borderTop: '1px solid #f1f5f9',
+        }}>
+          <button onClick={onClose} style={{
+            padding: '6px 16px', borderRadius: 6, border: '1px solid #e2e8f0',
+            background: '#f8fafc', fontSize: 12, fontWeight: 500,
+            color: '#374151', cursor: 'pointer',
+          }}>Annuler</button>
+          <button
+            onClick={() => { if (pret && !rien) onSave({
+              id: editing?.id ?? newJunctionId(), type, branchSegId: branch,
+              ...(rectF ? { orientation: orient } : {}),
+            }) }}
+            disabled={!pret || rien}
+            style={{
+              padding: '6px 18px', borderRadius: 6, border: 'none',
+              background: pret && !rien ? '#2563eb' : '#e2e8f0',
+              fontSize: 12, fontWeight: 700,
+              color: pret && !rien ? '#fff' : '#94a3b8',
+              cursor: pret && !rien ? 'pointer' : 'default', transition: 'background 0.1s',
+            }}>
+            {editing ? 'Enregistrer' : 'Ajouter'}
           </button>
         </div>
+
       </div>
     </>, document.body
   )
